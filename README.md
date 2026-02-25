@@ -23,21 +23,16 @@ Windows system tray widget that shows your Claude Max subscription usage at a gl
 
 ## Installation
 
-**One-liner** (PowerShell):
+**PowerShell:**
 ```powershell
-md "$env:LOCALAPPDATA\ClaudeUsageWidget" -f >$null; irm https://github.com/AaronFeledy/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-win-x64.exe -OutFile "$env:LOCALAPPDATA\ClaudeUsageWidget\ClaudeUsageWidget.exe"; & "$env:LOCALAPPDATA\ClaudeUsageWidget\ClaudeUsageWidget.exe"
+irm https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.ps1 | iex
 ```
 
-This downloads the latest release to `%LOCALAPPDATA%\ClaudeUsageWidget\` and launches it. Future updates are handled automatically.
-
-**ARM64:**
-```powershell
-md "$env:LOCALAPPDATA\ClaudeUsageWidget" -f >$null; irm https://github.com/AaronFeledy/claude-usage-widget/releases/latest/download/ClaudeUsageWidget-win-arm64.exe -OutFile "$env:LOCALAPPDATA\ClaudeUsageWidget\ClaudeUsageWidget.exe"; & "$env:LOCALAPPDATA\ClaudeUsageWidget\ClaudeUsageWidget.exe"
-```
+Auto-detects your architecture (x64/ARM64), downloads the latest release to `%LOCALAPPDATA%\ClaudeUsageWidget\`, and launches it. Future updates are handled automatically by the app.
 
 ### Start with Windows
 
-Right-click the tray icon → Settings → check "Start with Windows". Or manually: `Win+R` → `shell:startup` → create a shortcut to the exe.
+Right-click the tray icon → Settings → check "Start with Windows".
 
 ## Requirements
 
