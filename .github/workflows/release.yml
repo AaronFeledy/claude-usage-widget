@@ -50,7 +50,7 @@ jobs:
           (Get-Content ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content ClaudeUsageWidget.csproj
 
       - name: Publish
-        run: dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishTrimmed=true -p:PublishSingleFile=true -p:SelfContained=true
+        run: dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
 
       - name: Rename artifact
         run: |
