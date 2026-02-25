@@ -20,7 +20,7 @@
     <!-- Single-file publish settings -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
-    <PublishTrimmed>false</PublishTrimmed>
+    <PublishTrimmed>true</PublishTrimmed>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     
     <!-- DPI awareness -->
