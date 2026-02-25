@@ -1,6 +1,7 @@
 using System.Drawing;
 using ClaudeUsageWidget.Models;
 using ClaudeUsageWidget.Services;
+using ClaudeUsageWidget.UI;
 
 namespace ClaudeUsageWidget.TrayIcon;
 
@@ -18,6 +19,7 @@ public class TrayApplicationContext : ApplicationContext
     private UsageData? _lastUsageData;
     private bool _isPolling;
     private Icon? _currentIcon;
+    private UsagePopup? _popup;
 
     public TrayApplicationContext(UsageApiClient usageApiClient)
     {
@@ -38,6 +40,9 @@ public class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = contextMenu,
             Visible = true
         };
+
+        // Wire up left-click to show popup
+        _notifyIcon.MouseClick += OnNotifyIconClick;
 
         // Set up the polling timer
         _pollTimer = new System.Windows.Forms.Timer
@@ -64,6 +69,7 @@ public class TrayApplicationContext : ApplicationContext
             _lastUsageData = await _usageApiClient.FetchUsageAsync();
             UpdateTooltip();
             UpdateIcon();
+            UpdatePopup();
         }
         finally
         {
@@ -114,6 +120,17 @@ public class TrayApplicationContext : ApplicationContext
         }
 
         _notifyIcon.Text = tooltip;
+    }
+
+    /// <summary>
+    /// Updates the popup if it's visible.
+    /// </summary>
+    private void UpdatePopup()
+    {
+        if (_popup != null && _popup.Visible)
+        {
+            _popup.UpdateData(_lastUsageData);
+        }
     }
 
     /// <summary>
@@ -178,6 +195,34 @@ public class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
+    /// Handles left-click on the tray icon to toggle the popup.
+    /// </summary>
+    private void OnNotifyIconClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left)
+            return;
+
+        if (_popup == null)
+        {
+            _popup = new UsagePopup();
+            _popup.OnRefreshClicked += async (_, _) => await PollUsageAsync();
+            _popup.OnQuitClicked += OnQuit;
+        }
+
+        if (_popup.Visible)
+        {
+            _popup.Hide();
+        }
+        else
+        {
+            _popup.UpdateData(_lastUsageData);
+            _popup.PositionNearTray();
+            _popup.Show();
+            _popup.Activate();
+        }
+    }
+
+    /// <summary>
     /// Handles the "Refresh Now" menu click.
     /// </summary>
     private async void OnRefreshNow(object? sender, EventArgs e)
@@ -208,6 +253,14 @@ public class TrayApplicationContext : ApplicationContext
             _pollTimer.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
+
+            // Clean up the popup
+            if (_popup != null)
+            {
+                _popup.Close();
+                _popup.Dispose();
+                _popup = null;
+            }
 
             // Clean up the current icon
             if (_currentIcon != null)
