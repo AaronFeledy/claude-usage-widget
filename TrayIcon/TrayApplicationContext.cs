@@ -13,6 +13,7 @@ public class TrayApplicationContext : ApplicationContext
     private readonly UsageApiClient _usageApiClient;
     private readonly SettingsService _settingsService;
     private readonly NotificationService _notificationService;
+    private readonly UpdateService _updateService;
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _pollTimer;
 
@@ -21,7 +22,7 @@ public class TrayApplicationContext : ApplicationContext
     private Icon? _currentIcon;
     private UsagePopup? _popup;
 
-    public TrayApplicationContext(UsageApiClient usageApiClient, SettingsService settingsService)
+    public TrayApplicationContext(UsageApiClient usageApiClient, SettingsService settingsService, HttpClient httpClient)
     {
         _usageApiClient = usageApiClient;
         _settingsService = settingsService;
@@ -29,6 +30,7 @@ public class TrayApplicationContext : ApplicationContext
         // Create the context menu
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add("Refresh Now", null, OnRefreshNow);
+        contextMenu.Items.Add("Check for Updates", null, OnCheckForUpdates);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add("Quit", null, OnQuit);
 
@@ -45,6 +47,9 @@ public class TrayApplicationContext : ApplicationContext
         // Create notification service after NotifyIcon is created
         _notificationService = new NotificationService(_notifyIcon, _settingsService);
 
+        // Create update service
+        _updateService = new UpdateService(httpClient, _notifyIcon);
+
         // Wire up left-click to show popup
         _notifyIcon.MouseClick += OnNotifyIconClick;
 
@@ -58,6 +63,9 @@ public class TrayApplicationContext : ApplicationContext
 
         // Do an initial poll
         _ = PollUsageAsync();
+
+        // Check for updates in background (silent, no notification if up-to-date)
+        _ = _updateService.CheckForUpdatesAsync(showNotificationIfNoUpdate: false);
     }
 
     /// <summary>
@@ -246,6 +254,14 @@ public class TrayApplicationContext : ApplicationContext
     private async void OnRefreshNow(object? sender, EventArgs e)
     {
         await PollUsageAsync();
+    }
+
+    /// <summary>
+    /// Handles the "Check for Updates" menu click.
+    /// </summary>
+    private async void OnCheckForUpdates(object? sender, EventArgs e)
+    {
+        await _updateService.CheckForUpdatesAsync(showNotificationIfNoUpdate: true);
     }
 
     /// <summary>
