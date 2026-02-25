@@ -119,7 +119,7 @@ public class TrayApplicationContext : ApplicationContext
         var weekly = _lastUsageData.Weekly;
 
         // Format: "Claude: Current 42% (2h 18m) | Weekly 31%"
-        var tooltip = $"Claude: Current {current.Utilization:F0}% ({current.TimeUntilReset}) | Weekly {weekly.Utilization:F0}%";
+        var tooltip = $"Claude: {current.Utilization:F0}% ({current.TimeUntilReset}) · w:{weekly.Utilization:F0}%";
 
         // Add warning if weekly > 70%
         if (weekly.Utilization > 70)
