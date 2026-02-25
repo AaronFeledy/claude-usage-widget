@@ -164,6 +164,10 @@ public class TrayApplicationContext : ApplicationContext
         {
             newIcon = IconGenerator.GenerateErrorIcon();
         }
+        else if (_lastUsageData.Current.Utilization < 1f)
+        {
+            newIcon = IconGenerator.GenerateAppIcon();
+        }
         else
         {
             newIcon = IconGenerator.GenerateIcon(
