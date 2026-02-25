@@ -26,8 +26,7 @@ function Get-FriendlySize {
     param($Bytes)
     $sizes = 'Bytes,KB,MB,GB' -split ','
     for ($i = 0; ($Bytes -ge 1kb) -and ($i -lt $sizes.Count); $i++) { $Bytes /= 1kb }
-    $n = 2; if ($i -eq 0) { $n = 0 }
-    '{0:N{1}}{2}' -f $Bytes, $n, $sizes[$i]
+    if ($i -eq 0) { '{0:N0}{1}' -f $Bytes, $sizes[$i] } else { '{0:N2}{1}' -f $Bytes, $sizes[$i] }
 }
 
 Write-Host "Claude Usage Widget Installer" -ForegroundColor Cyan
