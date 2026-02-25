@@ -1,0 +1,88 @@
+{
+  "format": 1,
+  "restore": {
+    "/home/aaron/projects/claude-usage-widget/ClaudeUsageWidget.csproj": {}
+  },
+  "projects": {
+    "/home/aaron/projects/claude-usage-widget/ClaudeUsageWidget.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/home/aaron/projects/claude-usage-widget/ClaudeUsageWidget.csproj",
+        "projectName": "ClaudeUsageWidget",
+        "projectPath": "/home/aaron/projects/claude-usage-widget/ClaudeUsageWidget.csproj",
+        "packagesPath": "/home/aaron/.nuget/packages/",
+        "outputPath": "/home/aaron/projects/claude-usage-widget/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/home/aaron/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        }
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Microsoft.NET.ILLink.Tasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.24, )",
+              "autoReferenced": true
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.win-x64",
+              "version": "[8.0.24, 8.0.24]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/lib/dotnet/sdk/8.0.124/PortableRuntimeIdentifierGraph.json"
+        }
+      },
+      "runtimes": {
+        "win-x64": {
+          "#import": []
+        }
+      }
+    }
+  }
+}

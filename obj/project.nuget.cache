@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "1xjeD3Jex11YZ3qBUnLQI7PyNyHd5mjaXP+RG2HlgV5sh9ZE9CUjO3omxO2x8z4zGP+cCF1tDNuUkrSUSpU+UA==",
+  "success": true,
+  "projectFilePath": "/home/aaron/projects/claude-usage-widget/ClaudeUsageWidget.csproj",
+  "expectedPackageFiles": [
+    "/home/aaron/.nuget/packages/microsoft.net.illink.tasks/8.0.24/microsoft.net.illink.tasks.8.0.24.nupkg.sha512",
+    "/home/aaron/.nuget/packages/microsoft.netcore.app.runtime.win-x64/8.0.24/microsoft.netcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "/home/aaron/.nuget/packages/microsoft.aspnetcore.app.runtime.win-x64/8.0.24/microsoft.aspnetcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "/home/aaron/.nuget/packages/microsoft.netcore.app.host.win-x64/8.0.24/microsoft.netcore.app.host.win-x64.8.0.24.nupkg.sha512"
+  ],
+  "logs": []
+}
