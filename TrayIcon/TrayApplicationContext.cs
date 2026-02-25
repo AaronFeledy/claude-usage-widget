@@ -10,9 +10,9 @@ namespace ClaudeUsageWidget.TrayIcon;
 /// </summary>
 public class TrayApplicationContext : ApplicationContext
 {
-    private const int PollIntervalMs = 60_000; // 60 seconds
-
     private readonly UsageApiClient _usageApiClient;
+    private readonly SettingsService _settingsService;
+    private readonly NotificationService _notificationService;
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _pollTimer;
 
@@ -21,9 +21,10 @@ public class TrayApplicationContext : ApplicationContext
     private Icon? _currentIcon;
     private UsagePopup? _popup;
 
-    public TrayApplicationContext(UsageApiClient usageApiClient)
+    public TrayApplicationContext(UsageApiClient usageApiClient, SettingsService settingsService)
     {
         _usageApiClient = usageApiClient;
+        _settingsService = settingsService;
 
         // Create the context menu
         var contextMenu = new ContextMenuStrip();
@@ -41,13 +42,16 @@ public class TrayApplicationContext : ApplicationContext
             Visible = true
         };
 
+        // Create notification service after NotifyIcon is created
+        _notificationService = new NotificationService(_notifyIcon, _settingsService);
+
         // Wire up left-click to show popup
         _notifyIcon.MouseClick += OnNotifyIconClick;
 
-        // Set up the polling timer
+        // Set up the polling timer with interval from settings
         _pollTimer = new System.Windows.Forms.Timer
         {
-            Interval = PollIntervalMs
+            Interval = _settingsService.Settings.RefreshIntervalSeconds * 1000
         };
         _pollTimer.Tick += async (_, _) => await PollUsageAsync();
         _pollTimer.Start();
@@ -70,6 +74,9 @@ public class TrayApplicationContext : ApplicationContext
             UpdateTooltip();
             UpdateIcon();
             UpdatePopup();
+
+            // Check and show notifications if thresholds are reached
+            _notificationService.CheckAndNotify(_lastUsageData);
         }
         finally
         {
@@ -205,8 +212,10 @@ public class TrayApplicationContext : ApplicationContext
         if (_popup == null)
         {
             _popup = new UsagePopup();
+            _popup.SetSettingsService(_settingsService);
             _popup.OnRefreshClicked += async (_, _) => await PollUsageAsync();
             _popup.OnQuitClicked += OnQuit;
+            _popup.OnSettingsChanged += OnSettingsChanged;
         }
 
         if (_popup.Visible)
@@ -220,6 +229,15 @@ public class TrayApplicationContext : ApplicationContext
             _popup.Show();
             _popup.Activate();
         }
+    }
+
+    /// <summary>
+    /// Handles settings changes from the popup.
+    /// </summary>
+    private void OnSettingsChanged(object? sender, EventArgs e)
+    {
+        // Update the timer interval when refresh interval changes
+        _pollTimer.Interval = _settingsService.Settings.RefreshIntervalSeconds * 1000;
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using ClaudeUsageWidget.Models;
+using ClaudeUsageWidget.Services;
 
 namespace ClaudeUsageWidget.UI;
 
@@ -124,27 +125,46 @@ public class UsagePopup : Form
     private static readonly Color ButtonBackColor = Color.FromArgb(50, 50, 50);
     private static readonly Color ButtonHoverColor = Color.FromArgb(70, 70, 70);
 
-    // Controls
+    // Layout constants
+    private const int NormalHeight = 260;
+    private const int ExpandedHeight = 370;
+
+    // Controls - Title bar
     private readonly Label _titleLabel;
     private readonly Button _closeButton;
 
+    // Controls - 5-hour section
     private readonly Label _fiveHourLabel;
     private readonly UsageProgressBar _fiveHourProgress;
     private readonly Label _fiveHourPercent;
     private readonly Label _fiveHourReset;
 
+    // Controls - Weekly section
     private readonly Label _weeklyLabel;
     private readonly UsageProgressBar _weeklyProgress;
     private readonly Label _weeklyPercent;
     private readonly Label _weeklyReset;
 
+    // Controls - Buttons
     private readonly Button _refreshButton;
     private readonly Button _settingsButton;
     private readonly Button _quitButton;
 
+    // Controls - Settings panel
+    private readonly Panel _settingsPanel;
+    private readonly CheckBox _startWithWindowsCheckbox;
+    private readonly CheckBox _notificationsCheckbox;
+    private readonly Label _refreshIntervalLabel;
+    private readonly ComboBox _refreshIntervalCombo;
+
+    // State
+    private SettingsService? _settingsService;
+    private bool _settingsExpanded;
+
     // Events
     public event EventHandler? OnRefreshClicked;
     public event EventHandler? OnQuitClicked;
+    public event EventHandler? OnSettingsChanged;
 
     public UsagePopup()
     {
@@ -153,7 +173,7 @@ public class UsagePopup : Form
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         BackColor = BackgroundColor;
-        Size = new Size(280, 260);
+        Size = new Size(280, NormalHeight);
         TopMost = true;
 
         // Title bar
@@ -280,7 +300,7 @@ public class UsagePopup : Form
         _settingsButton = CreateFlatButton("Settings", 9);
         _settingsButton.Size = new Size(buttonWidth, buttonHeight);
         _settingsButton.Location = new Point(startX + buttonWidth + buttonSpacing, buttonY);
-        _settingsButton.Click += (_, _) => MessageBox.Show("Settings coming soon", "Claude Usage", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        _settingsButton.Click += OnSettingsButtonClick;
         Controls.Add(_settingsButton);
 
         _quitButton = CreateFlatButton("Quit", 9);
@@ -289,8 +309,188 @@ public class UsagePopup : Form
         _quitButton.Click += (s, e) => OnQuitClicked?.Invoke(this, EventArgs.Empty);
         Controls.Add(_quitButton);
 
+        // Settings panel (initially hidden)
+        _settingsPanel = new Panel
+        {
+            BackColor = BackgroundColor,
+            Location = new Point(0, NormalHeight),
+            Size = new Size(Width, ExpandedHeight - NormalHeight),
+            Visible = false
+        };
+
+        // Settings separator
+        var settingsSep = new Panel
+        {
+            BackColor = SeparatorColor,
+            Location = new Point(12, 0),
+            Size = new Size(Width - 24, 1)
+        };
+        _settingsPanel.Controls.Add(settingsSep);
+
+        // Settings title
+        var settingsTitle = new Label
+        {
+            Text = "Settings",
+            Font = new Font("Segoe UI", 9, FontStyle.Bold),
+            ForeColor = TextColor,
+            Location = new Point(12, 12),
+            AutoSize = true
+        };
+        _settingsPanel.Controls.Add(settingsTitle);
+
+        // Start with Windows checkbox
+        _startWithWindowsCheckbox = new CheckBox
+        {
+            Text = "Start with Windows",
+            Font = new Font("Segoe UI", 9),
+            ForeColor = TextColor,
+            Location = new Point(12, 38),
+            AutoSize = true,
+            FlatStyle = FlatStyle.Flat
+        };
+        _startWithWindowsCheckbox.CheckedChanged += OnStartWithWindowsChanged;
+        _settingsPanel.Controls.Add(_startWithWindowsCheckbox);
+
+        // Notifications checkbox
+        _notificationsCheckbox = new CheckBox
+        {
+            Text = "Enable notifications",
+            Font = new Font("Segoe UI", 9),
+            ForeColor = TextColor,
+            Location = new Point(12, 62),
+            AutoSize = true,
+            FlatStyle = FlatStyle.Flat
+        };
+        _notificationsCheckbox.CheckedChanged += OnNotificationsChanged;
+        _settingsPanel.Controls.Add(_notificationsCheckbox);
+
+        // Refresh interval
+        _refreshIntervalLabel = new Label
+        {
+            Text = "Refresh interval:",
+            Font = new Font("Segoe UI", 9),
+            ForeColor = TextColor,
+            Location = new Point(12, 90),
+            AutoSize = true
+        };
+        _settingsPanel.Controls.Add(_refreshIntervalLabel);
+
+        _refreshIntervalCombo = new ComboBox
+        {
+            Font = new Font("Segoe UI", 9),
+            Location = new Point(115, 87),
+            Size = new Size(80, 24),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = ButtonBackColor,
+            ForeColor = TextColor,
+            FlatStyle = FlatStyle.Flat
+        };
+        _refreshIntervalCombo.Items.AddRange(new object[] { "30s", "60s", "120s", "300s" });
+        _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
+        _settingsPanel.Controls.Add(_refreshIntervalCombo);
+
+        Controls.Add(_settingsPanel);
+
         // Handle losing focus
         Deactivate += (_, _) => Hide();
+    }
+
+    /// <summary>
+    /// Sets the settings service for the popup to use.
+    /// </summary>
+    public void SetSettingsService(SettingsService settingsService)
+    {
+        _settingsService = settingsService;
+        LoadSettingsToControls();
+    }
+
+    /// <summary>
+    /// Loads current settings into the UI controls.
+    /// </summary>
+    private void LoadSettingsToControls()
+    {
+        if (_settingsService == null) return;
+
+        var settings = _settingsService.Settings;
+
+        // Temporarily unhook events to avoid triggering saves
+        _startWithWindowsCheckbox.CheckedChanged -= OnStartWithWindowsChanged;
+        _notificationsCheckbox.CheckedChanged -= OnNotificationsChanged;
+        _refreshIntervalCombo.SelectedIndexChanged -= OnRefreshIntervalChanged;
+
+        _startWithWindowsCheckbox.Checked = settings.StartWithWindows;
+        _notificationsCheckbox.Checked = settings.NotificationsEnabled;
+
+        // Map interval to combo index
+        _refreshIntervalCombo.SelectedIndex = settings.RefreshIntervalSeconds switch
+        {
+            30 => 0,
+            60 => 1,
+            120 => 2,
+            300 => 3,
+            _ => 1 // Default to 60s
+        };
+
+        // Re-hook events
+        _startWithWindowsCheckbox.CheckedChanged += OnStartWithWindowsChanged;
+        _notificationsCheckbox.CheckedChanged += OnNotificationsChanged;
+        _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
+    }
+
+    /// <summary>
+    /// Handles settings button click to expand/collapse settings panel.
+    /// </summary>
+    private void OnSettingsButtonClick(object? sender, EventArgs e)
+    {
+        _settingsExpanded = !_settingsExpanded;
+
+        if (_settingsExpanded)
+        {
+            LoadSettingsToControls();
+            Height = ExpandedHeight;
+            _settingsPanel.Visible = true;
+            _settingsButton.Text = "Hide";
+        }
+        else
+        {
+            Height = NormalHeight;
+            _settingsPanel.Visible = false;
+            _settingsButton.Text = "Settings";
+        }
+
+        // Reposition if needed
+        PositionNearTray();
+    }
+
+    private void OnStartWithWindowsChanged(object? sender, EventArgs e)
+    {
+        if (_settingsService == null) return;
+        _settingsService.SetStartWithWindows(_startWithWindowsCheckbox.Checked);
+    }
+
+    private void OnNotificationsChanged(object? sender, EventArgs e)
+    {
+        if (_settingsService == null) return;
+        _settingsService.Settings.NotificationsEnabled = _notificationsCheckbox.Checked;
+        _settingsService.Save();
+    }
+
+    private void OnRefreshIntervalChanged(object? sender, EventArgs e)
+    {
+        if (_settingsService == null) return;
+
+        var interval = _refreshIntervalCombo.SelectedIndex switch
+        {
+            0 => 30,
+            1 => 60,
+            2 => 120,
+            3 => 300,
+            _ => 60
+        };
+
+        _settingsService.Settings.RefreshIntervalSeconds = interval;
+        _settingsService.Save();
+        OnSettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

@@ -14,9 +14,10 @@ static class Program
         using var httpClient = new HttpClient();
         httpClient.Timeout = TimeSpan.FromSeconds(30);
 
+        var settingsService = new SettingsService();
         var credentialService = new CredentialService(httpClient);
         var usageApiClient = new UsageApiClient(httpClient, credentialService);
 
-        Application.Run(new TrayApplicationContext(usageApiClient));
+        Application.Run(new TrayApplicationContext(usageApiClient, settingsService));
     }
 }
