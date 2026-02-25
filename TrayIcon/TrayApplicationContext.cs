@@ -17,6 +17,7 @@ public class TrayApplicationContext : ApplicationContext
 
     private UsageData? _lastUsageData;
     private bool _isPolling;
+    private Icon? _currentIcon;
 
     public TrayApplicationContext(UsageApiClient usageApiClient)
     {
@@ -28,10 +29,11 @@ public class TrayApplicationContext : ApplicationContext
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add("Quit", null, OnQuit);
 
-        // Create the notify icon with a placeholder gray icon
+        // Create the notify icon with a placeholder icon
+        _currentIcon = IconGenerator.GeneratePlaceholderIcon();
         _notifyIcon = new NotifyIcon
         {
-            Icon = CreatePlaceholderIcon(),
+            Icon = _currentIcon,
             Text = "Claude: Loading...",
             ContextMenuStrip = contextMenu,
             Visible = true
@@ -50,24 +52,7 @@ public class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
-    /// Creates a simple 16x16 solid gray placeholder icon.
-    /// </summary>
-    private static Icon CreatePlaceholderIcon()
-    {
-        using var bitmap = new Bitmap(16, 16);
-        using var graphics = Graphics.FromImage(bitmap);
-        
-        graphics.Clear(Color.Gray);
-        
-        // Draw a simple border for visibility
-        using var borderPen = new Pen(Color.DarkGray, 1);
-        graphics.DrawRectangle(borderPen, 0, 0, 15, 15);
-
-        return Icon.FromHandle(bitmap.GetHicon());
-    }
-
-    /// <summary>
-    /// Polls the usage API and updates the tooltip.
+    /// Polls the usage API and updates the tooltip and icon.
     /// </summary>
     private async Task PollUsageAsync()
     {
@@ -78,6 +63,7 @@ public class TrayApplicationContext : ApplicationContext
             _isPolling = true;
             _lastUsageData = await _usageApiClient.FetchUsageAsync();
             UpdateTooltip();
+            UpdateIcon();
         }
         finally
         {
@@ -131,6 +117,49 @@ public class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
+    /// Updates the tray icon based on the latest usage data.
+    /// Properly disposes the old icon to prevent GDI handle leaks.
+    /// </summary>
+    private void UpdateIcon()
+    {
+        Icon newIcon;
+
+        if (_lastUsageData == null)
+        {
+            newIcon = IconGenerator.GeneratePlaceholderIcon();
+        }
+        else if (!_lastUsageData.IsSuccess)
+        {
+            newIcon = IconGenerator.GenerateErrorIcon();
+        }
+        else
+        {
+            newIcon = IconGenerator.GenerateIcon(
+                _lastUsageData.FiveHour.Utilization,
+                _lastUsageData.SevenDay.Utilization);
+        }
+
+        // Swap the icon and dispose the old one
+        var oldIcon = _currentIcon;
+        _currentIcon = newIcon;
+        _notifyIcon.Icon = newIcon;
+
+        // Dispose old icon to prevent GDI handle leaks
+        if (oldIcon != null)
+        {
+            // Must destroy the native icon handle
+            DestroyIcon(oldIcon.Handle);
+            oldIcon.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Native method to destroy icon handles created with GetHicon().
+    /// </summary>
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+    private static extern bool DestroyIcon(IntPtr handle);
+
+    /// <summary>
     /// Gets the abbreviated day name for when usage resets.
     /// </summary>
     private static string GetResetDayName(DateTime? resetsAt)
@@ -179,6 +208,14 @@ public class TrayApplicationContext : ApplicationContext
             _pollTimer.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
+
+            // Clean up the current icon
+            if (_currentIcon != null)
+            {
+                DestroyIcon(_currentIcon.Handle);
+                _currentIcon.Dispose();
+                _currentIcon = null;
+            }
         }
         base.Dispose(disposing);
     }
