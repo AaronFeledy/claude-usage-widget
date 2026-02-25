@@ -5,9 +5,22 @@ namespace ClaudeUsageWidget;
 
 static class Program
 {
+    private static Mutex? _mutex;
+
     [STAThread]
     static void Main()
     {
+        // Single-instance enforcement
+        const string mutexName = "Global\\ClaudeUsageWidget_SingleInstance";
+        _mutex = new Mutex(true, mutexName, out bool createdNew);
+        if (!createdNew)
+        {
+            // Another instance is already running
+            MessageBox.Show("Claude Usage Widget is already running.", "Claude Usage Widget",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
