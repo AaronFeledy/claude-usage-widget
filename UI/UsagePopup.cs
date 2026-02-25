@@ -13,12 +13,27 @@ public class UsageProgressBar : Panel
     private float _value;
     private const int CornerRadius = 6;
 
+    private float _burnRatePercent = -1;
+
     public float Value
     {
         get => _value;
         set
         {
             _value = Math.Clamp(value, 0, 100);
+            Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// Position of the ideal burn-rate marker (0-100). Set to -1 to hide.
+    /// </summary>
+    public float BurnRatePercent
+    {
+        get => _burnRatePercent;
+        set
+        {
+            _burnRatePercent = value;
             Invalidate();
         }
     }
@@ -78,6 +93,15 @@ public class UsageProgressBar : Panel
         using (var borderPath = CreateRoundedRectPath(rect, CornerRadius))
         {
             g.DrawPath(borderPen, borderPath);
+        }
+
+        // Draw burn-rate marker line
+        if (_burnRatePercent >= 0 && _burnRatePercent <= 100)
+        {
+            var markerX = (int)((Width - 1) * (_burnRatePercent / 100f));
+            markerX = Math.Clamp(markerX, 2, Width - 3);
+            using var markerPen = new Pen(Color.FromArgb(200, 60, 140, 255), 2);
+            g.DrawLine(markerPen, markerX, 1, markerX, Height - 2);
         }
     }
 
@@ -538,11 +562,32 @@ public class UsagePopup : Form
         _currentProgress.Value = data.Current.Utilization;
         _currentPercent.Text = $"{data.Current.Utilization:F0}%";
         _currentReset.Text = $"Resets in {data.Current.TimeUntilReset}";
+        _currentProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, TimeSpan.FromHours(5));
 
         // Weekly data
         _weeklyProgress.Value = data.Weekly.Utilization;
         _weeklyPercent.Text = $"{data.Weekly.Utilization:F0}%";
         _weeklyReset.Text = GetWeeklyResetText(data.Weekly.ResetsAt);
+        _weeklyProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, TimeSpan.FromDays(7));
+    }
+
+    /// <summary>
+    /// Calculates what percentage of the window has elapsed (0-100).
+    /// </summary>
+    private static float CalculateElapsedPercent(DateTime? resetsAt, TimeSpan windowDuration)
+    {
+        if (resetsAt == null)
+            return -1;
+
+        var remaining = resetsAt.Value - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+            return 100;
+
+        var elapsed = windowDuration - remaining;
+        if (elapsed <= TimeSpan.Zero)
+            return 0;
+
+        return (float)(elapsed / windowDuration * 100);
     }
 
     /// <summary>

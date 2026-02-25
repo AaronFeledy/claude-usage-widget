@@ -182,9 +182,11 @@ public class TrayApplicationContext : ApplicationContext
         }
         else
         {
+            var burnRate = CalculateElapsedPercent(_lastUsageData.Current.ResetsAt, TimeSpan.FromHours(5));
             newIcon = IconGenerator.GenerateIcon(
                 _lastUsageData.Current.Utilization,
-                _lastUsageData.Weekly.Utilization);
+                _lastUsageData.Weekly.Utilization,
+                burnRate);
         }
 
         // Swap the icon and dispose the old one
@@ -199,6 +201,25 @@ public class TrayApplicationContext : ApplicationContext
             DestroyIcon(oldIcon.Handle);
             oldIcon.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Calculates what percentage of the window has elapsed (0-100). Returns -1 if unknown.
+    /// </summary>
+    private static float CalculateElapsedPercent(DateTime? resetsAt, TimeSpan windowDuration)
+    {
+        if (resetsAt == null)
+            return -1;
+
+        var remaining = resetsAt.Value - DateTime.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+            return 100;
+
+        var elapsed = windowDuration - remaining;
+        if (elapsed <= TimeSpan.Zero)
+            return 0;
+
+        return (float)(elapsed / windowDuration * 100);
     }
 
     /// <summary>

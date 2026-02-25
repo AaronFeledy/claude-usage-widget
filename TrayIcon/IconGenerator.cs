@@ -29,7 +29,7 @@ public static class IconGenerator
     /// <param name="currentUtilization">Current session utilization percentage (0-100)</param>
     /// <param name="weeklyUtilization">weekly utilization percentage (0-100)</param>
     /// <returns>A new Icon instance. Caller is responsible for disposing.</returns>
-    public static Icon GenerateIcon(float currentUtilization, float weeklyUtilization)
+    public static Icon GenerateIcon(float currentUtilization, float weeklyUtilization, float burnRatePercent = -1)
     {
         using var bitmap = new Bitmap(IconSize, IconSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -46,7 +46,7 @@ public static class IconGenerator
         }
         else
         {
-            DrawNormalIcon(graphics, currentUtilization);
+            DrawNormalIcon(graphics, currentUtilization, burnRatePercent);
         }
 
         // Draw weekly overlay if needed
@@ -180,7 +180,7 @@ public static class IconGenerator
     /// <summary>
     /// Draws the normal fill bar icon.
     /// </summary>
-    private static void DrawNormalIcon(Graphics graphics, float utilization)
+    private static void DrawNormalIcon(Graphics graphics, float utilization, float burnRatePercent = -1)
     {
         // Fill entire icon with background
         graphics.Clear(BackgroundColor);
@@ -209,6 +209,17 @@ public static class IconGenerator
 
             using var fillBrush = new SolidBrush(fillColor);
             graphics.FillRectangle(fillBrush, fillStartX, fillY, fillWidth, fillHeight);
+        }
+
+        // Draw burn-rate marker (horizontal line since bar fills bottom-to-top)
+        if (burnRatePercent >= 0 && burnRatePercent <= 100)
+        {
+            var markerHeight = (int)Math.Round(fillMaxHeight * burnRatePercent / 100f);
+            var markerY = fillStartY + (fillMaxHeight - markerHeight);
+            markerY = Math.Clamp(markerY, fillStartY, fillStartY + fillMaxHeight - 1);
+
+            using var markerPen = new Pen(Color.FromArgb(80, 160, 255), 1);
+            graphics.DrawLine(markerPen, fillStartX, markerY, fillStartX + fillWidth - 1, markerY);
         }
     }
 
