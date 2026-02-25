@@ -1,7 +1,7 @@
 namespace ClaudeUsageWidget.Models;
 
 /// <summary>
-/// Represents a usage bucket (5-hour or 7-day) from the API response.
+/// Represents a usage bucket (Current session or weekly) from the API response.
 /// </summary>
 public class UsageBucket
 {
@@ -55,14 +55,14 @@ public class UsageBucket
 public class UsageData
 {
     /// <summary>
-    /// 5-hour rolling usage bucket.
+    /// Current session rolling usage bucket.
     /// </summary>
-    public UsageBucket FiveHour { get; set; } = new();
+    public UsageBucket Current { get; set; } = new();
 
     /// <summary>
-    /// 7-day rolling usage bucket.
+    /// weekly rolling usage bucket.
     /// </summary>
-    public UsageBucket SevenDay { get; set; } = new();
+    public UsageBucket Weekly { get; set; } = new();
 
     /// <summary>
     /// Error message if the API call failed.

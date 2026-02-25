@@ -26,10 +26,10 @@ public static class IconGenerator
     /// <summary>
     /// Generates a 16x16 tray icon based on usage utilization levels.
     /// </summary>
-    /// <param name="fiveHourUtilization">5-hour utilization percentage (0-100)</param>
-    /// <param name="sevenDayUtilization">7-day utilization percentage (0-100)</param>
+    /// <param name="currentUtilization">Current session utilization percentage (0-100)</param>
+    /// <param name="weeklyUtilization">weekly utilization percentage (0-100)</param>
     /// <returns>A new Icon instance. Caller is responsible for disposing.</returns>
-    public static Icon GenerateIcon(float fiveHourUtilization, float sevenDayUtilization)
+    public static Icon GenerateIcon(float currentUtilization, float weeklyUtilization)
     {
         using var bitmap = new Bitmap(IconSize, IconSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -40,19 +40,19 @@ public static class IconGenerator
         graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
 
         // Check for rate-limited state (>= 99%)
-        if (fiveHourUtilization >= 99f)
+        if (currentUtilization >= 99f)
         {
             DrawRateLimitedIcon(graphics);
         }
         else
         {
-            DrawNormalIcon(graphics, fiveHourUtilization);
+            DrawNormalIcon(graphics, currentUtilization);
         }
 
         // Draw weekly overlay if needed
-        if (sevenDayUtilization > 70f)
+        if (weeklyUtilization > 70f)
         {
-            DrawWeeklyOverlay(graphics, sevenDayUtilization);
+            DrawWeeklyOverlay(graphics, weeklyUtilization);
         }
 
         return Icon.FromHandle(bitmap.GetHicon());
@@ -172,7 +172,7 @@ public static class IconGenerator
     /// <summary>
     /// Draws the weekly utilization overlay dot in the top-right corner.
     /// </summary>
-    private static void DrawWeeklyOverlay(Graphics graphics, float sevenDayUtilization)
+    private static void DrawWeeklyOverlay(Graphics graphics, float weeklyUtilization)
     {
         // Dot is 4x4, positioned in top-right corner with 1px margin
         const int dotSize = 4;
@@ -180,7 +180,7 @@ public static class IconGenerator
         const int dotY = 1;
 
         // Choose dot color based on weekly utilization
-        var dotColor = sevenDayUtilization >= 85f ? RedFill : YellowFill;
+        var dotColor = weeklyUtilization >= 85f ? RedFill : YellowFill;
 
         // Draw dot border first (1px dark border)
         using var borderBrush = new SolidBrush(DotBorderColor);

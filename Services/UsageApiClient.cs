@@ -103,14 +103,14 @@ public class UsageApiClient
 
             var usageData = new UsageData();
 
-            if (root.TryGetProperty("five_hour", out var fiveHour))
+            if (root.TryGetProperty("five_hour", out var current))
             {
-                usageData.FiveHour = ParseBucket(fiveHour);
+                usageData.Current = ParseBucket(current);
             }
 
-            if (root.TryGetProperty("seven_day", out var sevenDay))
+            if (root.TryGetProperty("seven_day", out var weekly))
             {
-                usageData.SevenDay = ParseBucket(sevenDay);
+                usageData.Weekly = ParseBucket(weekly);
             }
 
             return usageData;

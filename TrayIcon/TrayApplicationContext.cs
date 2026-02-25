@@ -115,17 +115,17 @@ public class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var fiveHour = _lastUsageData.FiveHour;
-        var sevenDay = _lastUsageData.SevenDay;
+        var current = _lastUsageData.Current;
+        var weekly = _lastUsageData.Weekly;
 
-        // Format: "Claude: 5h 42% (2h 18m) | 7d 31%"
-        var tooltip = $"Claude: 5h {fiveHour.Utilization:F0}% ({fiveHour.TimeUntilReset}) | 7d {sevenDay.Utilization:F0}%";
+        // Format: "Claude: Current 42% (2h 18m) | Weekly 31%"
+        var tooltip = $"Claude: Current {current.Utilization:F0}% ({current.TimeUntilReset}) | Weekly {weekly.Utilization:F0}%";
 
         // Add warning if weekly > 70%
-        if (sevenDay.Utilization > 70)
+        if (weekly.Utilization > 70)
         {
-            var resetDay = GetResetDayName(sevenDay.ResetsAt);
-            tooltip += $"\n\u26a0 Weekly: {sevenDay.Utilization:F0}% (resets {resetDay})";
+            var resetDay = GetResetDayName(weekly.ResetsAt);
+            tooltip += $"\n\u26a0 Weekly: {weekly.Utilization:F0}% (resets {resetDay})";
         }
 
         // NotifyIcon.Text has a max length of 127 characters
@@ -167,8 +167,8 @@ public class TrayApplicationContext : ApplicationContext
         else
         {
             newIcon = IconGenerator.GenerateIcon(
-                _lastUsageData.FiveHour.Utilization,
-                _lastUsageData.SevenDay.Utilization);
+                _lastUsageData.Current.Utilization,
+                _lastUsageData.Weekly.Utilization);
         }
 
         // Swap the icon and dispose the old one

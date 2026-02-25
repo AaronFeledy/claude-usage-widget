@@ -34,7 +34,7 @@ public class NotificationService
         if (!_settingsService.Settings.NotificationsEnabled)
             return;
 
-        var utilization = data.FiveHour.Utilization;
+        var utilization = data.Current.Utilization;
 
         // Reset flags when usage drops below thresholds
         if (utilization < WarningThreshold)
@@ -56,7 +56,7 @@ public class NotificationService
             _notifiedWarning = true; // Also mark warning as shown
             ShowNotification(
                 "Claude Usage Critical",
-                "5-hour usage at 95%. You are about to hit the rate limit.",
+                "Current session usage at 95%. You are about to hit the rate limit.",
                 ToolTipIcon.Error);
             return;
         }
@@ -67,7 +67,7 @@ public class NotificationService
             _notifiedWarning = true;
             ShowNotification(
                 "Claude Usage Warning",
-                "5-hour usage at 80%. Consider pacing.",
+                "Current session usage at 80%. Consider pacing.",
                 ToolTipIcon.Warning);
         }
     }

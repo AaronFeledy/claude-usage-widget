@@ -133,11 +133,11 @@ public class UsagePopup : Form
     private readonly Label _titleLabel;
     private readonly Button _closeButton;
 
-    // Controls - 5-hour section
-    private readonly Label _fiveHourLabel;
-    private readonly UsageProgressBar _fiveHourProgress;
-    private readonly Label _fiveHourPercent;
-    private readonly Label _fiveHourReset;
+    // Controls - Current session section
+    private readonly Label _currentLabel;
+    private readonly UsageProgressBar _currentProgress;
+    private readonly Label _currentPercent;
+    private readonly Label _currentReset;
 
     // Controls - Weekly section
     private readonly Label _weeklyLabel;
@@ -198,17 +198,17 @@ public class UsagePopup : Form
         Controls.Add(sep1);
 
         // 5-Hour section
-        _fiveHourLabel = new Label
+        _currentLabel = new Label
         {
-            Text = "5-Hour Window",
+            Text = "Current Session",
             Font = new Font("Segoe UI", 9, FontStyle.Bold),
             ForeColor = TextColor,
             Location = new Point(12, 52),
             AutoSize = true
         };
-        Controls.Add(_fiveHourLabel);
+        Controls.Add(_currentLabel);
 
-        _fiveHourPercent = new Label
+        _currentPercent = new Label
         {
             Text = "0%",
             Font = new Font("Segoe UI", 9, FontStyle.Bold),
@@ -217,16 +217,16 @@ public class UsagePopup : Form
             Size = new Size(40, 20),
             Location = new Point(Width - 52, 52)
         };
-        Controls.Add(_fiveHourPercent);
+        Controls.Add(_currentPercent);
 
-        _fiveHourProgress = new UsageProgressBar
+        _currentProgress = new UsageProgressBar
         {
             Location = new Point(12, 74),
             Size = new Size(Width - 24, 16)
         };
-        Controls.Add(_fiveHourProgress);
+        Controls.Add(_currentProgress);
 
-        _fiveHourReset = new Label
+        _currentReset = new Label
         {
             Text = "Resets in --",
             Font = new Font("Segoe UI", 8),
@@ -234,7 +234,7 @@ public class UsagePopup : Form
             Location = new Point(12, 94),
             AutoSize = true
         };
-        Controls.Add(_fiveHourReset);
+        Controls.Add(_currentReset);
 
         // Second separator
         var sep2 = CreateSeparator(118);
@@ -500,9 +500,9 @@ public class UsagePopup : Form
     {
         if (data == null || !data.IsSuccess)
         {
-            _fiveHourProgress.Value = 0;
-            _fiveHourPercent.Text = "--%";
-            _fiveHourReset.Text = data?.Error ?? "No data";
+            _currentProgress.Value = 0;
+            _currentPercent.Text = "--%";
+            _currentReset.Text = data?.Error ?? "No data";
 
             _weeklyProgress.Value = 0;
             _weeklyPercent.Text = "--%";
@@ -510,15 +510,15 @@ public class UsagePopup : Form
             return;
         }
 
-        // 5-hour data
-        _fiveHourProgress.Value = data.FiveHour.Utilization;
-        _fiveHourPercent.Text = $"{data.FiveHour.Utilization:F0}%";
-        _fiveHourReset.Text = $"Resets in {data.FiveHour.TimeUntilReset}";
+        // Current session data
+        _currentProgress.Value = data.Current.Utilization;
+        _currentPercent.Text = $"{data.Current.Utilization:F0}%";
+        _currentReset.Text = $"Resets in {data.Current.TimeUntilReset}";
 
         // Weekly data
-        _weeklyProgress.Value = data.SevenDay.Utilization;
-        _weeklyPercent.Text = $"{data.SevenDay.Utilization:F0}%";
-        _weeklyReset.Text = GetWeeklyResetText(data.SevenDay.ResetsAt);
+        _weeklyProgress.Value = data.Weekly.Utilization;
+        _weeklyPercent.Text = $"{data.Weekly.Utilization:F0}%";
+        _weeklyReset.Text = GetWeeklyResetText(data.Weekly.ResetsAt);
     }
 
     /// <summary>
