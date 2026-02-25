@@ -9,7 +9,8 @@ namespace ClaudeUsageWidget.Services;
 /// </summary>
 public class CredentialService
 {
-    private const string TokenRefreshUrl = "https://api.anthropic.com/v1/oauth/token";
+    private const string TokenRefreshUrl = "https://platform.claude.com/v1/oauth/token";
+    private const string OAuthClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
     
     private readonly string _credentialsPath;
     private readonly HttpClient _httpClient;
@@ -106,7 +107,8 @@ public class CredentialService
             var requestBody = new Dictionary<string, string>
             {
                 ["grant_type"] = "refresh_token",
-                ["refresh_token"] = refreshToken
+                ["refresh_token"] = refreshToken,
+                ["client_id"] = OAuthClientId
             };
 
             var content = new FormUrlEncodedContent(requestBody);
