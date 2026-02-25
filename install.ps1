@@ -119,6 +119,22 @@ try {
     if ($httpClient) { $httpClient.Dispose() }
 }
 
+# Create Start Menu shortcut
+$startMenuPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Claude Usage Widget.lnk'
+Write-Host "  Creating Start Menu shortcut..." -NoNewline
+try {
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($startMenuPath)
+    $shortcut.TargetPath = $exePath
+    $shortcut.WorkingDirectory = $installDir
+    $shortcut.Description = 'Claude Usage Widget - Monitor your Claude Max subscription usage'
+    $shortcut.Save()
+    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+    Write-Host " OK" -ForegroundColor Green
+} catch {
+    Write-Host " SKIP (non-critical)" -ForegroundColor Yellow
+}
+
 # Launch
 Start-Process $exePath
 Write-Host ""
