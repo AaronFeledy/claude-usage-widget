@@ -33,11 +33,11 @@ public class UsageApiClient
             // Refresh token if expired
             if (_credentialService.IsTokenExpired())
             {
-                var refreshed = await _credentialService.RefreshTokenAsync();
-                if (!refreshed)
-                {
-                    return new UsageData { Error = "Failed to refresh expired token" };
-                }
+                var result = await _credentialService.RefreshTokenAsync();
+                if (result == RefreshResult.InvalidGrant)
+                    return new UsageData { Error = "AUTH_EXPIRED", NeedsReauth = true };
+                if (result == RefreshResult.Failed)
+                    return new UsageData { Error = "Token refresh failed. Will retry." };
             }
 
             var response = await SendRequestAsync();
@@ -45,11 +45,11 @@ public class UsageApiClient
             // Handle 401 by attempting token refresh
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
-                var refreshed = await _credentialService.RefreshTokenAsync();
-                if (!refreshed)
-                {
-                    return new UsageData { Error = "Authentication failed. Please re-authenticate with Claude." };
-                }
+                var result = await _credentialService.RefreshTokenAsync();
+                if (result == RefreshResult.InvalidGrant)
+                    return new UsageData { Error = "AUTH_EXPIRED", NeedsReauth = true };
+                if (result == RefreshResult.Failed)
+                    return new UsageData { Error = "Authentication failed. Will retry." };
                 response = await SendRequestAsync();
             }
 

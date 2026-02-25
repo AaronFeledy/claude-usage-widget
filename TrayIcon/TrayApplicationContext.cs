@@ -11,6 +11,7 @@ namespace ClaudeUsageWidget.TrayIcon;
 public class TrayApplicationContext : ApplicationContext
 {
     private readonly UsageApiClient _usageApiClient;
+    private readonly CredentialService _credentialService;
     private readonly SettingsService _settingsService;
     private readonly NotificationService _notificationService;
     private readonly UpdateService _updateService;
@@ -22,9 +23,10 @@ public class TrayApplicationContext : ApplicationContext
     private Icon? _currentIcon;
     private UsagePopup? _popup;
 
-    public TrayApplicationContext(UsageApiClient usageApiClient, SettingsService settingsService, HttpClient httpClient)
+    public TrayApplicationContext(UsageApiClient usageApiClient, CredentialService credentialService, SettingsService settingsService, HttpClient httpClient)
     {
         _usageApiClient = usageApiClient;
+        _credentialService = credentialService;
         _settingsService = settingsService;
 
         // Create the context menu
@@ -78,6 +80,12 @@ public class TrayApplicationContext : ApplicationContext
         try
         {
             _isPolling = true;
+
+            // If last attempt needed reauth, reload credentials from disk
+            // in case the user has re-authenticated externally
+            if (_lastUsageData?.NeedsReauth == true)
+                _credentialService.ReloadCredentials();
+
             _lastUsageData = await _usageApiClient.FetchUsageAsync();
             UpdateTooltip();
             UpdateIcon();
@@ -105,13 +113,17 @@ public class TrayApplicationContext : ApplicationContext
 
         if (!_lastUsageData.IsSuccess)
         {
-            // Truncate error message to fit tooltip (max 127 chars)
-            var errorMsg = _lastUsageData.Error ?? "Unknown error";
-            if (errorMsg.Length > 100)
+            if (_lastUsageData.NeedsReauth)
             {
-                errorMsg = errorMsg[..97] + "...";
+                _notifyIcon.Text = "Claude: Token expired — run 'claude' to re-auth";
             }
-            _notifyIcon.Text = $"Claude: Error - {errorMsg}";
+            else
+            {
+                var errorMsg = _lastUsageData.Error ?? "Unknown error";
+                if (errorMsg.Length > 100)
+                    errorMsg = errorMsg[..97] + "...";
+                _notifyIcon.Text = $"Claude: Error - {errorMsg}";
+            }
             return;
         }
 
@@ -257,6 +269,8 @@ public class TrayApplicationContext : ApplicationContext
     /// </summary>
     private async void OnRefreshNow(object? sender, EventArgs e)
     {
+        // Reload credentials from disk in case user re-authenticated
+        _credentialService.ReloadCredentials();
         await PollUsageAsync();
     }
 

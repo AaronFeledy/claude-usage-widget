@@ -389,6 +389,18 @@ public class UsagePopup : Form
         _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
         _settingsPanel.Controls.Add(_refreshIntervalCombo);
 
+        // Version label
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var versionLabel = new Label
+        {
+            Text = $"v{version?.ToString(3) ?? "?"}",
+            Font = new Font("Segoe UI", 8),
+            ForeColor = Color.FromArgb(100, 100, 100),
+            Location = new Point(Width - 60, 12),
+            AutoSize = true
+        };
+        _settingsPanel.Controls.Add(versionLabel);
+
         Controls.Add(_settingsPanel);
 
         // Handle losing focus
@@ -502,13 +514,25 @@ public class UsagePopup : Form
         {
             _currentProgress.Value = 0;
             _currentPercent.Text = "--%";
-            _currentReset.Text = data?.Error ?? "No data";
+
+            if (data?.NeedsReauth == true)
+            {
+                _currentReset.Text = "⚠ Token expired. Run 'claude' to re-authenticate.";
+                _currentReset.ForeColor = Color.FromArgb(220, 53, 69);
+            }
+            else
+            {
+                _currentReset.Text = data?.Error ?? "No data";
+                _currentReset.ForeColor = SecondaryTextColor;
+            }
 
             _weeklyProgress.Value = 0;
             _weeklyPercent.Text = "--%";
             _weeklyReset.Text = "";
             return;
         }
+
+        _currentReset.ForeColor = SecondaryTextColor;
 
         // Current session data
         _currentProgress.Value = data.Current.Utilization;

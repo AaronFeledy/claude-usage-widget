@@ -39,6 +39,6 @@ static class Program
         var credentialService = new CredentialService(httpClient);
         var usageApiClient = new UsageApiClient(httpClient, credentialService);
 
-        Application.Run(new TrayApplicationContext(usageApiClient, settingsService, httpClient));
+        Application.Run(new TrayApplicationContext(usageApiClient, credentialService, settingsService, httpClient));
     }
 }

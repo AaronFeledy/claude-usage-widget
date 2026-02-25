@@ -70,6 +70,11 @@ public class UsageData
     public string? Error { get; set; }
 
     /// <summary>
+    /// Whether the user needs to re-authenticate (refresh token invalid).
+    /// </summary>
+    public bool NeedsReauth { get; set; }
+
+    /// <summary>
     /// Whether the data fetch was successful.
     /// </summary>
     public bool IsSuccess => Error == null;

@@ -4,6 +4,16 @@ using System.Text.Json.Nodes;
 namespace ClaudeUsageWidget.Services;
 
 /// <summary>
+/// Result of a token refresh attempt.
+/// </summary>
+public enum RefreshResult
+{
+    Success,
+    InvalidGrant,  // Token revoked or expired — user must re-authenticate
+    Failed         // Transient/network error
+}
+
+/// <summary>
 /// Manages OAuth credentials for Claude API access.
 /// Reads from ~/.claude/.credentials.json and handles token refresh.
 /// </summary>
@@ -89,7 +99,7 @@ public class CredentialService
     /// <summary>
     /// Refreshes the access token using the refresh token.
     /// </summary>
-    public async Task<bool> RefreshTokenAsync()
+    public async Task<RefreshResult> RefreshTokenAsync()
     {
         string? refreshToken;
         lock (_lock)
@@ -100,7 +110,7 @@ public class CredentialService
         }
 
         if (string.IsNullOrEmpty(refreshToken))
-            return false;
+            return RefreshResult.InvalidGrant;
 
         try
         {
@@ -115,7 +125,17 @@ public class CredentialService
             var response = await _httpClient.PostAsync(TokenRefreshUrl, content);
 
             if (!response.IsSuccessStatusCode)
-                return false;
+            {
+                // Check for invalid_grant (revoked/expired refresh token)
+                try
+                {
+                    var errorJson = await response.Content.ReadAsStringAsync();
+                    if (errorJson.Contains("invalid_grant"))
+                        return RefreshResult.InvalidGrant;
+                }
+                catch { }
+                return RefreshResult.Failed;
+            }
 
             var responseJson = await response.Content.ReadAsStringAsync();
             var responseDoc = JsonDocument.Parse(responseJson);
@@ -138,11 +158,11 @@ public class CredentialService
             // Save back to credentials file
             await SaveCredentialsAsync(newAccessToken!, newRefreshToken!, newExpiresAt);
 
-            return true;
+            return RefreshResult.Success;
         }
         catch
         {
-            return false;
+            return RefreshResult.Failed;
         }
     }
 
