@@ -14,6 +14,21 @@ public class UsageProgressBar : Panel
     private const int CornerRadius = 6;
 
     private float _burnRatePercent = -1;
+    private int _notches;
+
+    /// <summary>
+    /// Number of internal divider notches to draw (e.g. 4 notches = 5 segments).
+    /// Set to 0 to hide.
+    /// </summary>
+    public int Notches
+    {
+        get => _notches;
+        set
+        {
+            _notches = Math.Max(0, value);
+            Invalidate();
+        }
+    }
 
     public float Value
     {
@@ -71,6 +86,17 @@ public class UsageProgressBar : Panel
         using (var path = CreateRoundedRectPath(rect, CornerRadius))
         {
             g.FillPath(bgBrush, path);
+        }
+
+        // Draw time-span notches (faint vertical dividers)
+        if (_notches > 0)
+        {
+            using var notchPen = new Pen(Color.FromArgb(40, 255, 255, 255), 1);
+            for (var i = 1; i <= _notches; i++)
+            {
+                var notchX = (int)((Width - 1) * ((float)i / (_notches + 1)));
+                g.DrawLine(notchPen, notchX, 2, notchX, Height - 3);
+            }
         }
 
         // Draw filled portion
@@ -249,7 +275,8 @@ public class UsagePopup : Form
         _currentProgress = new UsageProgressBar
         {
             Location = new Point(12, 74),
-            Size = new Size(Width - 24, 16)
+            Size = new Size(Width - 24, 16),
+            Notches = 4  // 5-hour session → 4 dividers
         };
         Controls.Add(_currentProgress);
 
@@ -292,7 +319,8 @@ public class UsagePopup : Form
         _weeklyProgress = new UsageProgressBar
         {
             Location = new Point(12, 152),
-            Size = new Size(Width - 24, 16)
+            Size = new Size(Width - 24, 16),
+            Notches = 6  // 7-day week → 6 dividers
         };
         Controls.Add(_weeklyProgress);
 
