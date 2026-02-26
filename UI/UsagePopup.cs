@@ -100,7 +100,10 @@ public class UsageProgressBar : Panel
         {
             var markerX = (int)((Width - 1) * (_burnRatePercent / 100f));
             markerX = Math.Clamp(markerX, 2, Width - 3);
-            using var markerPen = new Pen(Color.FromArgb(200, 60, 140, 255), 2);
+            var markerColor = _value > _burnRatePercent
+                ? Color.FromArgb(200, 244, 67, 54)    // Red — usage exceeded burn rate
+                : Color.FromArgb(200, 60, 140, 255);  // Blue — on track
+            using var markerPen = new Pen(markerColor, 2);
             g.DrawLine(markerPen, markerX, 1, markerX, Height - 2);
         }
     }

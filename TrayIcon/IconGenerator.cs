@@ -218,7 +218,10 @@ public static class IconGenerator
             var markerY = fillStartY + (fillMaxHeight - markerHeight);
             markerY = Math.Clamp(markerY, fillStartY, fillStartY + fillMaxHeight - 1);
 
-            using var markerPen = new Pen(Color.FromArgb(80, 160, 255), 1);
+            var markerColor = utilization > burnRatePercent
+                ? Color.FromArgb(244, 67, 54)    // Red — usage exceeded burn rate
+                : Color.FromArgb(80, 160, 255);  // Blue — on track
+            using var markerPen = new Pen(markerColor, 1);
             graphics.DrawLine(markerPen, fillStartX, markerY, fillStartX + fillWidth - 1, markerY);
         }
     }
