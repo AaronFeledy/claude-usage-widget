@@ -32,6 +32,7 @@ public class TrayApplicationContext : ApplicationContext
         // Create the context menu
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add("Refresh Now", null, OnRefreshNow);
+        contextMenu.Items.Add("Settings", null, OnSettingsClicked);
         contextMenu.Items.Add("Check for Updates", null, OnCheckForUpdates);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add("Quit", null, OnQuit);
@@ -254,25 +255,13 @@ public class TrayApplicationContext : ApplicationContext
         if (e.Button != MouseButtons.Left)
             return;
 
-        if (_popup == null)
-        {
-            _popup = new UsagePopup();
-            _popup.SetSettingsService(_settingsService);
-            _popup.OnRefreshClicked += async (_, _) => await PollUsageAsync();
-            _popup.OnQuitClicked += OnQuit;
-            _popup.OnSettingsChanged += OnSettingsChanged;
-        }
-
-        if (_popup.Visible)
+        if (_popup != null && _popup.Visible)
         {
             _popup.Hide();
         }
         else
         {
-            _popup.UpdateData(_lastUsageData);
-            _popup.PositionNearTray();
-            _popup.Show();
-            _popup.Activate();
+            EnsurePopupVisible();
         }
     }
 
@@ -283,6 +272,33 @@ public class TrayApplicationContext : ApplicationContext
     {
         // Update the timer interval when refresh interval changes
         _pollTimer.Interval = _settingsService.Settings.RefreshIntervalSeconds * 1000;
+    }
+
+    /// <summary>
+    /// Ensures the popup exists and is visible, creating it if needed.
+    /// </summary>
+    private void EnsurePopupVisible()
+    {
+        if (_popup == null)
+        {
+            _popup = new UsagePopup();
+            _popup.SetSettingsService(_settingsService);
+            _popup.OnSettingsChanged += OnSettingsChanged;
+        }
+
+        _popup.UpdateData(_lastUsageData);
+        _popup.PositionNearTray();
+        _popup.Show();
+        _popup.Activate();
+    }
+
+    /// <summary>
+    /// Handles the "Settings" menu click — opens popup with settings expanded.
+    /// </summary>
+    private void OnSettingsClicked(object? sender, EventArgs e)
+    {
+        EnsurePopupVisible();
+        _popup!.ShowSettings();
     }
 
     /// <summary>

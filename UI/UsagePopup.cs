@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using ClaudeUsageWidget.Models;
 using ClaudeUsageWidget.Services;
+using ClaudeUsageWidget.TrayIcon;
 
 namespace ClaudeUsageWidget.UI;
 
@@ -179,12 +180,12 @@ public class UsagePopup : Form
     private static readonly Color ButtonHoverColor = Color.FromArgb(70, 70, 70);
 
     // Layout constants
-    private const int NormalHeight = 260;
-    private const int ExpandedHeight = 370;
+    private const int NormalHeight = 200;
+    private const int ExpandedHeight = 310;
 
     // Controls - Title bar
     private readonly Label _titleLabel;
-    private readonly Button _closeButton;
+    // close button removed — popup dismissed by clicking away
 
     // Controls - Current session section
     private readonly Label _currentLabel;
@@ -199,9 +200,7 @@ public class UsagePopup : Form
     private readonly Label _weeklyReset;
 
     // Controls - Buttons
-    private readonly Button _refreshButton;
-    private readonly Button _settingsButton;
-    private readonly Button _quitButton;
+    // Refresh/Settings/Quit buttons moved to tray context menu
 
     // Controls - Settings panel
     private readonly Panel _settingsPanel;
@@ -215,8 +214,6 @@ public class UsagePopup : Form
     private bool _settingsExpanded;
 
     // Events
-    public event EventHandler? OnRefreshClicked;
-    public event EventHandler? OnQuitClicked;
     public event EventHandler? OnSettingsChanged;
 
     public UsagePopup()
@@ -229,22 +226,25 @@ public class UsagePopup : Form
         Size = new Size(280, NormalHeight);
         TopMost = true;
 
-        // Title bar
+        // Title bar with app icon
+        var titleIcon = new PictureBox
+        {
+            Size = new Size(20, 20),
+            Location = new Point(10, 10),
+            SizeMode = PictureBoxSizeMode.StretchImage,
+            Image = IconGenerator.GenerateAppIcon().ToBitmap()
+        };
+        Controls.Add(titleIcon);
+
         _titleLabel = new Label
         {
             Text = "Claude Usage",
             Font = new Font("Segoe UI", 11, FontStyle.Bold),
             ForeColor = TextColor,
-            Location = new Point(12, 10),
+            Location = new Point(34, 10),
             AutoSize = true
         };
         Controls.Add(_titleLabel);
-
-        _closeButton = CreateFlatButton("X", 8);
-        _closeButton.Size = new Size(24, 24);
-        _closeButton.Location = new Point(Width - 32, 6);
-        _closeButton.Click += (_, _) => Hide();
-        Controls.Add(_closeButton);
 
         // First separator
         var sep1 = CreateSeparator(40);
@@ -333,36 +333,6 @@ public class UsagePopup : Form
             AutoSize = true
         };
         Controls.Add(_weeklyReset);
-
-        // Third separator
-        var sep3 = CreateSeparator(196);
-        Controls.Add(sep3);
-
-        // Bottom buttons
-        const int buttonWidth = 76;
-        const int buttonHeight = 28;
-        const int buttonSpacing = 10;
-        const int totalButtonsWidth = buttonWidth * 3 + buttonSpacing * 2;
-        var startX = (Width - totalButtonsWidth) / 2;
-        const int buttonY = 210;
-
-        _refreshButton = CreateFlatButton("Refresh", 9);
-        _refreshButton.Size = new Size(buttonWidth, buttonHeight);
-        _refreshButton.Location = new Point(startX, buttonY);
-        _refreshButton.Click += (s, e) => OnRefreshClicked?.Invoke(this, EventArgs.Empty);
-        Controls.Add(_refreshButton);
-
-        _settingsButton = CreateFlatButton("Settings", 9);
-        _settingsButton.Size = new Size(buttonWidth, buttonHeight);
-        _settingsButton.Location = new Point(startX + buttonWidth + buttonSpacing, buttonY);
-        _settingsButton.Click += OnSettingsButtonClick;
-        Controls.Add(_settingsButton);
-
-        _quitButton = CreateFlatButton("Quit", 9);
-        _quitButton.Size = new Size(buttonWidth, buttonHeight);
-        _quitButton.Location = new Point(startX + (buttonWidth + buttonSpacing) * 2, buttonY);
-        _quitButton.Click += (s, e) => OnQuitClicked?.Invoke(this, EventArgs.Empty);
-        Controls.Add(_quitButton);
 
         // Settings panel (initially hidden)
         _settingsPanel = new Panel
@@ -458,8 +428,12 @@ public class UsagePopup : Form
 
         Controls.Add(_settingsPanel);
 
-        // Handle losing focus
-        Deactivate += (_, _) => Hide();
+        // Handle losing focus — collapse settings on hide
+        Deactivate += (_, _) =>
+        {
+            HideSettings();
+            Hide();
+        };
     }
 
     /// <summary>
@@ -507,26 +481,33 @@ public class UsagePopup : Form
     /// <summary>
     /// Handles settings button click to expand/collapse settings panel.
     /// </summary>
-    private void OnSettingsButtonClick(object? sender, EventArgs e)
+    /// <summary>
+    /// Shows the settings panel (called from tray context menu).
+    /// </summary>
+    public void ShowSettings()
     {
-        _settingsExpanded = !_settingsExpanded;
-
-        if (_settingsExpanded)
+        if (!_settingsExpanded)
         {
+            _settingsExpanded = true;
             LoadSettingsToControls();
             Height = ExpandedHeight;
             _settingsPanel.Visible = true;
-            _settingsButton.Text = "Hide";
+            PositionNearTray();
         }
-        else
+    }
+
+    /// <summary>
+    /// Hides the settings panel.
+    /// </summary>
+    private void HideSettings()
+    {
+        if (_settingsExpanded)
         {
+            _settingsExpanded = false;
             Height = NormalHeight;
             _settingsPanel.Visible = false;
-            _settingsButton.Text = "Settings";
+            PositionNearTray();
         }
-
-        // Reposition if needed
-        PositionNearTray();
     }
 
     private void OnStartWithWindowsChanged(object? sender, EventArgs e)
