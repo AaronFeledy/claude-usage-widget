@@ -54,10 +54,52 @@ public class UsageProgressBar : Panel
         }
     }
 
+    private readonly ToolTip _toolTip;
+    private bool _tooltipVisible;
+
     public UsageProgressBar()
     {
         DoubleBuffered = true;
         Height = 16;
+
+        _toolTip = new ToolTip
+        {
+            InitialDelay = 0,
+            ReshowDelay = 0,
+            AutoPopDelay = 5000,
+            BackColor = Color.FromArgb(40, 40, 40),
+            ForeColor = Color.White,
+            OwnerDraw = false
+        };
+
+        MouseMove += OnBarMouseMove;
+        MouseLeave += (_, _) =>
+        {
+            _toolTip.Hide(this);
+            _tooltipVisible = false;
+        };
+    }
+
+    private void OnBarMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (_burnRatePercent < 0 || _burnRatePercent > 100) return;
+
+        var markerX = (int)((Width - 1) * (_burnRatePercent / 100f));
+        var distance = Math.Abs(e.X - markerX);
+
+        if (distance <= 8)
+        {
+            if (!_tooltipVisible)
+            {
+                _toolTip.Show($"{_burnRatePercent:F0}%", this, markerX - 10, -20);
+                _tooltipVisible = true;
+            }
+        }
+        else if (_tooltipVisible)
+        {
+            _toolTip.Hide(this);
+            _tooltipVisible = false;
+        }
     }
 
     /// <summary>
