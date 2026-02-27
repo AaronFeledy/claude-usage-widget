@@ -201,8 +201,8 @@ public static class IconGenerator
 
         if (fillHeight > 0)
         {
-            // Get fill color based on utilization level
-            var fillColor = GetFillColor(utilization);
+            // Get fill color based on utilization level and burn rate
+            var fillColor = GetFillColor(utilization, burnRatePercent);
 
             // Fill from bottom to top
             var fillY = fillStartY + (fillMaxHeight - fillHeight);
@@ -272,10 +272,26 @@ public static class IconGenerator
     }
 
     /// <summary>
-    /// Gets the fill color based on utilization level.
+    /// Gets the fill color based on utilization level and burn rate.
+    /// When usage is below the burn target, thresholds shift to 85/90/95
+    /// to warn that you're under-pacing. When at or above target, uses
+    /// the standard 50/75/90 thresholds.
     /// </summary>
-    private static Color GetFillColor(float utilization)
+    private static Color GetFillColor(float utilization, float burnRatePercent = -1)
     {
+        // If we have a burn rate and usage is below it, use tighter thresholds
+        if (burnRatePercent >= 0 && utilization < burnRatePercent)
+        {
+            return utilization switch
+            {
+                >= 95f => RedFill,
+                >= 90f => OrangeFill,
+                >= 85f => YellowFill,
+                _ => GreenFill
+            };
+        }
+
+        // At or above burn target — standard thresholds
         return utilization switch
         {
             >= 90f => RedFill,
