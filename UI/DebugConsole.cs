@@ -80,8 +80,6 @@ public class DebugConsole : Form
         };
         toolbar.Controls.Add(_countLabel);
 
-        Controls.Add(toolbar);
-
         // Log display
         _logBox = new RichTextBox
         {
@@ -95,6 +93,8 @@ public class DebugConsole : Form
             ScrollBars = RichTextBoxScrollBars.Both
         };
         Controls.Add(_logBox);
+
+        Controls.Add(toolbar);
 
         // Load existing entries
         LoadExistingEntries();
