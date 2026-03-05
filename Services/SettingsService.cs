@@ -11,6 +11,7 @@ public class AppSettings
     public int RefreshIntervalSeconds { get; set; } = 60;
     public bool StartWithWindows { get; set; } = false;
     public bool NotificationsEnabled { get; set; } = true;
+    public bool DebugMode { get; set; } = false;
 }
 
 /// <summary>
