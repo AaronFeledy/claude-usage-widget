@@ -13,6 +13,7 @@ public class UsageApiClient
 {
     private const string UsageApiUrl = "https://api.anthropic.com/api/oauth/usage";
     private const string BetaHeader = "oauth-2025-04-20";
+    private const int MinBackoffSeconds = 30;  // Minimum 30 seconds
     private const int MaxBackoffSeconds = 300; // 5 minutes max backoff
 
     private readonly HttpClient _httpClient;
@@ -148,21 +149,21 @@ public class UsageApiClient
                 // Try parsing as seconds
                 if (int.TryParse(retryAfter, out var seconds))
                 {
-                    return Math.Min(seconds, MaxBackoffSeconds);
+                    return Math.Clamp(seconds, MinBackoffSeconds, MaxBackoffSeconds);
                 }
                 
                 // Try parsing as HTTP date
                 if (DateTime.TryParse(retryAfter, out var date))
                 {
                     var delay = (int)(date.ToUniversalTime() - DateTime.UtcNow).TotalSeconds;
-                    return Math.Clamp(delay, 1, MaxBackoffSeconds);
+                    return Math.Clamp(delay, MinBackoffSeconds, MaxBackoffSeconds);
                 }
             }
         }
         
         // Exponential backoff: 30s, 60s, 120s, 240s, 300s (max)
-        var exponentialBackoff = 30 * (int)Math.Pow(2, _consecutiveRateLimits - 1);
-        return Math.Min(exponentialBackoff, MaxBackoffSeconds);
+        var exponentialBackoff = MinBackoffSeconds * (int)Math.Pow(2, _consecutiveRateLimits - 1);
+        return Math.Clamp(exponentialBackoff, MinBackoffSeconds, MaxBackoffSeconds);
     }
 
     /// <summary>
