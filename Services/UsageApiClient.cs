@@ -13,6 +13,7 @@ public class UsageApiClient
 {
     private const string UsageApiUrl = "https://api.anthropic.com/api/oauth/usage";
     private const string BetaHeader = "oauth-2025-04-20";
+    private const string UserAgentValue = "claude-code/2.1.69";
     private const int MinBackoffSeconds = 30;  // Minimum 30 seconds
     private const int MaxBackoffSeconds = 300; // 5 minutes max backoff
 
@@ -210,7 +211,7 @@ public class UsageApiClient
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _credentialService.AccessToken);
         request.Headers.Add("anthropic-beta", BetaHeader);
         // Match Claude Code's User-Agent format to avoid rate limiting
-        request.Headers.Add("User-Agent", "claude-cli/widget");
+        request.Headers.Add("User-Agent", UserAgentValue);
 
         return await _httpClient.SendAsync(request);
     }
