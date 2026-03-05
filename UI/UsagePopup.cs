@@ -223,7 +223,7 @@ public class UsagePopup : Form
 
     // Layout constants
     private const int NormalHeight = 200;
-    private const int ExpandedHeight = 310;
+    private const int ExpandedHeight = 335;
 
     // Controls - Title bar
     private readonly Label _titleLabel;
@@ -248,6 +248,7 @@ public class UsagePopup : Form
     private readonly Panel _settingsPanel;
     private readonly CheckBox _startWithWindowsCheckbox;
     private readonly CheckBox _notificationsCheckbox;
+    private readonly CheckBox _debugModeCheckbox;
     private readonly Label _refreshIntervalLabel;
     private readonly ComboBox _refreshIntervalCombo;
 
@@ -431,13 +432,26 @@ public class UsagePopup : Form
         _notificationsCheckbox.CheckedChanged += OnNotificationsChanged;
         _settingsPanel.Controls.Add(_notificationsCheckbox);
 
+        // Debug mode checkbox
+        _debugModeCheckbox = new CheckBox
+        {
+            Text = "Debug mode (restart required)",
+            Font = new Font("Segoe UI", 9),
+            ForeColor = TextColor,
+            Location = new Point(12, 86),
+            AutoSize = true,
+            FlatStyle = FlatStyle.Flat
+        };
+        _debugModeCheckbox.CheckedChanged += OnDebugModeChanged;
+        _settingsPanel.Controls.Add(_debugModeCheckbox);
+
         // Refresh interval
         _refreshIntervalLabel = new Label
         {
             Text = "Refresh interval:",
             Font = new Font("Segoe UI", 9),
             ForeColor = TextColor,
-            Location = new Point(12, 90),
+            Location = new Point(12, 114),
             AutoSize = true
         };
         _settingsPanel.Controls.Add(_refreshIntervalLabel);
@@ -445,7 +459,7 @@ public class UsagePopup : Form
         _refreshIntervalCombo = new ComboBox
         {
             Font = new Font("Segoe UI", 9),
-            Location = new Point(115, 87),
+            Location = new Point(115, 111),
             Size = new Size(80, 24),
             DropDownStyle = ComboBoxStyle.DropDownList,
             BackColor = ButtonBackColor,
@@ -499,10 +513,12 @@ public class UsagePopup : Form
         // Temporarily unhook events to avoid triggering saves
         _startWithWindowsCheckbox.CheckedChanged -= OnStartWithWindowsChanged;
         _notificationsCheckbox.CheckedChanged -= OnNotificationsChanged;
+        _debugModeCheckbox.CheckedChanged -= OnDebugModeChanged;
         _refreshIntervalCombo.SelectedIndexChanged -= OnRefreshIntervalChanged;
 
         _startWithWindowsCheckbox.Checked = settings.StartWithWindows;
         _notificationsCheckbox.Checked = settings.NotificationsEnabled;
+        _debugModeCheckbox.Checked = settings.DebugMode;
 
         // Map interval to combo index
         _refreshIntervalCombo.SelectedIndex = settings.RefreshIntervalSeconds switch
@@ -517,6 +533,7 @@ public class UsagePopup : Form
         // Re-hook events
         _startWithWindowsCheckbox.CheckedChanged += OnStartWithWindowsChanged;
         _notificationsCheckbox.CheckedChanged += OnNotificationsChanged;
+        _debugModeCheckbox.CheckedChanged += OnDebugModeChanged;
         _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
     }
 
@@ -562,6 +579,13 @@ public class UsagePopup : Form
     {
         if (_settingsService == null) return;
         _settingsService.Settings.NotificationsEnabled = _notificationsCheckbox.Checked;
+        _settingsService.Save();
+    }
+
+    private void OnDebugModeChanged(object? sender, EventArgs e)
+    {
+        if (_settingsService == null) return;
+        _settingsService.Settings.DebugMode = _debugModeCheckbox.Checked;
         _settingsService.Save();
     }
 

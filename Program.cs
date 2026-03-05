@@ -36,9 +36,10 @@ static class Program
         httpClient.Timeout = TimeSpan.FromSeconds(30);
 
         var settingsService = new SettingsService();
-        var credentialService = new CredentialService(httpClient);
-        var usageApiClient = new UsageApiClient(httpClient, credentialService);
+        var debugService = new DebugService();
+        var credentialService = new CredentialService(httpClient, debugService);
+        var usageApiClient = new UsageApiClient(httpClient, credentialService, debugService);
 
-        Application.Run(new TrayApplicationContext(usageApiClient, credentialService, settingsService, httpClient));
+        Application.Run(new TrayApplicationContext(usageApiClient, credentialService, settingsService, debugService, httpClient));
     }
 }

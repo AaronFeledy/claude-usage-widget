@@ -24,15 +24,17 @@ public class CredentialService
     
     private readonly string _credentialsPath;
     private readonly HttpClient _httpClient;
+    private readonly DebugService? _debugService;
     private readonly object _lock = new();
 
     private string? _accessToken;
     private string? _refreshToken;
     private DateTime _expiresAt;
 
-    public CredentialService(HttpClient httpClient)
+    public CredentialService(HttpClient httpClient, DebugService? debugService = null)
     {
         _httpClient = httpClient;
+        _debugService = debugService;
         _credentialsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".claude",
@@ -78,14 +80,22 @@ public class CredentialService
     {
         lock (_lock)
         {
+            _debugService?.LogInfo("Credentials", $"Loading credentials from {_credentialsPath}");
+            
             if (!File.Exists(_credentialsPath))
+            {
+                _debugService?.LogError("Credentials", $"Credentials file not found: {_credentialsPath}");
                 throw new FileNotFoundException($"Credentials file not found: {_credentialsPath}");
+            }
 
             var json = File.ReadAllText(_credentialsPath);
             var doc = JsonDocument.Parse(json);
 
             if (!doc.RootElement.TryGetProperty("claudeAiOauth", out var oauthSection))
+            {
+                _debugService?.LogError("Credentials", "claudeAiOauth section not found in credentials file");
                 throw new InvalidOperationException("claudeAiOauth section not found in credentials file");
+            }
 
             _accessToken = oauthSection.GetProperty("accessToken").GetString();
             _refreshToken = oauthSection.GetProperty("refreshToken").GetString();
@@ -93,6 +103,10 @@ public class CredentialService
             // expiresAt is in milliseconds since Unix epoch
             var expiresAtMs = oauthSection.GetProperty("expiresAt").GetInt64();
             _expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(expiresAtMs).UtcDateTime;
+            
+            var expiresIn = _expiresAt - DateTime.UtcNow;
+            _debugService?.LogInfo("Credentials", "Credentials loaded successfully", 
+                $"Token expires in {expiresIn.TotalMinutes:F0} minutes");
         }
     }
 
@@ -110,10 +124,15 @@ public class CredentialService
         }
 
         if (string.IsNullOrEmpty(refreshToken))
+        {
+            _debugService?.LogError("Credentials", "No refresh token available");
             return RefreshResult.InvalidGrant;
+        }
 
         try
         {
+            _debugService?.LogInfo("Credentials", $"Refreshing token via {TokenRefreshUrl}");
+            
             var requestBody = new Dictionary<string, string>
             {
                 ["grant_type"] = "refresh_token",
@@ -130,6 +149,7 @@ public class CredentialService
                 try
                 {
                     var errorJson = await response.Content.ReadAsStringAsync();
+                    _debugService?.LogError("Credentials", $"Token refresh failed: {response.StatusCode}", errorJson);
                     if (errorJson.Contains("invalid_grant"))
                         return RefreshResult.InvalidGrant;
                 }
@@ -155,13 +175,17 @@ public class CredentialService
                 _expiresAt = newExpiresAt;
             }
 
+            _debugService?.LogInfo("Credentials", "Token refreshed successfully", 
+                $"New token expires in {expiresIn} seconds");
+
             // Save back to credentials file
             await SaveCredentialsAsync(newAccessToken!, newRefreshToken!, newExpiresAt);
 
             return RefreshResult.Success;
         }
-        catch
+        catch (Exception ex)
         {
+            _debugService?.LogError("Credentials", $"Token refresh exception: {ex.Message}", ex.ToString());
             return RefreshResult.Failed;
         }
     }

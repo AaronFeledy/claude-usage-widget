@@ -15,27 +15,39 @@ public class TrayApplicationContext : ApplicationContext
     private readonly SettingsService _settingsService;
     private readonly NotificationService _notificationService;
     private readonly UpdateService _updateService;
+    private readonly DebugService _debugService;
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _pollTimer;
+    private readonly ContextMenuStrip _contextMenu;
 
     private UsageData? _lastUsageData;
     private bool _isPolling;
     private Icon? _currentIcon;
     private UsagePopup? _popup;
+    private DebugConsole? _debugConsole;
 
-    public TrayApplicationContext(UsageApiClient usageApiClient, CredentialService credentialService, SettingsService settingsService, HttpClient httpClient)
+    public TrayApplicationContext(UsageApiClient usageApiClient, CredentialService credentialService, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
     {
         _usageApiClient = usageApiClient;
         _credentialService = credentialService;
         _settingsService = settingsService;
+        _debugService = debugService;
 
         // Create the context menu
-        var contextMenu = new ContextMenuStrip();
-        contextMenu.Items.Add("Refresh Now", null, OnRefreshNow);
-        contextMenu.Items.Add("Settings", null, OnSettingsClicked);
-        contextMenu.Items.Add("Check for Updates", null, OnCheckForUpdates);
-        contextMenu.Items.Add(new ToolStripSeparator());
-        contextMenu.Items.Add("Quit", null, OnQuit);
+        _contextMenu = new ContextMenuStrip();
+        _contextMenu.Items.Add("Refresh Now", null, OnRefreshNow);
+        _contextMenu.Items.Add("Settings", null, OnSettingsClicked);
+        _contextMenu.Items.Add("Check for Updates", null, OnCheckForUpdates);
+        _contextMenu.Items.Add(new ToolStripSeparator());
+        
+        // Add debug console option if debug mode is enabled
+        if (_settingsService.Settings.DebugMode)
+        {
+            _contextMenu.Items.Add("Debug Console", null, OnDebugConsoleClicked);
+            _contextMenu.Items.Add(new ToolStripSeparator());
+        }
+        
+        _contextMenu.Items.Add("Quit", null, OnQuit);
 
         // Create the notify icon with a placeholder icon
         _currentIcon = IconGenerator.GeneratePlaceholderIcon();
@@ -43,7 +55,7 @@ public class TrayApplicationContext : ApplicationContext
         {
             Icon = _currentIcon,
             Text = "Claude: Loading...",
-            ContextMenuStrip = contextMenu,
+            ContextMenuStrip = _contextMenu,
             Visible = true
         };
 
@@ -63,6 +75,8 @@ public class TrayApplicationContext : ApplicationContext
         };
         _pollTimer.Tick += async (_, _) => await PollUsageAsync();
         _pollTimer.Start();
+
+        _debugService.LogInfo("App", "Claude Usage Widget started");
 
         // Do an initial poll
         _ = PollUsageAsync();
@@ -320,6 +334,27 @@ public class TrayApplicationContext : ApplicationContext
     }
 
     /// <summary>
+    /// Handles the "Debug Console" menu click.
+    /// </summary>
+    private void OnDebugConsoleClicked(object? sender, EventArgs e)
+    {
+        if (_debugConsole == null)
+        {
+            _debugConsole = new DebugConsole(_debugService);
+        }
+
+        if (_debugConsole.Visible)
+        {
+            _debugConsole.BringToFront();
+            _debugConsole.Activate();
+        }
+        else
+        {
+            _debugConsole.Show();
+        }
+    }
+
+    /// <summary>
     /// Handles the "Quit" menu click.
     /// </summary>
     private void OnQuit(object? sender, EventArgs e)
@@ -349,6 +384,14 @@ public class TrayApplicationContext : ApplicationContext
                 _popup.Close();
                 _popup.Dispose();
                 _popup = null;
+            }
+
+            // Clean up the debug console
+            if (_debugConsole != null)
+            {
+                _debugConsole.Close();
+                _debugConsole.Dispose();
+                _debugConsole = null;
             }
 
             // Clean up the current icon

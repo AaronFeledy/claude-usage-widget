@@ -18,16 +18,18 @@ public class UsageApiClient
 
     private readonly HttpClient _httpClient;
     private readonly CredentialService _credentialService;
+    private readonly DebugService? _debugService;
     
     // Rate limit state
     private DateTime _rateLimitedUntil = DateTime.MinValue;
     private int _consecutiveRateLimits = 0;
     private UsageData? _lastSuccessfulData;
 
-    public UsageApiClient(HttpClient httpClient, CredentialService credentialService)
+    public UsageApiClient(HttpClient httpClient, CredentialService credentialService, DebugService? debugService = null)
     {
         _httpClient = httpClient;
         _credentialService = credentialService;
+        _debugService = debugService;
     }
     
     /// <summary>
@@ -51,6 +53,7 @@ public class UsageApiClient
         // If we're in a rate limit backoff period, return cached data
         if (IsRateLimited && _lastSuccessfulData != null)
         {
+            _debugService?.LogInfo("API", $"Rate limited, returning cached data (backoff: {RateLimitTimeRemaining.TotalSeconds:F0}s remaining)");
             return _lastSuccessfulData;
         }
         
@@ -59,24 +62,43 @@ public class UsageApiClient
             // Refresh token if expired
             if (_credentialService.IsTokenExpired())
             {
+                _debugService?.LogInfo("API", "Token expired, attempting refresh");
                 var result = await _credentialService.RefreshTokenAsync();
                 if (result == RefreshResult.InvalidGrant)
+                {
+                    _debugService?.LogError("API", "Token refresh failed: invalid_grant (token revoked)");
                     return new UsageData { Error = "AUTH_EXPIRED", NeedsReauth = true };
+                }
                 if (result == RefreshResult.Failed)
+                {
+                    _debugService?.LogError("API", "Token refresh failed (transient error)");
                     return new UsageData { Error = "Token refresh failed. Will retry." };
+                }
+                _debugService?.LogInfo("API", "Token refreshed successfully");
             }
 
+            _debugService?.LogInfo("API", $"Sending request to {UsageApiUrl}");
             var response = await SendRequestAsync();
+            _debugService?.LogInfo("API", $"Response: {(int)response.StatusCode} {response.StatusCode}");
 
             // Handle 401 by attempting token refresh
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
+                _debugService?.LogWarning("API", "Received 401, attempting token refresh");
                 var result = await _credentialService.RefreshTokenAsync();
                 if (result == RefreshResult.InvalidGrant)
+                {
+                    _debugService?.LogError("API", "Token refresh failed: invalid_grant");
                     return new UsageData { Error = "AUTH_EXPIRED", NeedsReauth = true };
+                }
                 if (result == RefreshResult.Failed)
+                {
+                    _debugService?.LogError("API", "Token refresh failed after 401");
                     return new UsageData { Error = "Authentication failed. Will retry." };
+                }
+                _debugService?.LogInfo("API", "Retrying request after token refresh");
                 response = await SendRequestAsync();
+                _debugService?.LogInfo("API", $"Retry response: {(int)response.StatusCode} {response.StatusCode}");
             }
 
             // Handle rate limiting with exponential backoff
@@ -85,6 +107,9 @@ public class UsageApiClient
                 _consecutiveRateLimits++;
                 var backoffSeconds = GetBackoffSeconds(response);
                 _rateLimitedUntil = DateTime.UtcNow.AddSeconds(backoffSeconds);
+                
+                _debugService?.LogWarning("API", $"Rate limited (429) - backoff {backoffSeconds}s", 
+                    $"Consecutive rate limits: {_consecutiveRateLimits}");
                 
                 // Return cached data if available, otherwise return a friendly error
                 if (_lastSuccessfulData != null)
@@ -101,6 +126,7 @@ public class UsageApiClient
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
+                _debugService?.LogError("API", $"API error ({response.StatusCode})", errorBody);
                 return new UsageData 
                 { 
                     Error = $"API error ({response.StatusCode}): {errorBody}" 
@@ -117,20 +143,29 @@ public class UsageApiClient
             if (usageData.IsSuccess)
             {
                 _lastSuccessfulData = usageData;
+                _debugService?.LogInfo("API", $"Usage data received", 
+                    $"5h: {usageData.Current.Utilization:F1}%, 7d: {usageData.Weekly.Utilization:F1}%");
+            }
+            else
+            {
+                _debugService?.LogError("API", "Failed to parse response", json);
             }
             
             return usageData;
         }
         catch (HttpRequestException ex)
         {
+            _debugService?.LogError("API", $"Network error: {ex.Message}", ex.ToString());
             return new UsageData { Error = $"Network error: {ex.Message}" };
         }
         catch (TaskCanceledException)
         {
+            _debugService?.LogError("API", "Request timed out");
             return new UsageData { Error = "Request timed out" };
         }
         catch (Exception ex)
         {
+            _debugService?.LogError("API", $"Unexpected error: {ex.Message}", ex.ToString());
             return new UsageData { Error = $"Unexpected error: {ex.Message}" };
         }
     }
