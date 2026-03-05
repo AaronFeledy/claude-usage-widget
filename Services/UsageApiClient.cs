@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using ClaudeUsageWidget.Models;
+using System.Linq;
 
 namespace ClaudeUsageWidget.Services;
 
@@ -12,22 +13,46 @@ public class UsageApiClient
 {
     private const string UsageApiUrl = "https://api.anthropic.com/api/oauth/usage";
     private const string BetaHeader = "oauth-2025-04-20";
+    private const int MaxBackoffSeconds = 300; // 5 minutes max backoff
 
     private readonly HttpClient _httpClient;
     private readonly CredentialService _credentialService;
+    
+    // Rate limit state
+    private DateTime _rateLimitedUntil = DateTime.MinValue;
+    private int _consecutiveRateLimits = 0;
+    private UsageData? _lastSuccessfulData;
 
     public UsageApiClient(HttpClient httpClient, CredentialService credentialService)
     {
         _httpClient = httpClient;
         _credentialService = credentialService;
     }
+    
+    /// <summary>
+    /// Returns true if we're currently in a rate-limited backoff period.
+    /// </summary>
+    public bool IsRateLimited => DateTime.UtcNow < _rateLimitedUntil;
+    
+    /// <summary>
+    /// Time remaining until rate limit backoff expires.
+    /// </summary>
+    public TimeSpan RateLimitTimeRemaining => 
+        IsRateLimited ? _rateLimitedUntil - DateTime.UtcNow : TimeSpan.Zero;
 
     /// <summary>
     /// Fetches current usage data from the API.
     /// Auto-refreshes token if expired or on 401.
+    /// Implements exponential backoff for rate limits.
     /// </summary>
     public async Task<UsageData> FetchUsageAsync()
     {
+        // If we're in a rate limit backoff period, return cached data
+        if (IsRateLimited && _lastSuccessfulData != null)
+        {
+            return _lastSuccessfulData;
+        }
+        
         try
         {
             // Refresh token if expired
@@ -53,6 +78,25 @@ public class UsageApiClient
                 response = await SendRequestAsync();
             }
 
+            // Handle rate limiting with exponential backoff
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                _consecutiveRateLimits++;
+                var backoffSeconds = GetBackoffSeconds(response);
+                _rateLimitedUntil = DateTime.UtcNow.AddSeconds(backoffSeconds);
+                
+                // Return cached data if available, otherwise return a friendly error
+                if (_lastSuccessfulData != null)
+                {
+                    return _lastSuccessfulData;
+                }
+                
+                return new UsageData 
+                { 
+                    Error = $"Rate limited. Retrying in {backoffSeconds}s." 
+                };
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync();
@@ -62,8 +106,19 @@ public class UsageApiClient
                 };
             }
 
+            // Success - reset rate limit state and cache the data
+            _consecutiveRateLimits = 0;
+            _rateLimitedUntil = DateTime.MinValue;
+            
             var json = await response.Content.ReadAsStringAsync();
-            return ParseUsageResponse(json);
+            var usageData = ParseUsageResponse(json);
+            
+            if (usageData.IsSuccess)
+            {
+                _lastSuccessfulData = usageData;
+            }
+            
+            return usageData;
         }
         catch (HttpRequestException ex)
         {
@@ -78,6 +133,37 @@ public class UsageApiClient
             return new UsageData { Error = $"Unexpected error: {ex.Message}" };
         }
     }
+    
+    /// <summary>
+    /// Calculates backoff time based on Retry-After header or exponential backoff.
+    /// </summary>
+    private int GetBackoffSeconds(HttpResponseMessage response)
+    {
+        // Check for Retry-After header
+        if (response.Headers.TryGetValues("Retry-After", out var values))
+        {
+            var retryAfter = values.FirstOrDefault();
+            if (!string.IsNullOrEmpty(retryAfter))
+            {
+                // Try parsing as seconds
+                if (int.TryParse(retryAfter, out var seconds))
+                {
+                    return Math.Min(seconds, MaxBackoffSeconds);
+                }
+                
+                // Try parsing as HTTP date
+                if (DateTime.TryParse(retryAfter, out var date))
+                {
+                    var delay = (int)(date.ToUniversalTime() - DateTime.UtcNow).TotalSeconds;
+                    return Math.Clamp(delay, 1, MaxBackoffSeconds);
+                }
+            }
+        }
+        
+        // Exponential backoff: 30s, 60s, 120s, 240s, 300s (max)
+        var exponentialBackoff = 30 * (int)Math.Pow(2, _consecutiveRateLimits - 1);
+        return Math.Min(exponentialBackoff, MaxBackoffSeconds);
+    }
 
     /// <summary>
     /// Sends the API request with current credentials.
@@ -87,6 +173,8 @@ public class UsageApiClient
         var request = new HttpRequestMessage(HttpMethod.Get, UsageApiUrl);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _credentialService.AccessToken);
         request.Headers.Add("anthropic-beta", BetaHeader);
+        // Match Claude Code's User-Agent format to avoid rate limiting
+        request.Headers.Add("User-Agent", "claude-cli/widget");
 
         return await _httpClient.SendAsync(request);
     }
