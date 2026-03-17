@@ -29,7 +29,7 @@ public static class IconGenerator
     /// <param name="currentUtilization">Current session utilization percentage (0-100)</param>
     /// <param name="weeklyUtilization">weekly utilization percentage (0-100)</param>
     /// <returns>A new Icon instance. Caller is responsible for disposing.</returns>
-    public static Icon GenerateIcon(float currentUtilization, float weeklyUtilization, float burnRatePercent = -1)
+    public static Icon GenerateIcon(string providerName, float currentUtilization, float weeklyUtilization, float burnRatePercent = -1)
     {
         using var bitmap = new Bitmap(IconSize, IconSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -55,6 +55,8 @@ public static class IconGenerator
             DrawWeeklyOverlay(graphics, weeklyUtilization);
         }
 
+        DrawProviderBadge(graphics, providerName);
+
         return Icon.FromHandle(bitmap.GetHicon());
     }
 
@@ -65,7 +67,7 @@ public static class IconGenerator
     /// <summary>
     /// Generates the app icon (sparkle + usage bar) for idle/no-usage state.
     /// </summary>
-    public static Icon GenerateAppIcon()
+    public static Icon GenerateAppIcon(string providerName = "Claude", bool includeBadge = true)
     {
         using var bitmap = new Bitmap(IconSize, IconSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -121,13 +123,16 @@ public static class IconGenerator
         using var barFillBrush = new SolidBrush(ClaudeTerracotta);
         graphics.FillRectangle(barFillBrush, barX, barY, (int)(barWidth * 0.65f), barHeight);
 
+        if (includeBadge)
+            DrawProviderBadge(graphics, providerName);
+
         return Icon.FromHandle(bitmap.GetHicon());
     }
 
     /// <summary>
     /// Generates a gray placeholder icon for loading/error states.
     /// </summary>
-    public static Icon GeneratePlaceholderIcon()
+    public static Icon GeneratePlaceholderIcon(string providerName = "Claude", bool includeBadge = true)
     {
         using var bitmap = new Bitmap(IconSize, IconSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -149,13 +154,16 @@ public static class IconGenerator
         var y = (IconSize - textSize.Height) / 2;
         graphics.DrawString("?", font, brush, x, y);
 
+        if (includeBadge)
+            DrawProviderBadge(graphics, providerName);
+
         return Icon.FromHandle(bitmap.GetHicon());
     }
 
     /// <summary>
     /// Generates an error state icon.
     /// </summary>
-    public static Icon GenerateErrorIcon()
+    public static Icon GenerateErrorIcon(string providerName = "Claude", bool includeBadge = true)
     {
         using var bitmap = new Bitmap(IconSize, IconSize);
         using var graphics = Graphics.FromImage(bitmap);
@@ -174,7 +182,71 @@ public static class IconGenerator
         graphics.DrawLine(xPen, 4, 4, 11, 11);
         graphics.DrawLine(xPen, 11, 4, 4, 11);
 
+        if (includeBadge)
+            DrawProviderBadge(graphics, providerName);
+
         return Icon.FromHandle(bitmap.GetHicon());
+    }
+
+    private static void DrawProviderBadge(Graphics graphics, string providerName)
+    {
+        var badgeRect = new Rectangle(10, 10, 6, 6);
+
+        using var backgroundBrush = new SolidBrush(Color.FromArgb(235, 18, 18, 18));
+        graphics.FillRectangle(backgroundBrush, badgeRect);
+
+        switch (providerName)
+        {
+            case "Codex":
+                DrawCodexBadge(graphics, badgeRect);
+                break;
+            case "Cursor":
+                DrawCursorBadge(graphics, badgeRect);
+                break;
+            default:
+                DrawClaudeBadge(graphics, badgeRect);
+                break;
+        }
+    }
+
+    private static void DrawClaudeBadge(Graphics graphics, Rectangle rect)
+    {
+        using var brush = new SolidBrush(ClaudeTerracotta);
+        var cx = rect.Left + 3f;
+        var cy = rect.Top + 3f;
+        var points = new[]
+        {
+            new PointF(cx, rect.Top + 0.3f),
+            new PointF(cx + 0.9f, cy - 0.9f),
+            new PointF(rect.Right - 0.3f, cy),
+            new PointF(cx + 0.9f, cy + 0.9f),
+            new PointF(cx, rect.Bottom - 0.3f),
+            new PointF(cx - 0.9f, cy + 0.9f),
+            new PointF(rect.Left + 0.3f, cy),
+            new PointF(cx - 0.9f, cy - 0.9f)
+        };
+        graphics.FillPolygon(brush, points);
+    }
+
+    private static void DrawCodexBadge(Graphics graphics, Rectangle rect)
+    {
+        using var aquaBrush = new SolidBrush(ColorTranslator.FromHtml("#10A37F"));
+        using var darkBrush = new SolidBrush(ColorTranslator.FromHtml("#0B6B54"));
+
+        graphics.FillRectangle(aquaBrush, rect.Left + 1, rect.Top + 1, 2, 2);
+        graphics.FillRectangle(aquaBrush, rect.Left + 3, rect.Top + 3, 2, 2);
+        graphics.FillRectangle(darkBrush, rect.Left + 3, rect.Top + 1, 2, 2);
+        graphics.FillRectangle(darkBrush, rect.Left + 1, rect.Top + 3, 2, 2);
+    }
+
+    private static void DrawCursorBadge(Graphics graphics, Rectangle rect)
+    {
+        using var blackBrush = new SolidBrush(Color.Black);
+        using var whiteBrush = new SolidBrush(Color.White);
+
+        graphics.FillRectangle(whiteBrush, rect.Left + 1, rect.Top + 1, 4, 4);
+        graphics.FillRectangle(blackBrush, rect.Left + 3, rect.Top + 1, 2, 4);
+        graphics.FillRectangle(blackBrush, rect.Left + 1, rect.Top + 3, 4, 2);
     }
 
     /// <summary>

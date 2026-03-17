@@ -13,8 +13,7 @@ public class NotificationService
     private readonly NotifyIcon _notifyIcon;
     private readonly SettingsService _settingsService;
 
-    private bool _notifiedWarning;
-    private bool _notifiedCritical;
+    private readonly Dictionary<string, NotificationState> _providerStates = new(StringComparer.OrdinalIgnoreCase);
 
     public NotificationService(NotifyIcon notifyIcon, SettingsService settingsService)
     {
@@ -34,42 +33,54 @@ public class NotificationService
         if (!_settingsService.Settings.NotificationsEnabled)
             return;
 
+        var state = GetState(data.ProviderName);
         var utilization = data.Current.Utilization;
 
         // Reset flags when usage drops below thresholds
         if (utilization < WarningThreshold)
         {
-            _notifiedWarning = false;
-            _notifiedCritical = false;
+            state.NotifiedWarning = false;
+            state.NotifiedCritical = false;
             return;
         }
 
         if (utilization < CriticalThreshold)
         {
-            _notifiedCritical = false;
+            state.NotifiedCritical = false;
         }
 
         // Show critical notification at 95%
-        if (utilization >= CriticalThreshold && !_notifiedCritical)
+        if (utilization >= CriticalThreshold && !state.NotifiedCritical)
         {
-            _notifiedCritical = true;
-            _notifiedWarning = true; // Also mark warning as shown
+            state.NotifiedCritical = true;
+            state.NotifiedWarning = true;
             ShowNotification(
-                "Claude Usage Critical",
-                "Current session usage at 95%. You are about to hit the rate limit.",
+                $"{data.ProviderName} Usage Critical",
+                $"{data.PrimaryLabel} usage is at {utilization:F0}%. You are about to hit the limit.",
                 ToolTipIcon.Error);
             return;
         }
 
         // Show warning notification at 80%
-        if (utilization >= WarningThreshold && !_notifiedWarning)
+        if (utilization >= WarningThreshold && !state.NotifiedWarning)
         {
-            _notifiedWarning = true;
+            state.NotifiedWarning = true;
             ShowNotification(
-                "Claude Usage Warning",
-                "Current session usage at 80%. Consider pacing.",
+                $"{data.ProviderName} Usage Warning",
+                $"{data.PrimaryLabel} usage is at {utilization:F0}%. Consider pacing.",
                 ToolTipIcon.Warning);
         }
+    }
+
+    private NotificationState GetState(string providerName)
+    {
+        if (!_providerStates.TryGetValue(providerName, out var state))
+        {
+            state = new NotificationState();
+            _providerStates[providerName] = state;
+        }
+
+        return state;
     }
 
     /// <summary>
@@ -78,5 +89,11 @@ public class NotificationService
     private void ShowNotification(string title, string text, ToolTipIcon icon)
     {
         _notifyIcon.ShowBalloonTip(5000, title, text, icon);
+    }
+
+    private sealed class NotificationState
+    {
+        public bool NotifiedWarning { get; set; }
+        public bool NotifiedCritical { get; set; }
     }
 }

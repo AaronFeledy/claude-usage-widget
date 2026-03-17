@@ -10,7 +10,12 @@ namespace ClaudeUsageWidget.TrayIcon;
 /// </summary>
 public class TrayApplicationContext : ApplicationContext
 {
+    private static readonly string[] DefaultProviderOrder = ["Claude", "Codex", "Cursor"];
+
     private readonly UsageApiClient _usageApiClient;
+    private readonly CodexCredentialService _codexCredentialService;
+    private readonly CodexUsageClient _codexUsageClient;
+    private readonly CursorUsageClient _cursorUsageClient;
     private readonly CredentialService _credentialService;
     private readonly SettingsService _settingsService;
     private readonly NotificationService _notificationService;
@@ -20,15 +25,18 @@ public class TrayApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _pollTimer;
     private readonly ContextMenuStrip _contextMenu;
 
-    private UsageData? _lastUsageData;
+    private readonly Dictionary<string, UsageData> _providerUsage = new(StringComparer.OrdinalIgnoreCase);
     private bool _isPolling;
     private Icon? _currentIcon;
     private UsagePopup? _popup;
     private DebugConsole? _debugConsole;
 
-    public TrayApplicationContext(UsageApiClient usageApiClient, CredentialService credentialService, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
+    public TrayApplicationContext(UsageApiClient usageApiClient, CodexCredentialService codexCredentialService, CodexUsageClient codexUsageClient, CursorUsageClient cursorUsageClient, CredentialService credentialService, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
     {
         _usageApiClient = usageApiClient;
+        _codexCredentialService = codexCredentialService;
+        _codexUsageClient = codexUsageClient;
+        _cursorUsageClient = cursorUsageClient;
         _credentialService = credentialService;
         _settingsService = settingsService;
         _debugService = debugService;
@@ -50,7 +58,7 @@ public class TrayApplicationContext : ApplicationContext
         _contextMenu.Items.Add("Quit", null, OnQuit);
 
         // Create the notify icon with a placeholder icon
-        _currentIcon = IconGenerator.GeneratePlaceholderIcon();
+        _currentIcon = IconGenerator.GeneratePlaceholderIcon(GetPrimaryProviderName());
         _notifyIcon = new NotifyIcon
         {
             Icon = _currentIcon,
@@ -98,16 +106,31 @@ public class TrayApplicationContext : ApplicationContext
 
             // If last attempt needed reauth, reload credentials from disk
             // in case the user has re-authenticated externally
-            if (_lastUsageData?.NeedsReauth == true)
+            if (GetProviderData("Claude")?.NeedsReauth == true)
                 _credentialService.ReloadCredentials();
+            if (GetProviderData("Codex")?.NeedsReauth == true)
+                _codexCredentialService.ReloadCredentials();
 
-            _lastUsageData = await _usageApiClient.FetchUsageAsync();
+            var fetchTasks = new Task<UsageData>[]
+            {
+                _usageApiClient.FetchUsageAsync(),
+                _codexUsageClient.FetchUsageAsync(),
+                _cursorUsageClient.FetchUsageAsync()
+            };
+
+            var results = await Task.WhenAll(fetchTasks);
+            _providerUsage.Clear();
+            foreach (var result in results)
+            {
+                _providerUsage[result.ProviderName] = result;
+            }
+
             UpdateTooltip();
             UpdateIcon();
             UpdatePopup();
 
             // Check and show notifications if thresholds are reached
-            _notificationService.CheckAndNotify(_lastUsageData);
+            _notificationService.CheckAndNotify(GetPreferredNotificationData());
         }
         finally
         {
@@ -120,48 +143,43 @@ public class TrayApplicationContext : ApplicationContext
     /// </summary>
     private void UpdateTooltip()
     {
-        if (_lastUsageData == null)
+        if (_providerUsage.Count == 0)
         {
-            _notifyIcon.Text = "Claude: No data";
+            _notifyIcon.Text = "Usage: No data";
             return;
         }
 
-        if (!_lastUsageData.IsSuccess)
+        var successfulProviders = GetOrderedUsageData()
+            .Where(x => x.IsSuccess)
+            .Select(FormatProviderTooltip)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToList();
+
+        if (successfulProviders.Count > 0)
         {
-            if (_lastUsageData.NeedsReauth)
-            {
-                _notifyIcon.Text = "Claude: Token expired — run 'claude' to re-auth";
-            }
-            else
-            {
-                var errorMsg = _lastUsageData.Error ?? "Unknown error";
-                if (errorMsg.Length > 100)
-                    errorMsg = errorMsg[..97] + "...";
-                _notifyIcon.Text = $"Claude: Error - {errorMsg}";
-            }
+            var tooltip = string.Join(" · ", successfulProviders);
+            _notifyIcon.Text = tooltip.Length > 127 ? tooltip[..127] : tooltip;
             return;
         }
 
-        var current = _lastUsageData.Current;
-        var weekly = _lastUsageData.Weekly;
-
-        // Format: "Claude: Current 42% (2h 18m) | Weekly 31%"
-        var tooltip = $"Claude: {current.Utilization:F0}% ({current.TimeUntilReset}) · w:{weekly.Utilization:F0}% ({weekly.TimeUntilReset})";
-
-        // Add warning if weekly > 70%
-        if (weekly.Utilization > 70)
+        var firstFailure = GetOrderedUsageData().FirstOrDefault();
+        if (firstFailure == null)
         {
-            var resetDay = GetResetDayName(weekly.ResetsAt);
-            tooltip += $"\n\u26a0 Weekly: {weekly.Utilization:F0}% (resets {resetDay})";
+            _notifyIcon.Text = "Usage: No data";
+            return;
         }
 
-        // NotifyIcon.Text has a max length of 127 characters
-        if (tooltip.Length > 127)
+        if (firstFailure.NeedsReauth)
         {
-            tooltip = tooltip[..127];
+            var command = firstFailure.ReauthCommand ?? firstFailure.ProviderName.ToLowerInvariant();
+            _notifyIcon.Text = $"{firstFailure.ProviderName}: run '{command}' to re-auth";
+            return;
         }
 
-        _notifyIcon.Text = tooltip;
+        var errorMsg = firstFailure.Error ?? "Unknown error";
+        if (errorMsg.Length > 90)
+            errorMsg = errorMsg[..87] + "...";
+        _notifyIcon.Text = $"{firstFailure.ProviderName}: {errorMsg}";
     }
 
     /// <summary>
@@ -171,7 +189,7 @@ public class TrayApplicationContext : ApplicationContext
     {
         if (_popup != null && _popup.Visible)
         {
-            _popup.UpdateData(_lastUsageData);
+            _popup.UpdateData(GetOrderedUsageData());
         }
     }
 
@@ -183,24 +201,27 @@ public class TrayApplicationContext : ApplicationContext
     {
         Icon newIcon;
 
-        if (_lastUsageData == null)
+        var preferredData = GetPreferredIconData();
+
+        if (preferredData == null)
         {
-            newIcon = IconGenerator.GeneratePlaceholderIcon();
+            newIcon = IconGenerator.GeneratePlaceholderIcon(GetPrimaryProviderName());
         }
-        else if (!_lastUsageData.IsSuccess)
+        else if (!preferredData.IsSuccess)
         {
-            newIcon = IconGenerator.GenerateErrorIcon();
+            newIcon = IconGenerator.GenerateErrorIcon(preferredData.ProviderName);
         }
-        else if (_lastUsageData.Current.Utilization < 1f)
+        else if (preferredData.Current.Utilization < 1f)
         {
-            newIcon = IconGenerator.GenerateAppIcon();
+            newIcon = IconGenerator.GenerateAppIcon(preferredData.ProviderName);
         }
         else
         {
-            var burnRate = CalculateElapsedPercent(_lastUsageData.Current.ResetsAt, TimeSpan.FromHours(5));
+            var burnRate = CalculateElapsedPercent(preferredData.Current.ResetsAt, ResolveWindowDuration(preferredData));
             newIcon = IconGenerator.GenerateIcon(
-                _lastUsageData.Current.Utilization,
-                _lastUsageData.Weekly.Utilization,
+                preferredData.ProviderName,
+                preferredData.Current.Utilization,
+                preferredData.ShowSecondary ? preferredData.Weekly.Utilization : 0,
                 burnRate);
         }
 
@@ -244,24 +265,6 @@ public class TrayApplicationContext : ApplicationContext
     private static extern bool DestroyIcon(IntPtr handle);
 
     /// <summary>
-    /// Gets the abbreviated day name for when usage resets.
-    /// </summary>
-    private static string GetResetDayName(DateTime? resetsAt)
-    {
-        if (resetsAt == null) return "?";
-
-        var localReset = resetsAt.Value.ToLocalTime();
-        var today = DateTime.Today;
-
-        if (localReset.Date == today)
-            return "today";
-        if (localReset.Date == today.AddDays(1))
-            return "tomorrow";
-
-        return localReset.ToString("ddd");
-    }
-
-    /// <summary>
     /// Handles left-click on the tray icon to toggle the popup.
     /// </summary>
     private void OnNotifyIconClick(object? sender, MouseEventArgs e)
@@ -286,6 +289,9 @@ public class TrayApplicationContext : ApplicationContext
     {
         // Update the timer interval when refresh interval changes
         _pollTimer.Interval = _settingsService.Settings.RefreshIntervalSeconds * 1000;
+        UpdateTooltip();
+        UpdateIcon();
+        UpdatePopup();
     }
 
     /// <summary>
@@ -300,10 +306,73 @@ public class TrayApplicationContext : ApplicationContext
             _popup.OnSettingsChanged += OnSettingsChanged;
         }
 
-        _popup.UpdateData(_lastUsageData);
+        _popup.UpdateData(GetOrderedUsageData());
         _popup.PositionNearTray();
         _popup.Show();
         _popup.Activate();
+    }
+
+    private IReadOnlyList<string> GetProviderPreferenceOrder()
+    {
+        var primary = SettingsService.NormalizeProviderName(_settingsService.Settings.PrimaryProvider);
+        return DefaultProviderOrder
+            .OrderByDescending(name => name == primary)
+            .ThenBy(name => Array.IndexOf(DefaultProviderOrder, name))
+            .ToList();
+    }
+
+    private IReadOnlyList<UsageData> GetOrderedUsageData()
+    {
+        return GetProviderPreferenceOrder()
+            .Where(name => _providerUsage.ContainsKey(name))
+            .Select(name => _providerUsage[name])
+            .ToList();
+    }
+
+    private UsageData? GetProviderData(string providerName)
+    {
+        return _providerUsage.TryGetValue(providerName, out var data) ? data : null;
+    }
+
+    private UsageData? GetPreferredIconData()
+    {
+        foreach (var providerName in GetProviderPreferenceOrder())
+        {
+            if (_providerUsage.TryGetValue(providerName, out var data) && data.IsSuccess)
+                return data;
+        }
+
+        return GetOrderedUsageData().FirstOrDefault();
+    }
+
+    private UsageData? GetPreferredNotificationData()
+    {
+        return GetPreferredIconData();
+    }
+
+    private string GetPrimaryProviderName()
+    {
+        return SettingsService.NormalizeProviderName(_settingsService.Settings.PrimaryProvider);
+    }
+
+    private static string FormatProviderTooltip(UsageData data)
+    {
+        var primary = $"{data.ProviderName} {data.Current.Utilization:F0}% ({data.Current.TimeUntilReset})";
+        if (!data.ShowSecondary)
+            return primary;
+
+        return $"{primary}/{data.Weekly.Utilization:F0}%";
+    }
+
+    private static TimeSpan ResolveWindowDuration(UsageData data)
+    {
+        return data.ProviderName switch
+        {
+            "Claude" => TimeSpan.FromHours(5),
+            "Codex" => TimeSpan.FromHours(5),
+            "Cursor" => TimeSpan.FromDays(30),
+            _ => TimeSpan.FromHours(5)
+        };
     }
 
     /// <summary>
@@ -322,6 +391,7 @@ public class TrayApplicationContext : ApplicationContext
     {
         // Reload credentials from disk in case user re-authenticated
         _credentialService.ReloadCredentials();
+        _codexCredentialService.ReloadCredentials();
         await PollUsageAsync();
     }
 

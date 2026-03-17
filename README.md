@@ -1,6 +1,6 @@
 # Claude Usage Widget
 
-Windows system tray widget that shows your Claude Max subscription usage at a glance.
+Windows system tray widget that shows your Claude, Codex, and Cursor usage at a glance.
 
 [![Build](https://github.com/AaronFeledy/claude-usage-widget/actions/workflows/build.yml/badge.svg)](https://github.com/AaronFeledy/claude-usage-widget/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/AaronFeledy/claude-usage-widget)](https://github.com/AaronFeledy/claude-usage-widget/releases/latest)
@@ -8,12 +8,14 @@ Windows system tray widget that shows your Claude Max subscription usage at a gl
 
 ## Features
 
-- **Tray icon** — vertical fill bar shows 5-hour window usage at a glance
+- **Multi-provider popup** — Claude, Codex, and Cursor usage in one tray app
+- **Primary provider selection** — choose which service drives the tray icon, notifications, and top UI card
+- **Tray icon** — vertical fill bar plus provider badge for Claude, Codex, or Cursor
 - **Color-coded** — green → yellow → orange → red as usage increases
 - **Weekly overlay** — appears only when weekly usage exceeds 70%
 - **Hover tooltip** — shows usage percentages and time until reset
 - **Click popup** — detailed view with progress bars and reset timers
-- **Toast notifications** — warns at 80% and 95% usage thresholds
+- **Toast notifications** — warns at 80% and 95% usage thresholds for the selected primary provider
 - **Auto-refresh** — polls every 60 seconds
 - **Single exe** — no installer, no runtime dependencies
 
@@ -37,11 +39,23 @@ Right-click the tray icon → Settings → check "Start with Windows".
 ## Requirements
 
 - Windows 10/11
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) installed and logged in
+- At least one of [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview), OpenAI Codex, or Cursor logged in locally
 
 ## How It Works
 
-The widget reads OAuth credentials from Claude Code's credential store (`~/.claude/.credentials.json`) and calls the Anthropic usage API to fetch your current consumption. Tokens are automatically refreshed when expired.
+The widget reads provider state from local tools and browser sessions:
+
+- **Claude** — reads OAuth credentials from `~/.claude/.credentials.json` and calls the Anthropic usage API
+- **Codex** — reads auth from `~/.codex/auth.json` and calls the OpenAI Codex/ChatGPT usage endpoint
+- **Cursor** — reads Cursor session cookies from local Chromium browsers and calls Cursor's usage APIs
+
+Tokens are refreshed automatically when the provider supports it.
+
+For Cursor, the app currently looks for a logged-in session in Chromium-based browsers on Windows:
+
+- Chrome
+- Edge
+- Brave
 
 The tray icon fills from bottom to top based on your 5-hour utilization. Colors indicate severity:
 - **Green** (0-50%) — plenty of headroom
@@ -49,9 +63,17 @@ The tray icon fills from bottom to top based on your 5-hour utilization. Colors 
 - **Orange** (75-90%) — approaching limit
 - **Red** (90%+) — near or at limit
 
+The selected primary provider is also emphasized in the popup and used for notifications.
+
 ## Configuration
 
-The widget uses sensible defaults. No configuration required.
+The widget works with sensible defaults, but you can adjust a few things from the tray icon's Settings menu:
+
+- Primary provider (`Claude`, `Codex`, or `Cursor`)
+- Refresh interval
+- Notifications on/off
+- Start with Windows
+- Debug mode
 
 ## Building from Source
 

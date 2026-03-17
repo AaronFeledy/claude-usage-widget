@@ -213,48 +213,29 @@ public class UsageProgressBar : Panel
 /// </summary>
 public class UsagePopup : Form
 {
-    // Colors
     private static readonly Color BackgroundColor = Color.FromArgb(30, 30, 30);
     private static readonly Color TextColor = Color.White;
-    private static readonly Color SecondaryTextColor = Color.FromArgb(160, 160, 160);
     private static readonly Color SeparatorColor = Color.FromArgb(60, 60, 60);
     private static readonly Color ButtonBackColor = Color.FromArgb(50, 50, 50);
-    private static readonly Color ButtonHoverColor = Color.FromArgb(70, 70, 70);
 
-    // Layout constants
-    private const int NormalHeight = 200;
-    private const int ExpandedHeight = 335;
-
-    // Controls - Title bar
     private readonly Label _titleLabel;
-    // close button removed — popup dismissed by clicking away
-
-    // Controls - Current session section
-    private readonly Label _currentLabel;
-    private readonly UsageProgressBar _currentProgress;
-    private readonly Label _currentPercent;
-    private readonly Label _currentReset;
-
-    // Controls - Weekly section
-    private readonly Label _weeklyLabel;
-    private readonly UsageProgressBar _weeklyProgress;
-    private readonly Label _weeklyPercent;
-    private readonly Label _weeklyReset;
-
-    // Controls - Buttons
-    // Refresh/Settings/Quit buttons moved to tray context menu
-
-    // Controls - Settings panel
+    private readonly FlowLayoutPanel _providerList;
+    private readonly ProviderUsagePanel _claudePanel;
+    private readonly ProviderUsagePanel _codexPanel;
+    private readonly ProviderUsagePanel _cursorPanel;
     private readonly Panel _settingsPanel;
     private readonly CheckBox _startWithWindowsCheckbox;
     private readonly CheckBox _notificationsCheckbox;
     private readonly CheckBox _debugModeCheckbox;
+    private readonly Label _primaryProviderLabel;
+    private readonly ComboBox _primaryProviderCombo;
     private readonly Label _refreshIntervalLabel;
     private readonly ComboBox _refreshIntervalCombo;
 
     // State
     private SettingsService? _settingsService;
     private bool _settingsExpanded;
+    private int _collapsedHeight;
 
     // Events
     public event EventHandler? OnSettingsChanged;
@@ -266,22 +247,21 @@ public class UsagePopup : Form
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
         BackColor = BackgroundColor;
-        Size = new Size(280, NormalHeight);
+        Size = new Size(300, 420);
         TopMost = true;
 
-        // Title bar with app icon
         var titleIcon = new PictureBox
         {
             Size = new Size(20, 20),
             Location = new Point(10, 10),
             SizeMode = PictureBoxSizeMode.StretchImage,
-            Image = IconGenerator.GenerateAppIcon().ToBitmap()
+            Image = IconGenerator.GenerateAppIcon(includeBadge: false).ToBitmap()
         };
         Controls.Add(titleIcon);
 
         _titleLabel = new Label
         {
-            Text = "Claude Usage",
+            Text = "Usage Overview",
             Font = new Font("Segoe UI", 11, FontStyle.Bold),
             ForeColor = TextColor,
             Location = new Point(34, 10),
@@ -289,104 +269,32 @@ public class UsagePopup : Form
         };
         Controls.Add(_titleLabel);
 
-        // First separator
-        var sep1 = CreateSeparator(40);
-        Controls.Add(sep1);
-
-        // 5-Hour section
-        _currentLabel = new Label
+        _providerList = new FlowLayoutPanel
         {
-            Text = "Current Session",
-            Font = new Font("Segoe UI", 9, FontStyle.Bold),
-            ForeColor = TextColor,
-            Location = new Point(12, 52),
-            AutoSize = true
+            Location = new Point(12, 44),
+            Size = new Size(276, 320),
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
-        Controls.Add(_currentLabel);
 
-        _currentPercent = new Label
-        {
-            Text = "0%",
-            Font = new Font("Segoe UI", 9, FontStyle.Bold),
-            ForeColor = TextColor,
-            TextAlign = ContentAlignment.MiddleRight,
-            Size = new Size(40, 20),
-            Location = new Point(Width - 52, 52)
-        };
-        Controls.Add(_currentPercent);
+        _claudePanel = new ProviderUsagePanel("Claude");
+        _codexPanel = new ProviderUsagePanel("Codex");
+        _cursorPanel = new ProviderUsagePanel("Cursor");
+        _providerList.Controls.Add(_claudePanel);
+        _providerList.Controls.Add(_codexPanel);
+        _providerList.Controls.Add(_cursorPanel);
+        Controls.Add(_providerList);
 
-        _currentProgress = new UsageProgressBar
-        {
-            Location = new Point(12, 74),
-            Size = new Size(Width - 24, 16),
-            Notches = 4  // 5-hour session → 4 dividers
-        };
-        Controls.Add(_currentProgress);
-
-        _currentReset = new Label
-        {
-            Text = "Resets in --",
-            Font = new Font("Segoe UI", 8),
-            ForeColor = SecondaryTextColor,
-            Location = new Point(12, 94),
-            AutoSize = true
-        };
-        Controls.Add(_currentReset);
-
-        // Second separator
-        var sep2 = CreateSeparator(118);
-        Controls.Add(sep2);
-
-        // Weekly section
-        _weeklyLabel = new Label
-        {
-            Text = "Weekly",
-            Font = new Font("Segoe UI", 9, FontStyle.Bold),
-            ForeColor = TextColor,
-            Location = new Point(12, 130),
-            AutoSize = true
-        };
-        Controls.Add(_weeklyLabel);
-
-        _weeklyPercent = new Label
-        {
-            Text = "0%",
-            Font = new Font("Segoe UI", 9, FontStyle.Bold),
-            ForeColor = TextColor,
-            TextAlign = ContentAlignment.MiddleRight,
-            Size = new Size(40, 20),
-            Location = new Point(Width - 52, 130)
-        };
-        Controls.Add(_weeklyPercent);
-
-        _weeklyProgress = new UsageProgressBar
-        {
-            Location = new Point(12, 152),
-            Size = new Size(Width - 24, 16),
-            Notches = 6  // 7-day week → 6 dividers
-        };
-        Controls.Add(_weeklyProgress);
-
-        _weeklyReset = new Label
-        {
-            Text = "Resets --",
-            Font = new Font("Segoe UI", 8),
-            ForeColor = SecondaryTextColor,
-            Location = new Point(12, 172),
-            AutoSize = true
-        };
-        Controls.Add(_weeklyReset);
-
-        // Settings panel (initially hidden)
         _settingsPanel = new Panel
         {
             BackColor = BackgroundColor,
-            Location = new Point(0, NormalHeight),
-            Size = new Size(Width, ExpandedHeight - NormalHeight),
+            Location = new Point(0, _providerList.Bottom + 8),
+            Size = new Size(Width, 178),
             Visible = false
         };
 
-        // Settings separator
         var settingsSep = new Panel
         {
             BackColor = SeparatorColor,
@@ -395,7 +303,6 @@ public class UsagePopup : Form
         };
         _settingsPanel.Controls.Add(settingsSep);
 
-        // Settings title
         var settingsTitle = new Label
         {
             Text = "Settings",
@@ -406,7 +313,6 @@ public class UsagePopup : Form
         };
         _settingsPanel.Controls.Add(settingsTitle);
 
-        // Start with Windows checkbox
         _startWithWindowsCheckbox = new CheckBox
         {
             Text = "Start with Windows",
@@ -419,7 +325,6 @@ public class UsagePopup : Form
         _startWithWindowsCheckbox.CheckedChanged += OnStartWithWindowsChanged;
         _settingsPanel.Controls.Add(_startWithWindowsCheckbox);
 
-        // Notifications checkbox
         _notificationsCheckbox = new CheckBox
         {
             Text = "Enable notifications",
@@ -432,7 +337,6 @@ public class UsagePopup : Form
         _notificationsCheckbox.CheckedChanged += OnNotificationsChanged;
         _settingsPanel.Controls.Add(_notificationsCheckbox);
 
-        // Debug mode checkbox
         _debugModeCheckbox = new CheckBox
         {
             Text = "Debug mode (restart required)",
@@ -445,13 +349,36 @@ public class UsagePopup : Form
         _debugModeCheckbox.CheckedChanged += OnDebugModeChanged;
         _settingsPanel.Controls.Add(_debugModeCheckbox);
 
-        // Refresh interval
+        _primaryProviderLabel = new Label
+        {
+            Text = "Primary provider:",
+            Font = new Font("Segoe UI", 9),
+            ForeColor = TextColor,
+            Location = new Point(12, 114),
+            AutoSize = true
+        };
+        _settingsPanel.Controls.Add(_primaryProviderLabel);
+
+        _primaryProviderCombo = new ComboBox
+        {
+            Font = new Font("Segoe UI", 9),
+            Location = new Point(115, 111),
+            Size = new Size(110, 24),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = ButtonBackColor,
+            ForeColor = TextColor,
+            FlatStyle = FlatStyle.Flat
+        };
+        _primaryProviderCombo.Items.AddRange(new object[] { "Claude", "Codex", "Cursor" });
+        _primaryProviderCombo.SelectedIndexChanged += OnPrimaryProviderChanged;
+        _settingsPanel.Controls.Add(_primaryProviderCombo);
+
         _refreshIntervalLabel = new Label
         {
             Text = "Refresh interval:",
             Font = new Font("Segoe UI", 9),
             ForeColor = TextColor,
-            Location = new Point(12, 114),
+            Location = new Point(12, 142),
             AutoSize = true
         };
         _settingsPanel.Controls.Add(_refreshIntervalLabel);
@@ -459,7 +386,7 @@ public class UsagePopup : Form
         _refreshIntervalCombo = new ComboBox
         {
             Font = new Font("Segoe UI", 9),
-            Location = new Point(115, 111),
+            Location = new Point(115, 139),
             Size = new Size(80, 24),
             DropDownStyle = ComboBoxStyle.DropDownList,
             BackColor = ButtonBackColor,
@@ -470,7 +397,6 @@ public class UsagePopup : Form
         _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
         _settingsPanel.Controls.Add(_refreshIntervalCombo);
 
-        // Version label
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         var versionLabel = new Label
         {
@@ -483,8 +409,8 @@ public class UsagePopup : Form
         _settingsPanel.Controls.Add(versionLabel);
 
         Controls.Add(_settingsPanel);
+        RecalculateLayout();
 
-        // Handle losing focus — collapse settings on hide
         Deactivate += (_, _) =>
         {
             HideSettings();
@@ -499,6 +425,7 @@ public class UsagePopup : Form
     {
         _settingsService = settingsService;
         LoadSettingsToControls();
+        ApplyProviderOrder();
     }
 
     /// <summary>
@@ -514,11 +441,13 @@ public class UsagePopup : Form
         _startWithWindowsCheckbox.CheckedChanged -= OnStartWithWindowsChanged;
         _notificationsCheckbox.CheckedChanged -= OnNotificationsChanged;
         _debugModeCheckbox.CheckedChanged -= OnDebugModeChanged;
+        _primaryProviderCombo.SelectedIndexChanged -= OnPrimaryProviderChanged;
         _refreshIntervalCombo.SelectedIndexChanged -= OnRefreshIntervalChanged;
 
         _startWithWindowsCheckbox.Checked = settings.StartWithWindows;
         _notificationsCheckbox.Checked = settings.NotificationsEnabled;
         _debugModeCheckbox.Checked = settings.DebugMode;
+        _primaryProviderCombo.SelectedItem = SettingsService.NormalizeProviderName(settings.PrimaryProvider);
 
         // Map interval to combo index
         _refreshIntervalCombo.SelectedIndex = settings.RefreshIntervalSeconds switch
@@ -534,12 +463,10 @@ public class UsagePopup : Form
         _startWithWindowsCheckbox.CheckedChanged += OnStartWithWindowsChanged;
         _notificationsCheckbox.CheckedChanged += OnNotificationsChanged;
         _debugModeCheckbox.CheckedChanged += OnDebugModeChanged;
+        _primaryProviderCombo.SelectedIndexChanged += OnPrimaryProviderChanged;
         _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
     }
 
-    /// <summary>
-    /// Handles settings button click to expand/collapse settings panel.
-    /// </summary>
     /// <summary>
     /// Shows the settings panel (called from tray context menu).
     /// </summary>
@@ -549,8 +476,8 @@ public class UsagePopup : Form
         {
             _settingsExpanded = true;
             LoadSettingsToControls();
-            Height = ExpandedHeight;
             _settingsPanel.Visible = true;
+            RecalculateLayout();
             PositionNearTray();
         }
     }
@@ -563,8 +490,8 @@ public class UsagePopup : Form
         if (_settingsExpanded)
         {
             _settingsExpanded = false;
-            Height = NormalHeight;
             _settingsPanel.Visible = false;
+            RecalculateLayout();
             PositionNearTray();
         }
     }
@@ -607,113 +534,52 @@ public class UsagePopup : Form
         OnSettingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    private void OnPrimaryProviderChanged(object? sender, EventArgs e)
+    {
+        if (_settingsService == null)
+            return;
+
+        _settingsService.SetPrimaryProvider(_primaryProviderCombo.SelectedItem?.ToString());
+        OnSettingsChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>
     /// Updates the popup with new usage data.
     /// </summary>
-    public void UpdateData(UsageData? data)
+    public void UpdateData(IReadOnlyList<UsageData> providerData)
     {
-        if (data == null || !data.IsSuccess)
+        var providerMap = providerData.ToDictionary(x => x.ProviderName, StringComparer.OrdinalIgnoreCase);
+        _claudePanel.UpdateData(providerMap.TryGetValue("Claude", out var claude) ? claude : null);
+        _codexPanel.UpdateData(providerMap.TryGetValue("Codex", out var codex) ? codex : null);
+        _cursorPanel.UpdateData(providerMap.TryGetValue("Cursor", out var cursor) ? cursor : null);
+        ApplyProviderOrder();
+        RecalculateLayout();
+    }
+
+    private void ApplyProviderOrder()
+    {
+        var primaryProvider = SettingsService.NormalizeProviderName(_settingsService?.Settings.PrimaryProvider);
+        var panels = new[] { _claudePanel, _codexPanel, _cursorPanel };
+
+        foreach (var panel in panels)
         {
-            _currentProgress.Value = 0;
-            _currentPercent.Text = "--%";
-
-            if (data?.NeedsReauth == true)
-            {
-                _currentReset.Text = "⚠ Token expired. Run 'claude' to re-authenticate.";
-                _currentReset.ForeColor = Color.FromArgb(220, 53, 69);
-            }
-            else
-            {
-                _currentReset.Text = data?.Error ?? "No data";
-                _currentReset.ForeColor = SecondaryTextColor;
-            }
-
-            _weeklyProgress.Value = 0;
-            _weeklyPercent.Text = "--%";
-            _weeklyReset.Text = "";
-            return;
+            panel.SetProminent(panel.ProviderName == primaryProvider);
         }
 
-        _currentReset.ForeColor = SecondaryTextColor;
+        var orderedPanels = panels
+            .OrderByDescending(panel => panel.ProviderName == primaryProvider)
+            .ThenBy(panel => panel.ProviderName switch
+            {
+                "Claude" => 0,
+                "Codex" => 1,
+                _ => 2
+            })
+            .ToArray();
 
-        // Current session data
-        _currentProgress.Value = data.Current.Utilization;
-        _currentPercent.Text = $"{data.Current.Utilization:F0}%";
-        _currentReset.Text = $"Resets in {data.Current.TimeUntilReset}";
-        _currentProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, TimeSpan.FromHours(5));
-
-        // Weekly data
-        _weeklyProgress.Value = data.Weekly.Utilization;
-        _weeklyPercent.Text = $"{data.Weekly.Utilization:F0}%";
-        _weeklyReset.Text = GetWeeklyResetText(data.Weekly.ResetsAt);
-        _weeklyProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, TimeSpan.FromDays(7));
-    }
-
-    /// <summary>
-    /// Calculates what percentage of the window has elapsed (0-100).
-    /// </summary>
-    private static float CalculateElapsedPercent(DateTime? resetsAt, TimeSpan windowDuration)
-    {
-        if (resetsAt == null)
-            return -1;
-
-        var remaining = resetsAt.Value - DateTime.UtcNow;
-        if (remaining <= TimeSpan.Zero)
-            return 100;
-
-        var elapsed = windowDuration - remaining;
-        if (elapsed <= TimeSpan.Zero)
-            return 0;
-
-        return (float)(elapsed / windowDuration * 100);
-    }
-
-    /// <summary>
-    /// Gets the reset text for weekly usage showing local time.
-    /// </summary>
-    private static string GetWeeklyResetText(DateTime? resetsAt)
-    {
-        if (resetsAt == null)
-            return "Resets --";
-
-        var localReset = resetsAt.Value.ToLocalTime();
-        return $"Resets {localReset:ddd h:mm tt}";
-    }
-
-    /// <summary>
-    /// Creates a dark themed flat button.
-    /// </summary>
-    private static Button CreateFlatButton(string text, float fontSize)
-    {
-        var button = new Button
+        for (var i = 0; i < orderedPanels.Length; i++)
         {
-            Text = text,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = ButtonBackColor,
-            ForeColor = TextColor,
-            Font = new Font("Segoe UI", fontSize),
-            Cursor = Cursors.Hand
-        };
-
-        button.FlatAppearance.BorderColor = SeparatorColor;
-        button.FlatAppearance.BorderSize = 1;
-        button.FlatAppearance.MouseOverBackColor = ButtonHoverColor;
-        button.FlatAppearance.MouseDownBackColor = ButtonHoverColor;
-
-        return button;
-    }
-
-    /// <summary>
-    /// Creates a horizontal separator line.
-    /// </summary>
-    private Panel CreateSeparator(int y)
-    {
-        return new Panel
-        {
-            BackColor = SeparatorColor,
-            Location = new Point(12, y),
-            Size = new Size(Width - 24, 1)
-        };
+            _providerList.Controls.SetChildIndex(orderedPanels[i], i);
+        }
     }
 
     /// <summary>
@@ -746,6 +612,14 @@ public class UsagePopup : Form
         }
 
         Location = new Point(x, y);
+    }
+
+    private void RecalculateLayout()
+    {
+        _providerList.Location = new Point(12, 44);
+        _settingsPanel.Location = new Point(0, _providerList.Bottom + 8);
+        _collapsedHeight = _providerList.Bottom + 12;
+        Height = _settingsExpanded ? _collapsedHeight + _settingsPanel.Height : _collapsedHeight;
     }
 
     protected override void OnPaint(PaintEventArgs e)

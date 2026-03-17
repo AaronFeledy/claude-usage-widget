@@ -12,6 +12,7 @@ public class AppSettings
     public bool StartWithWindows { get; set; } = false;
     public bool NotificationsEnabled { get; set; } = true;
     public bool DebugMode { get; set; } = false;
+    public string PrimaryProvider { get; set; } = "Claude";
 }
 
 /// <summary>
@@ -52,6 +53,7 @@ public class SettingsService
                 if (loaded != null)
                 {
                     _settings = loaded;
+                    _settings.PrimaryProvider = NormalizeProviderName(_settings.PrimaryProvider);
                 }
             }
         }
@@ -117,5 +119,21 @@ public class SettingsService
         }
 
         Save();
+    }
+
+    public void SetPrimaryProvider(string? providerName)
+    {
+        _settings.PrimaryProvider = NormalizeProviderName(providerName);
+        Save();
+    }
+
+    public static string NormalizeProviderName(string? providerName)
+    {
+        return providerName?.Trim() switch
+        {
+            "Codex" => "Codex",
+            "Cursor" => "Cursor",
+            _ => "Claude"
+        };
     }
 }

@@ -55,6 +55,46 @@ public class UsageBucket
 public class UsageData
 {
     /// <summary>
+    /// Provider display name.
+    /// </summary>
+    public string ProviderName { get; set; } = "Claude";
+
+    /// <summary>
+    /// Label for the primary usage bucket.
+    /// </summary>
+    public string PrimaryLabel { get; set; } = "Current Session";
+
+    /// <summary>
+    /// Label for the secondary usage bucket.
+    /// </summary>
+    public string SecondaryLabel { get; set; } = "Weekly";
+
+    /// <summary>
+    /// Whether the secondary usage bucket should be shown.
+    /// </summary>
+    public bool ShowSecondary { get; set; } = true;
+
+    /// <summary>
+    /// Optional short subtitle shown under the provider title.
+    /// </summary>
+    public string? Subtitle { get; set; }
+
+    /// <summary>
+    /// Optional override for the primary status line.
+    /// </summary>
+    public string? PrimaryStatusText { get; set; }
+
+    /// <summary>
+    /// Optional override for the secondary status line.
+    /// </summary>
+    public string? SecondaryStatusText { get; set; }
+
+    /// <summary>
+    /// Suggested command or action to re-authenticate this provider.
+    /// </summary>
+    public string? ReauthCommand { get; set; } = "claude";
+
+    /// <summary>
     /// Current session rolling usage bucket.
     /// </summary>
     public UsageBucket Current { get; set; } = new();

@@ -39,7 +39,19 @@ static class Program
         var debugService = new DebugService();
         var credentialService = new CredentialService(httpClient, debugService);
         var usageApiClient = new UsageApiClient(httpClient, credentialService, debugService);
+        var codexCredentialService = new CodexCredentialService(httpClient, debugService);
+        var codexUsageClient = new CodexUsageClient(httpClient, codexCredentialService, debugService);
+        var browserCookieReader = new WindowsBrowserCookieReader(debugService);
+        var cursorUsageClient = new CursorUsageClient(httpClient, browserCookieReader, debugService);
 
-        Application.Run(new TrayApplicationContext(usageApiClient, credentialService, settingsService, debugService, httpClient));
+        Application.Run(new TrayApplicationContext(
+            usageApiClient,
+            codexCredentialService,
+            codexUsageClient,
+            cursorUsageClient,
+            credentialService,
+            settingsService,
+            debugService,
+            httpClient));
     }
 }
