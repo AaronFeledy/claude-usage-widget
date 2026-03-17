@@ -38,7 +38,7 @@ public class CursorUsageClient
             var cookieHeader = _cachedCookieHeader ?? _cookieReader.ReadCursorCookieHeader();
             if (string.IsNullOrWhiteSpace(cookieHeader))
             {
-                usageData.Error = "Log in to cursor.com in Chrome, Edge, or Brave.";
+                usageData.Error = "Log in to cursor.com in Chrome, Edge, Brave, or Firefox.";
                 return usageData;
             }
 

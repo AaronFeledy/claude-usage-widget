@@ -22,24 +22,21 @@ public class CredentialService
     private const string TokenRefreshUrl = "https://platform.claude.com/v1/oauth/token";
     private const string OAuthClientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
     
-    private readonly string _credentialsPath;
     private readonly HttpClient _httpClient;
     private readonly DebugService? _debugService;
     private readonly object _lock = new();
 
+    private string? _credentialsPath;
+    private ClaudeCredentialSource _credentialSource;
     private string? _accessToken;
     private string? _refreshToken;
+    private string? _subscriptionType;
     private DateTime _expiresAt;
 
     public CredentialService(HttpClient httpClient, DebugService? debugService = null)
     {
         _httpClient = httpClient;
         _debugService = debugService;
-        _credentialsPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".claude",
-            ".credentials.json"
-        );
     }
 
     /// <summary>
@@ -54,6 +51,19 @@ public class CredentialService
                 if (_accessToken == null)
                     LoadCredentials();
                 return _accessToken;
+            }
+        }
+    }
+
+    public string? SubscriptionType
+    {
+        get
+        {
+            lock (_lock)
+            {
+                if (_accessToken == null)
+                    LoadCredentials();
+                return _subscriptionType;
             }
         }
     }
@@ -80,6 +90,8 @@ public class CredentialService
     {
         lock (_lock)
         {
+            _credentialsPath = ResolveCredentialsPath();
+
             _debugService?.LogInfo("Credentials", $"Loading credentials from {_credentialsPath}");
             
             if (!File.Exists(_credentialsPath))
@@ -91,18 +103,17 @@ public class CredentialService
             var json = File.ReadAllText(_credentialsPath);
             var doc = JsonDocument.Parse(json);
 
-            if (!doc.RootElement.TryGetProperty("claudeAiOauth", out var oauthSection))
+            switch (_credentialSource)
             {
-                _debugService?.LogError("Credentials", "claudeAiOauth section not found in credentials file");
-                throw new InvalidOperationException("claudeAiOauth section not found in credentials file");
+                case ClaudeCredentialSource.ClaudeCredentials:
+                    LoadClaudeCredentials(doc.RootElement);
+                    break;
+                case ClaudeCredentialSource.OpenCodeAuth:
+                    LoadOpenCodeCredentials(doc.RootElement);
+                    break;
+                default:
+                    throw new InvalidOperationException("Unknown Claude credential source");
             }
-
-            _accessToken = oauthSection.GetProperty("accessToken").GetString();
-            _refreshToken = oauthSection.GetProperty("refreshToken").GetString();
-            
-            // expiresAt is in milliseconds since Unix epoch
-            var expiresAtMs = oauthSection.GetProperty("expiresAt").GetInt64();
-            _expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(expiresAtMs).UtcDateTime;
             
             var expiresIn = _expiresAt - DateTime.UtcNow;
             _debugService?.LogInfo("Credentials", "Credentials loaded successfully", 
@@ -195,6 +206,7 @@ public class CredentialService
     /// </summary>
     private async Task SaveCredentialsAsync(string accessToken, string refreshToken, DateTime expiresAt)
     {
+        _credentialsPath ??= ResolveCredentialsPath();
         if (!File.Exists(_credentialsPath))
             return;
 
@@ -204,13 +216,33 @@ public class CredentialService
         if (jsonNode == null)
             return;
 
-        var oauthSection = jsonNode["claudeAiOauth"];
-        if (oauthSection == null)
-            return;
+        switch (_credentialSource)
+        {
+            case ClaudeCredentialSource.ClaudeCredentials:
+            {
+                var oauthSection = jsonNode["claudeAiOauth"];
+                if (oauthSection == null)
+                    return;
 
-        oauthSection["accessToken"] = accessToken;
-        oauthSection["refreshToken"] = refreshToken;
-        oauthSection["expiresAt"] = new DateTimeOffset(expiresAt).ToUnixTimeMilliseconds();
+                oauthSection["accessToken"] = accessToken;
+                oauthSection["refreshToken"] = refreshToken;
+                oauthSection["expiresAt"] = new DateTimeOffset(expiresAt).ToUnixTimeMilliseconds();
+                break;
+            }
+            case ClaudeCredentialSource.OpenCodeAuth:
+            {
+                var oauthSection = jsonNode["anthropic"];
+                if (oauthSection == null)
+                    return;
+
+                oauthSection["access"] = accessToken;
+                oauthSection["refresh"] = refreshToken;
+                oauthSection["expires"] = new DateTimeOffset(expiresAt).ToUnixTimeMilliseconds();
+                break;
+            }
+            default:
+                return;
+        }
 
         var options = new JsonSerializerOptions { WriteIndented = true };
         var updatedJson = jsonNode.ToJsonString(options);
@@ -227,8 +259,116 @@ public class CredentialService
         {
             _accessToken = null;
             _refreshToken = null;
+            _subscriptionType = null;
             _expiresAt = DateTime.MinValue;
             LoadCredentials();
         }
+    }
+
+    private void LoadClaudeCredentials(JsonElement root)
+    {
+        if (!root.TryGetProperty("claudeAiOauth", out var oauthSection))
+        {
+            _debugService?.LogError("Credentials", "claudeAiOauth section not found in credentials file");
+            throw new InvalidOperationException("claudeAiOauth section not found in credentials file");
+        }
+
+        _accessToken = oauthSection.GetProperty("accessToken").GetString();
+        _refreshToken = oauthSection.GetProperty("refreshToken").GetString();
+        _subscriptionType = oauthSection.TryGetProperty("subscriptionType", out var subscriptionType)
+            ? NormalizeSubscriptionType(subscriptionType.GetString())
+            : TryInferSubscriptionType(oauthSection);
+        var expiresAtMs = oauthSection.GetProperty("expiresAt").GetInt64();
+        _expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(expiresAtMs).UtcDateTime;
+    }
+
+    private void LoadOpenCodeCredentials(JsonElement root)
+    {
+        if (!root.TryGetProperty("anthropic", out var anthropicSection))
+        {
+            _debugService?.LogError("Credentials", "anthropic section not found in OpenCode auth file");
+            throw new InvalidOperationException("anthropic section not found in OpenCode auth file");
+        }
+
+        _accessToken = anthropicSection.GetProperty("access").GetString();
+        _refreshToken = anthropicSection.GetProperty("refresh").GetString();
+        _subscriptionType = null;
+        var expiresAtMs = anthropicSection.GetProperty("expires").GetInt64();
+        _expiresAt = DateTimeOffset.FromUnixTimeMilliseconds(expiresAtMs).UtcDateTime;
+    }
+
+    private static string? TryInferSubscriptionType(JsonElement oauthSection)
+    {
+        if (!oauthSection.TryGetProperty("rateLimitTier", out var rateLimitTier))
+            return null;
+
+        var tier = rateLimitTier.GetString();
+        if (string.IsNullOrWhiteSpace(tier))
+            return null;
+
+        if (tier.Contains("max", StringComparison.OrdinalIgnoreCase))
+            return "Max";
+
+        if (tier.Contains("pro", StringComparison.OrdinalIgnoreCase))
+            return "Pro";
+
+        if (tier.Contains("free", StringComparison.OrdinalIgnoreCase))
+            return "Free";
+
+        return null;
+    }
+
+    private static string? NormalizeSubscriptionType(string? subscriptionType)
+    {
+        if (string.IsNullOrWhiteSpace(subscriptionType))
+            return null;
+
+        return subscriptionType.Trim().ToLowerInvariant() switch
+        {
+            "max" => "Max",
+            "pro" => "Pro",
+            "free" => "Free",
+            var other => char.ToUpperInvariant(other[0]) + other[1..]
+        };
+    }
+
+    private string ResolveCredentialsPath()
+    {
+        var windowsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".claude",
+            ".credentials.json"
+        );
+
+        if (File.Exists(windowsPath))
+        {
+            _credentialSource = ClaudeCredentialSource.ClaudeCredentials;
+            return windowsPath;
+        }
+
+        var wslPath = WslPathResolver.ResolveHomeRelativePath(".claude", ".credentials.json");
+        if (!string.IsNullOrWhiteSpace(wslPath) && File.Exists(wslPath))
+        {
+            _credentialSource = ClaudeCredentialSource.ClaudeCredentials;
+            _debugService?.LogInfo("Credentials", $"Using WSL fallback credentials at {wslPath}");
+            return wslPath;
+        }
+
+        var openCodePath = WslPathResolver.ResolveOpenCodeAuthPath();
+        if (!string.IsNullOrWhiteSpace(openCodePath) && File.Exists(openCodePath))
+        {
+            _credentialSource = ClaudeCredentialSource.OpenCodeAuth;
+            _debugService?.LogInfo("Credentials", $"Using OpenCode fallback auth at {openCodePath}");
+            return openCodePath;
+        }
+
+        _credentialSource = ClaudeCredentialSource.ClaudeCredentials;
+        return windowsPath;
+    }
+
+    private enum ClaudeCredentialSource
+    {
+        ClaudeCredentials,
+        OpenCodeAuth
     }
 }

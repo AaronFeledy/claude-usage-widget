@@ -21,10 +21,13 @@ public class CodexCredentialService
     private readonly DebugService? _debugService;
     private readonly object _lock = new();
 
+    private string? _credentialsPath;
+    private CodexCredentialSource _credentialSource;
     private string? _accessToken;
     private string? _refreshToken;
     private string? _accountId;
     private DateTime? _lastRefreshUtc;
+    private DateTime? _expiresAtUtc;
 
     public CodexCredentialService(HttpClient httpClient, DebugService? debugService = null)
     {
@@ -70,6 +73,9 @@ public class CodexCredentialService
             if (string.IsNullOrWhiteSpace(_refreshToken))
                 return false;
 
+            if (_expiresAtUtc.HasValue)
+                return DateTime.UtcNow >= _expiresAtUtc.Value.AddMinutes(-5);
+
             return !_lastRefreshUtc.HasValue || DateTime.UtcNow - _lastRefreshUtc.Value > RefreshWindow;
         }
     }
@@ -78,7 +84,8 @@ public class CodexCredentialService
     {
         lock (_lock)
         {
-            var credentialsPath = GetCredentialsPath();
+            var credentialsPath = ResolveCredentialsPath();
+            _credentialsPath = credentialsPath;
             _debugService?.LogInfo("CodexAuth", $"Loading credentials from {credentialsPath}");
 
             if (!File.Exists(credentialsPath))
@@ -88,31 +95,16 @@ public class CodexCredentialService
             var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("OPENAI_API_KEY", out var apiKeyElement))
+            switch (_credentialSource)
             {
-                var apiKey = apiKeyElement.GetString();
-                if (!string.IsNullOrWhiteSpace(apiKey))
-                {
-                    _accessToken = apiKey;
-                    _refreshToken = null;
-                    _accountId = null;
-                    _lastRefreshUtc = null;
-                    return;
-                }
-            }
-
-            if (!root.TryGetProperty("tokens", out var tokens))
-                throw new InvalidOperationException("Codex auth.json is missing tokens");
-
-            _accessToken = tokens.GetProperty("access_token").GetString();
-            _refreshToken = tokens.TryGetProperty("refresh_token", out var refreshToken) ? refreshToken.GetString() : null;
-            _accountId = tokens.TryGetProperty("account_id", out var accountId) ? accountId.GetString() : null;
-
-            if (root.TryGetProperty("last_refresh", out var lastRefresh))
-            {
-                var lastRefreshStr = lastRefresh.GetString();
-                if (!string.IsNullOrWhiteSpace(lastRefreshStr) && DateTime.TryParse(lastRefreshStr, out var parsed))
-                    _lastRefreshUtc = parsed.ToUniversalTime();
+                case CodexCredentialSource.CodexAuth:
+                    LoadCodexAuth(root);
+                    break;
+                case CodexCredentialSource.OpenCodeAuth:
+                    LoadOpenCodeAuth(root);
+                    break;
+                default:
+                    throw new InvalidOperationException("Unknown Codex credential source");
             }
 
             if (string.IsNullOrWhiteSpace(_accessToken))
@@ -183,6 +175,9 @@ public class CodexCredentialService
                 _accessToken = newAccessToken;
                 _refreshToken = newRefreshToken;
                 _lastRefreshUtc = DateTime.UtcNow;
+                _expiresAtUtc = root.TryGetProperty("expires_in", out var expiresIn)
+                    ? DateTime.UtcNow.AddSeconds(expiresIn.GetInt32())
+                    : _expiresAtUtc;
             }
 
             await SaveCredentialsAsync();
@@ -203,43 +198,146 @@ public class CodexCredentialService
             _refreshToken = null;
             _accountId = null;
             _lastRefreshUtc = null;
+            _expiresAtUtc = null;
             LoadCredentials();
         }
     }
 
     private async Task SaveCredentialsAsync()
     {
-        var credentialsPath = GetCredentialsPath();
+        var credentialsPath = _credentialsPath ?? ResolveCredentialsPath();
         if (!File.Exists(credentialsPath))
             return;
 
         var json = await File.ReadAllTextAsync(credentialsPath);
         var jsonNode = JsonNode.Parse(json) ?? new JsonObject();
-        var tokensNode = jsonNode["tokens"] as JsonObject ?? new JsonObject();
+        switch (_credentialSource)
+        {
+            case CodexCredentialSource.CodexAuth:
+            {
+                var tokensNode = jsonNode["tokens"] as JsonObject ?? new JsonObject();
+                tokensNode["access_token"] = _accessToken;
+                if (!string.IsNullOrWhiteSpace(_refreshToken))
+                    tokensNode["refresh_token"] = _refreshToken;
+                if (!string.IsNullOrWhiteSpace(_accountId))
+                    tokensNode["account_id"] = _accountId;
 
-        tokensNode["access_token"] = _accessToken;
-        if (!string.IsNullOrWhiteSpace(_refreshToken))
-            tokensNode["refresh_token"] = _refreshToken;
-        if (!string.IsNullOrWhiteSpace(_accountId))
-            tokensNode["account_id"] = _accountId;
+                jsonNode["tokens"] = tokensNode;
+                jsonNode["last_refresh"] = DateTime.UtcNow.ToString("O");
+                break;
+            }
+            case CodexCredentialSource.OpenCodeAuth:
+            {
+                var tokensNode = jsonNode["openai"] as JsonObject ?? new JsonObject();
+                tokensNode["access"] = _accessToken;
+                if (!string.IsNullOrWhiteSpace(_refreshToken))
+                    tokensNode["refresh"] = _refreshToken;
+                if (!string.IsNullOrWhiteSpace(_accountId))
+                    tokensNode["accountId"] = _accountId;
+                if (_expiresAtUtc.HasValue)
+                    tokensNode["expires"] = new DateTimeOffset(_expiresAtUtc.Value).ToUnixTimeMilliseconds();
 
-        jsonNode["tokens"] = tokensNode;
-        jsonNode["last_refresh"] = DateTime.UtcNow.ToString("O");
+                jsonNode["openai"] = tokensNode;
+                break;
+            }
+            default:
+                return;
+        }
 
         var updatedJson = jsonNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(credentialsPath, updatedJson);
     }
 
-    private static string GetCredentialsPath()
+    private string ResolveCredentialsPath()
     {
         var codexHome = Environment.GetEnvironmentVariable("CODEX_HOME");
         if (!string.IsNullOrWhiteSpace(codexHome))
+        {
+            _credentialSource = CodexCredentialSource.CodexAuth;
             return Path.Combine(codexHome, "auth.json");
+        }
 
-        return Path.Combine(
+        var windowsPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".codex",
             "auth.json"
         );
+
+        if (File.Exists(windowsPath))
+        {
+            _credentialSource = CodexCredentialSource.CodexAuth;
+            return windowsPath;
+        }
+
+        var wslPath = WslPathResolver.ResolveCodexAuthPath();
+        if (!string.IsNullOrWhiteSpace(wslPath) && File.Exists(wslPath))
+        {
+            _credentialSource = CodexCredentialSource.CodexAuth;
+            _debugService?.LogInfo("CodexAuth", $"Using WSL fallback auth at {wslPath}");
+            return wslPath;
+        }
+
+        var openCodePath = WslPathResolver.ResolveOpenCodeAuthPath();
+        if (!string.IsNullOrWhiteSpace(openCodePath) && File.Exists(openCodePath))
+        {
+            _credentialSource = CodexCredentialSource.OpenCodeAuth;
+            _debugService?.LogInfo("CodexAuth", $"Using OpenCode fallback auth at {openCodePath}");
+            return openCodePath;
+        }
+
+        _credentialSource = CodexCredentialSource.CodexAuth;
+        return windowsPath;
+    }
+
+    private void LoadCodexAuth(JsonElement root)
+    {
+        _expiresAtUtc = null;
+
+        if (root.TryGetProperty("OPENAI_API_KEY", out var apiKeyElement))
+        {
+            var apiKey = apiKeyElement.GetString();
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                _accessToken = apiKey;
+                _refreshToken = null;
+                _accountId = null;
+                _lastRefreshUtc = null;
+                return;
+            }
+        }
+
+        if (!root.TryGetProperty("tokens", out var tokens))
+            throw new InvalidOperationException("Codex auth.json is missing tokens");
+
+        _accessToken = tokens.GetProperty("access_token").GetString();
+        _refreshToken = tokens.TryGetProperty("refresh_token", out var refreshToken) ? refreshToken.GetString() : null;
+        _accountId = tokens.TryGetProperty("account_id", out var accountId) ? accountId.GetString() : null;
+
+        if (root.TryGetProperty("last_refresh", out var lastRefresh))
+        {
+            var lastRefreshStr = lastRefresh.GetString();
+            if (!string.IsNullOrWhiteSpace(lastRefreshStr) && DateTime.TryParse(lastRefreshStr, out var parsed))
+                _lastRefreshUtc = parsed.ToUniversalTime();
+        }
+    }
+
+    private void LoadOpenCodeAuth(JsonElement root)
+    {
+        if (!root.TryGetProperty("openai", out var openAiSection))
+            throw new InvalidOperationException("OpenCode auth.json is missing openai credentials");
+
+        _accessToken = openAiSection.GetProperty("access").GetString();
+        _refreshToken = openAiSection.TryGetProperty("refresh", out var refreshToken) ? refreshToken.GetString() : null;
+        _accountId = openAiSection.TryGetProperty("accountId", out var accountId) ? accountId.GetString() : null;
+        _lastRefreshUtc = null;
+        _expiresAtUtc = openAiSection.TryGetProperty("expires", out var expires)
+            ? DateTimeOffset.FromUnixTimeMilliseconds(expires.GetInt64()).UtcDateTime
+            : null;
+    }
+
+    private enum CodexCredentialSource
+    {
+        CodexAuth,
+        OpenCodeAuth
     }
 }

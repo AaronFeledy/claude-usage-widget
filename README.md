@@ -47,15 +47,16 @@ The widget reads provider state from local tools and browser sessions:
 
 - **Claude** — reads OAuth credentials from `~/.claude/.credentials.json` and calls the Anthropic usage API
 - **Codex** — reads auth from `~/.codex/auth.json` and calls the OpenAI Codex/ChatGPT usage endpoint
-- **Cursor** — reads Cursor session cookies from local Chromium browsers and calls Cursor's usage APIs
+- **Cursor** — reads Cursor session cookies from supported local browsers and calls Cursor's usage APIs
 
 Tokens are refreshed automatically when the provider supports it.
 
-For Cursor, the app currently looks for a logged-in session in Chromium-based browsers on Windows:
+For Cursor, the app currently looks for a logged-in session in supported Windows browsers:
 
 - Chrome
 - Edge
 - Brave
+- Firefox
 
 The tray icon fills from bottom to top based on your 5-hour utilization. Colors indicate severity:
 - **Green** (0-50%) — plenty of headroom

@@ -22,24 +22,38 @@ public class WindowsBrowserCookieReader
 
     public string? ReadCursorCookieHeader()
     {
-        foreach (var browserRoot in GetBrowserRoots())
+        foreach (var chromiumBrowser in GetChromiumBrowserRoots())
         {
             try
             {
-                var cookieHeader = TryReadCookieHeader(browserRoot);
+                var cookieHeader = TryReadChromiumCookieHeader(chromiumBrowser);
                 if (!string.IsNullOrWhiteSpace(cookieHeader))
                     return cookieHeader;
             }
             catch (Exception ex)
             {
-                _debugService?.LogWarning("Cursor", $"Cookie import failed for {browserRoot.name}", ex.Message);
+                _debugService?.LogWarning("Cursor", $"Cookie import failed for {chromiumBrowser.name}", ex.Message);
+            }
+        }
+
+        foreach (var firefoxProfile in GetFirefoxProfiles())
+        {
+            try
+            {
+                var cookieHeader = TryReadFirefoxCookieHeader(firefoxProfile);
+                if (!string.IsNullOrWhiteSpace(cookieHeader))
+                    return cookieHeader;
+            }
+            catch (Exception ex)
+            {
+                _debugService?.LogWarning("Cursor", $"Cookie import failed for Firefox ({Path.GetFileName(firefoxProfile)})", ex.Message);
             }
         }
 
         return null;
     }
 
-    private string? TryReadCookieHeader((string name, string userDataPath) browserRoot)
+    private string? TryReadChromiumCookieHeader((string name, string userDataPath) browserRoot)
     {
         if (!Directory.Exists(browserRoot.userDataPath))
             return null;
@@ -56,6 +70,54 @@ public class WindowsBrowserCookieReader
         }
 
         return null;
+    }
+
+    private string? TryReadFirefoxCookieHeader(string profilePath)
+    {
+        var cookieDbPath = Path.Combine(profilePath, "cookies.sqlite");
+        if (!File.Exists(cookieDbPath))
+            return null;
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"cursor-firefox-cookies-{Guid.NewGuid():N}.sqlite");
+        File.Copy(cookieDbPath, tempPath, overwrite: true);
+
+        try
+        {
+            using var connection = new SqliteConnection($"Data Source={tempPath}");
+            connection.Open();
+
+            using var command = connection.CreateCommand();
+            command.CommandText = @"
+                SELECT host, name, value
+                FROM moz_cookies
+                WHERE (host LIKE '%cursor.com' OR host LIKE '%cursor.sh')
+                  AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')
+                ORDER BY LENGTH(host) DESC, expiry DESC, lastAccessed DESC";
+
+            using var reader = command.ExecuteReader();
+            var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            while (reader.Read())
+            {
+                var name = reader.GetString(1);
+                if (cookies.ContainsKey(name))
+                    continue;
+
+                var value = reader.GetString(2);
+                if (!string.IsNullOrWhiteSpace(value))
+                    cookies[name] = value;
+            }
+
+            if (cookies.Count == 0)
+                return null;
+
+            _debugService?.LogInfo("Cursor", "Using browser cookies from Firefox", cookieDbPath);
+            return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+        }
     }
 
     private string? TryReadCookiesFromDatabase(string cookieDbPath, byte[] masterKey)
@@ -168,13 +230,24 @@ public class WindowsBrowserCookieReader
         }
     }
 
-    private static IEnumerable<(string name, string userDataPath)> GetBrowserRoots()
+    private static IEnumerable<(string name, string userDataPath)> GetChromiumBrowserRoots()
     {
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
         yield return ("Chrome", Path.Combine(localAppData, "Google", "Chrome", "User Data"));
         yield return ("Edge", Path.Combine(localAppData, "Microsoft", "Edge", "User Data"));
         yield return ("Brave", Path.Combine(localAppData, "BraveSoftware", "Brave-Browser", "User Data"));
+    }
+
+    private static IEnumerable<string> GetFirefoxProfiles()
+    {
+        var roamingAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var profilesRoot = Path.Combine(roamingAppData, "Mozilla", "Firefox", "Profiles");
+        if (!Directory.Exists(profilesRoot))
+            yield break;
+
+        foreach (var profileDir in Directory.EnumerateDirectories(profilesRoot))
+            yield return profileDir;
     }
 
     private static void TryDeleteFile(string path)

@@ -157,7 +157,7 @@ public class TrayApplicationContext : ApplicationContext
 
         if (successfulProviders.Count > 0)
         {
-            var tooltip = string.Join(" · ", successfulProviders);
+            var tooltip = string.Join("\n", successfulProviders);
             _notifyIcon.Text = tooltip.Length > 127 ? tooltip[..127] : tooltip;
             return;
         }
@@ -357,11 +357,11 @@ public class TrayApplicationContext : ApplicationContext
 
     private static string FormatProviderTooltip(UsageData data)
     {
-        var primary = $"{data.ProviderName} {data.Current.Utilization:F0}% ({data.Current.TimeUntilReset})";
+        var primary = $"{data.ProviderName}: {data.Current.Utilization:F0}% ({data.Current.TimeUntilReset})";
         if (!data.ShowSecondary)
             return primary;
 
-        return $"{primary}/{data.Weekly.Utilization:F0}%";
+        return $"{primary} | {data.Weekly.Utilization:F0}%";
     }
 
     private static TimeSpan ResolveWindowDuration(UsageData data)

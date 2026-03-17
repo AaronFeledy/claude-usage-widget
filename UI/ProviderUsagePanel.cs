@@ -9,14 +9,14 @@ public class ProviderUsagePanel : Panel
     private const int ContentLeft = 10;
     private const int ContentWidth = 256;
     private const int PercentWidth = 48;
-    private const int PrimaryLabelY = 42;
-    private const int PrimaryPercentY = 40;
-    private const int PrimaryProgressY = 60;
-    private const int PrimaryStatusY = 77;
-    private const int SecondaryLabelY = 94;
-    private const int SecondaryPercentY = 92;
-    private const int SecondaryProgressY = 112;
-    private const int SecondaryStatusY = 129;
+    private const int PrimaryLabelY = 36;
+    private const int PrimaryPercentY = 34;
+    private const int PrimaryProgressY = 54;
+    private const int PrimaryStatusY = 71;
+    private const int SecondaryLabelY = 88;
+    private const int SecondaryPercentY = 86;
+    private const int SecondaryProgressY = 106;
+    private const int SecondaryStatusY = 123;
 
     private static readonly Color BackgroundColor = Color.FromArgb(36, 36, 36);
     private static readonly Color ProminentBackgroundColor = Color.FromArgb(44, 44, 44);
@@ -24,6 +24,7 @@ public class ProviderUsagePanel : Panel
     private static readonly Color SecondaryTextColor = Color.FromArgb(160, 160, 160);
     private static readonly Color SeparatorColor = Color.FromArgb(60, 60, 60);
     private static readonly Color AccentColor = Color.FromArgb(217, 119, 87);
+    private static readonly Color PlanPillTextColor = Color.FromArgb(170, 170, 170);
 
     private readonly Label _titleLabel;
     private readonly Label _subtitleLabel;
@@ -60,10 +61,12 @@ public class ProviderUsagePanel : Panel
 
         _subtitleLabel = new Label
         {
-            Font = new Font("Segoe UI", 8),
-            ForeColor = SecondaryTextColor,
-            Location = new Point(10, 28),
-            AutoSize = true,
+            Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
+            ForeColor = PlanPillTextColor,
+            BackColor = Color.Transparent,
+            Location = new Point(ContentLeft + ContentWidth - 64, 12),
+            Size = new Size(64, 14),
+            TextAlign = ContentAlignment.TopRight,
             Visible = false
         };
         Controls.Add(_subtitleLabel);
@@ -131,6 +134,7 @@ public class ProviderUsagePanel : Panel
             _primaryStatusLabel.Text = data.NeedsReauth
                 ? BuildReauthText(data)
                 : data.Error ?? "Unavailable";
+            Invalidate();
             SetSecondaryVisible(false);
             return;
         }
@@ -153,6 +157,8 @@ public class ProviderUsagePanel : Panel
         {
             _secondaryStatusLabel.Text = data.SecondaryStatusText ?? string.Empty;
         }
+
+        Invalidate();
     }
 
     public void SetProminent(bool isProminent)
@@ -187,7 +193,7 @@ public class ProviderUsagePanel : Panel
         _secondaryPercentLabel.Visible = visible;
         _secondaryProgress.Visible = visible;
         _secondaryStatusLabel.Visible = visible;
-        Height = visible ? 158 : 98;
+        Height = visible ? 152 : 92;
     }
 
     private void ApplyProviderStyles(UsageData data)

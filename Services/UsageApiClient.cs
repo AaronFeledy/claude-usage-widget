@@ -140,6 +140,7 @@ public class UsageApiClient
             
             var json = await response.Content.ReadAsStringAsync();
             var usageData = ParseUsageResponse(json);
+            usageData.Subtitle = _credentialService.SubscriptionType;
             
             if (usageData.IsSuccess)
             {
