@@ -7,8 +7,8 @@ namespace ClaudeUsageWidget.Services;
 /// </summary>
 public class NotificationService
 {
-    private const float WarningThreshold = 80f;
-    private const float CriticalThreshold = 95f;
+    private const float WarningThreshold = 75f;
+    private const float CriticalThreshold = 90f;
 
     private readonly NotifyIcon _notifyIcon;
     private readonly SettingsService _settingsService;
@@ -22,7 +22,7 @@ public class NotificationService
     }
 
     /// <summary>
-    /// Checks utilization and shows notifications at 80% and 95% thresholds.
+    /// Checks utilization and shows notifications at 75% and 90% thresholds.
     /// Resets notification state when usage drops below thresholds.
     /// </summary>
     public void CheckAndNotify(UsageData? data)
@@ -49,7 +49,7 @@ public class NotificationService
             state.NotifiedCritical = false;
         }
 
-        // Show critical notification at 95%
+        // Show critical notification at 90%
         if (utilization >= CriticalThreshold && !state.NotifiedCritical)
         {
             state.NotifiedCritical = true;
@@ -61,7 +61,7 @@ public class NotificationService
             return;
         }
 
-        // Show warning notification at 80%
+        // Show warning notification at 75%
         if (utilization >= WarningThreshold && !state.NotifiedWarning)
         {
             state.NotifiedWarning = true;

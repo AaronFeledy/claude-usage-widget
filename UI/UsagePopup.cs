@@ -105,14 +105,27 @@ public class UsageProgressBar : Panel
     /// <summary>
     /// Gets the fill color based on utilization percentage.
     /// </summary>
-    private static Color GetFillColor(float utilization)
+    private static Color GetFillColor(float utilization, float burnRatePercent = -1)
     {
+        // If we have a burn rate and usage is below it, use tighter thresholds
+        if (burnRatePercent >= 0 && utilization < burnRatePercent)
+        {
+            return utilization switch
+            {
+                >= 95 => Color.FromArgb(244, 67, 54),    // Red    (#F44336)
+                >= 90 => Color.FromArgb(255, 152, 0),    // Orange (#FF9800)
+                >= 85 => Color.FromArgb(255, 193, 7),    // Yellow (#FFC107)
+                _ => Color.FromArgb(76, 175, 80)          // Green  (#4CAF50)
+            };
+        }
+
+        // At or above burn target — standard thresholds
         return utilization switch
         {
-            >= 90 => Color.FromArgb(220, 53, 69),   // Red
-            >= 75 => Color.FromArgb(255, 140, 0),   // Orange
-            >= 50 => Color.FromArgb(255, 193, 7),   // Yellow
-            _ => Color.FromArgb(40, 167, 69)         // Green
+            >= 90 => Color.FromArgb(244, 67, 54),    // Red    (#F44336)
+            >= 75 => Color.FromArgb(255, 152, 0),    // Orange (#FF9800)
+            >= 50 => Color.FromArgb(255, 193, 7),    // Yellow (#FFC107)
+            _ => Color.FromArgb(76, 175, 80)          // Green  (#4CAF50)
         };
     }
 
@@ -149,7 +162,7 @@ public class UsageProgressBar : Panel
             if (fillWidth > 0)
             {
                 var fillRect = new Rectangle(0, 0, fillWidth, Height - 1);
-                var fillColor = GetFillColor(_value);
+                var fillColor = GetFillColor(_value, _burnRatePercent);
 
                 using var fillBrush = new SolidBrush(fillColor);
                 using var fillPath = CreateRoundedRectPath(fillRect, CornerRadius, _value >= 100);
@@ -171,7 +184,7 @@ public class UsageProgressBar : Panel
             markerX = Math.Clamp(markerX, 2, Width - 3);
             var markerColor = _value > _burnRatePercent
                 ? Color.FromArgb(200, 244, 67, 54)    // Red — usage exceeded burn rate
-                : Color.FromArgb(200, 60, 140, 255);  // Blue — on track
+                : Color.FromArgb(200, 80, 160, 255);  // Blue — on track
             using var markerPen = new Pen(markerColor, 2);
             g.DrawLine(markerPen, markerX, 1, markerX, Height - 2);
         }

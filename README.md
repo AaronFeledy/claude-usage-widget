@@ -15,7 +15,7 @@ Windows system tray widget that shows your Claude, Codex, and Cursor usage at a 
 - **Weekly overlay** — appears only when weekly usage exceeds 70%
 - **Hover tooltip** — shows usage percentages and time until reset
 - **Click popup** — detailed view with progress bars and reset timers
-- **Toast notifications** — warns at 80% and 95% usage thresholds for the selected primary provider
+- **Toast notifications** — warns at 75% and 90% usage thresholds for the selected primary provider
 - **Auto-refresh** — polls every 60 seconds
 - **Single exe** — no installer, no runtime dependencies
 
