@@ -210,12 +210,12 @@ public class GrokCredentialService
 
             await SaveCredentialsAsync(newAccess!, newRefresh!, _expiresAt);
             _debugService?.LogInfo("GrokAuth", "Grok token refreshed successfully");
-            return true;
+            return GrokRefreshResult.Success;
         }
         catch (Exception ex)
         {
             _debugService?.LogError("GrokAuth", $"Grok token refresh exception: {ex.Message}", ex.ToString());
-            return false;
+            return GrokRefreshResult.Failed;
         }
     }
 
