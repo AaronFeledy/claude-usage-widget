@@ -236,6 +236,7 @@ public class UsagePopup : Form
     private readonly ProviderUsagePanel _claudePanel;
     private readonly ProviderUsagePanel _codexPanel;
     private readonly ProviderUsagePanel _cursorPanel;
+    private readonly ProviderUsagePanel _grokPanel;
     private readonly Panel _settingsPanel;
     private readonly CheckBox _startWithWindowsCheckbox;
     private readonly CheckBox _notificationsCheckbox;
@@ -295,9 +296,11 @@ public class UsagePopup : Form
         _claudePanel = new ProviderUsagePanel("Claude");
         _codexPanel = new ProviderUsagePanel("Codex");
         _cursorPanel = new ProviderUsagePanel("Cursor");
+        _grokPanel = new ProviderUsagePanel("Grok");
         _providerList.Controls.Add(_claudePanel);
         _providerList.Controls.Add(_codexPanel);
         _providerList.Controls.Add(_cursorPanel);
+        _providerList.Controls.Add(_grokPanel);
         Controls.Add(_providerList);
 
         _settingsPanel = new Panel
@@ -565,6 +568,7 @@ public class UsagePopup : Form
         _claudePanel.UpdateData(providerMap.TryGetValue("Claude", out var claude) ? claude : null);
         _codexPanel.UpdateData(providerMap.TryGetValue("Codex", out var codex) ? codex : null);
         _cursorPanel.UpdateData(providerMap.TryGetValue("Cursor", out var cursor) ? cursor : null);
+        _grokPanel.UpdateData(providerMap.TryGetValue("Grok", out var grok) ? grok : null);
         ApplyProviderOrder();
         RecalculateLayout();
     }
@@ -572,7 +576,7 @@ public class UsagePopup : Form
     private void ApplyProviderOrder()
     {
         var primaryProvider = SettingsService.NormalizeProviderName(_settingsService?.Settings.PrimaryProvider);
-        var panels = new[] { _claudePanel, _codexPanel, _cursorPanel };
+        var panels = new[] { _claudePanel, _codexPanel, _cursorPanel, _grokPanel };
 
         foreach (var panel in panels)
         {
@@ -585,7 +589,9 @@ public class UsagePopup : Form
             {
                 "Claude" => 0,
                 "Codex" => 1,
-                _ => 2
+                "Cursor" => 2,
+                "Grok" => 3,
+                _ => 4
             })
             .ToArray();
 

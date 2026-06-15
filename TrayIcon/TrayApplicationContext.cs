@@ -115,7 +115,9 @@ public class TrayApplicationContext : ApplicationContext
             if (GetProviderData("Codex")?.NeedsReauth == true)
                 _codexCredentialService.ReloadCredentials();
             if (GetProviderData("Grok")?.NeedsReauth == true)
-                _grokCredentialService.ReloadCredentials();
+            {
+                try { _grokCredentialService.ReloadCredentials(); } catch (FileNotFoundException) { }
+            }
 
             var fetchTasks = new Task<UsageData>[]
             {
@@ -400,7 +402,13 @@ public class TrayApplicationContext : ApplicationContext
         // Reload credentials from disk in case user re-authenticated
         _credentialService.ReloadCredentials();
         _codexCredentialService.ReloadCredentials();
-        _grokCredentialService.ReloadCredentials();
+        try
+        {
+            _grokCredentialService.ReloadCredentials();
+        }
+        catch (FileNotFoundException)
+        {
+        }
         await PollUsageAsync();
     }
 

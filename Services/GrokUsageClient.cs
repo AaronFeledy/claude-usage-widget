@@ -100,6 +100,25 @@ public class GrokUsageClient
             var onDemand = GetVal(config, "onDemandCap");
             var resetsAtStr = config.TryGetProperty("billingPeriodEnd", out var endEl) ? endEl.GetString() : null;
 
+            if (used is null || limit is null || limit.Value <= 0 || onDeman;
+                usageData.Error = $"Grok billing request failed ({(int)billingResp.StatusCode}). Try again later.";
+                return usageData;
+            }
+
+            var json = await billingResp.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("config", out var config) || config.ValueKind != JsonValueKind.Object)
+            {
+                usageData.Error = "Grok billing response changed.";
+                return usageData;
+            }
+
+            var used = GetVal(config, "used");
+            var limit = GetVal(config, "monthlyLimit");
+            var onDemand = GetVal(config, "onDemandCap");
+            var resetsAtStr = config.TryGetProperty("billingPeriodEnd", out var endEl) ? endEl.GetString() : null;
+
             if (used is null || limit is null || limit.Value <= 0 || onDemand is null || string.IsNullOrWhiteSpace(resetsAtStr))
             {
                 usageData.Error = "Grok billing response changed.";
@@ -123,6 +142,10 @@ public class GrokUsageClient
             usageData.SecondaryStatusText = onDemand.Value > 0
                 ? $"{onDemand.Value:N0} pay-as-you-go cap"
                 : "Pay as you go disabled";
+
+            // Pay-as-you-go is a cap, not a tracked utilization percentage.
+            // Hide the secondary progress bar (we still show the status text above).
+            usageData.ShowSecondary = false;
 
             // Best-effort plan name
             try
