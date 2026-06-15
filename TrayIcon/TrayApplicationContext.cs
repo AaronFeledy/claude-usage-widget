@@ -10,12 +10,14 @@ namespace ClaudeUsageWidget.TrayIcon;
 /// </summary>
 public class TrayApplicationContext : ApplicationContext
 {
-    private static readonly string[] DefaultProviderOrder = ["Claude", "Codex", "Cursor"];
+    private static readonly string[] DefaultProviderOrder = ["Claude", "Codex", "Cursor", "Grok"];
 
     private readonly UsageApiClient _usageApiClient;
     private readonly CodexCredentialService _codexCredentialService;
     private readonly CodexUsageClient _codexUsageClient;
     private readonly CursorUsageClient _cursorUsageClient;
+    private readonly GrokCredentialService _grokCredentialService;
+    private readonly GrokUsageClient _grokUsageClient;
     private readonly CredentialService _credentialService;
     private readonly SettingsService _settingsService;
     private readonly NotificationService _notificationService;
@@ -31,12 +33,14 @@ public class TrayApplicationContext : ApplicationContext
     private UsagePopup? _popup;
     private DebugConsole? _debugConsole;
 
-    public TrayApplicationContext(UsageApiClient usageApiClient, CodexCredentialService codexCredentialService, CodexUsageClient codexUsageClient, CursorUsageClient cursorUsageClient, CredentialService credentialService, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
+    public TrayApplicationContext(UsageApiClient usageApiClient, CodexCredentialService codexCredentialService, CodexUsageClient codexUsageClient, CursorUsageClient cursorUsageClient, GrokCredentialService grokCredentialService, GrokUsageClient grokUsageClient, CredentialService credentialService, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
     {
         _usageApiClient = usageApiClient;
         _codexCredentialService = codexCredentialService;
         _codexUsageClient = codexUsageClient;
         _cursorUsageClient = cursorUsageClient;
+        _grokCredentialService = grokCredentialService;
+        _grokUsageClient = grokUsageClient;
         _credentialService = credentialService;
         _settingsService = settingsService;
         _debugService = debugService;
@@ -110,12 +114,15 @@ public class TrayApplicationContext : ApplicationContext
                 _credentialService.ReloadCredentials();
             if (GetProviderData("Codex")?.NeedsReauth == true)
                 _codexCredentialService.ReloadCredentials();
+            if (GetProviderData("Grok")?.NeedsReauth == true)
+                _grokCredentialService.ReloadCredentials();
 
             var fetchTasks = new Task<UsageData>[]
             {
                 _usageApiClient.FetchUsageAsync(),
                 _codexUsageClient.FetchUsageAsync(),
-                _cursorUsageClient.FetchUsageAsync()
+                _cursorUsageClient.FetchUsageAsync(),
+                _grokUsageClient.FetchUsageAsync()
             };
 
             var results = await Task.WhenAll(fetchTasks);
@@ -371,6 +378,7 @@ public class TrayApplicationContext : ApplicationContext
             "Claude" => TimeSpan.FromHours(5),
             "Codex" => TimeSpan.FromHours(5),
             "Cursor" => TimeSpan.FromDays(30),
+            "Grok" => TimeSpan.FromDays(30),   // Grok credits billing cycle (typically monthly)
             _ => TimeSpan.FromHours(5)
         };
     }
@@ -392,6 +400,7 @@ public class TrayApplicationContext : ApplicationContext
         // Reload credentials from disk in case user re-authenticated
         _credentialService.ReloadCredentials();
         _codexCredentialService.ReloadCredentials();
+        _grokCredentialService.ReloadCredentials();
         await PollUsageAsync();
     }
 

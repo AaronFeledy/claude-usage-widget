@@ -133,6 +133,7 @@ public class SettingsService
         {
             "Codex" => "Codex",
             "Cursor" => "Cursor",
+            "Grok" => "Grok",
             _ => "Claude"
         };
     }
