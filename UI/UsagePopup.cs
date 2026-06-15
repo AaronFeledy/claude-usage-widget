@@ -382,7 +382,7 @@ public class UsagePopup : Form
             ForeColor = TextColor,
             FlatStyle = FlatStyle.Flat
         };
-        _primaryProviderCombo.Items.AddRange(new object[] { "Claude", "Codex", "Cursor", "Grok" });
+        _primaryProviderCombo.Items.AddRange(new object[] { "Claude", "Codex", "Cursor" });
         _primaryProviderCombo.SelectedIndexChanged += OnPrimaryProviderChanged;
         _settingsPanel.Controls.Add(_primaryProviderCombo);
 

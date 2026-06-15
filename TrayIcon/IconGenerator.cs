@@ -203,9 +203,6 @@ public static class IconGenerator
             case "Cursor":
                 DrawCursorBadge(graphics, badgeRect);
                 break;
-            case "Grok":
-                DrawGrokBadge(graphics, badgeRect);
-                break;
             default:
                 DrawClaudeBadge(graphics, badgeRect);
                 break;
@@ -250,18 +247,6 @@ public static class IconGenerator
         graphics.FillRectangle(whiteBrush, rect.Left + 1, rect.Top + 1, 4, 4);
         graphics.FillRectangle(blackBrush, rect.Left + 3, rect.Top + 1, 2, 4);
         graphics.FillRectangle(blackBrush, rect.Left + 1, rect.Top + 3, 4, 2);
-    }
-
-    private static void DrawGrokBadge(Graphics graphics, Rectangle rect)
-    {
-        // Grok mark in white for contrast against the near-black badge background.
-        using var whiteBrush = new SolidBrush(Color.White);
-
-        graphics.FillRectangle(whiteBrush, rect.Left + 1, rect.Top + 1, 2, 4);
-        graphics.FillRectangle(whiteBrush, rect.Left + 1, rect.Top + 1, 4, 1);
-        graphics.FillRectangle(whiteBrush, rect.Left + 1, rect.Top + 4, 4, 1);
-        graphics.FillRectangle(whiteBrush, rect.Left + 3, rect.Top + 2, 1, 2);
-        graphics.FillRectangle(whiteBrush, rect.Left + 4, rect.Top + 3, 1, 1);
     }
 
     /// <summary>

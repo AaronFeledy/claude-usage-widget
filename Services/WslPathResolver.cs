@@ -33,11 +33,6 @@ internal static class WslPathResolver
         return ResolveHomeRelativePath(".local", "share", "opencode", "auth.json");
     }
 
-    public static string? ResolveGrokAuthPath()
-    {
-        return ResolveHomeRelativePath(".grok", "auth.json");
-    }
-
     private static WslInfo? TryGetDefaultWslInfo(bool includeCodexHome)
     {
         try

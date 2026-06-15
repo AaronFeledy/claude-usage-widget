@@ -44,16 +44,11 @@ static class Program
         var browserCookieReader = new WindowsBrowserCookieReader(debugService);
         var cursorUsageClient = new CursorUsageClient(httpClient, browserCookieReader, debugService);
 
-        var grokCredentialService = new GrokCredentialService(httpClient, debugService);
-        var grokUsageClient = new GrokUsageClient(httpClient, grokCredentialService, debugService);
-
         Application.Run(new TrayApplicationContext(
             usageApiClient,
             codexCredentialService,
             codexUsageClient,
             cursorUsageClient,
-            grokCredentialService,
-            grokUsageClient,
             credentialService,
             settingsService,
             debugService,
