@@ -43,11 +43,16 @@ public class GrokUsageClient
             if (_credentialService.NeedsRefresh())
             {
                 _debugService?.LogInfo("Grok", "Token needs refresh, attempting refresh");
-                var ok = await _credentialService.RefreshTokenAsync();
-                if (!ok)
+                var result = await _credentialService.RefreshTokenAsync();
+                if (result == GrokRefreshResult.InvalidGrant)
                 {
                     usageData.Error = "Grok auth expired. Run `grok login` again.";
                     usageData.NeedsReauth = true;
+                    return usageData;
+                }
+                if (result == GrokRefreshResult.Failed)
+                {
+                    usageData.Error = "Token refresh failed. Will retry.";
                     return usageData;
                 }
             }
@@ -63,8 +68,14 @@ public class GrokUsageClient
             if (billingResp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 _debugService?.LogWarning("Grok", "Got 401/403, attempting refresh");
-                var refreshed = await _credentialService.RefreshTokenAsync();
-                if (refreshed)
+                var result = await _credentialService.RefreshTokenAsync();
+                if (result == GrokRefreshResult.InvalidGrant)
+                {
+                    usageData.Error = "Grok auth expired. Run `grok login` again.";
+                    usageData.NeedsReauth = true;
+                    return usageData;
+                }
+                if (result == GrokRefreshResult.Success)
                 {
                     token = _credentialService.AccessToken!;
                     billingResp = await SendRequestAsync(BillingUrl, token);
@@ -82,25 +93,6 @@ public class GrokUsageClient
             {
                 var body = await billingResp.Content.ReadAsStringAsync();
                 _debugService?.LogError("Grok", $"Billing request failed: {billingResp.StatusCode}", body);
-                usageData.Error = $"Grok billing request failed ({(int)billingResp.StatusCode}). Try again later.";
-                return usageData;
-            }
-
-            var json = await billingResp.Content.ReadAsStringAsync();
-            var doc = JsonDocument.Parse(json);
-
-            if (!doc.RootElement.TryGetProperty("config", out var config) || config.ValueKind != JsonValueKind.Object)
-            {
-                usageData.Error = "Grok billing response changed.";
-                return usageData;
-            }
-
-            var used = GetVal(config, "used");
-            var limit = GetVal(config, "monthlyLimit");
-            var onDemand = GetVal(config, "onDemandCap");
-            var resetsAtStr = config.TryGetProperty("billingPeriodEnd", out var endEl) ? endEl.GetString() : null;
-
-            if (used is null || limit is null || limit.Value <= 0 || onDeman;
                 usageData.Error = $"Grok billing request failed ({(int)billingResp.StatusCode}). Try again later.";
                 return usageData;
             }
