@@ -6,6 +6,16 @@ using System.Text.Json.Nodes;
 namespace ClaudeUsageWidget.Services;
 
 /// <summary>
+/// Result of a Grok token refresh attempt.
+/// </summary>
+public enum GrokRefreshResult
+{
+    Success,
+    InvalidGrant,  // Token revoked/expired — user must run `grok login`
+    Failed         // Transient/network error
+}
+
+/// <summary>
 /// Manages OAuth credentials for the Grok CLI (SuperGrok / X Premium+).
 /// Reads from ~/.grok/auth.json (scoped entries) and handles token refresh.
 /// </summary>
@@ -124,7 +134,7 @@ public class GrokCredentialService
         }
     }
 
-    public async Task<bool> RefreshTokenAsync()
+    public async Task<GrokRefreshResult> RefreshTokenAsync()
     {
         string? refreshToken;
         string? entryKey;
@@ -139,7 +149,7 @@ public class GrokCredentialService
         if (string.IsNullOrWhiteSpace(refreshToken))
         {
             _debugService?.LogError("GrokAuth", "No refresh token available for Grok");
-            return false;
+            return GrokRefreshResult.InvalidGrant;
         }
 
         try
@@ -160,7 +170,16 @@ public class GrokCredentialService
             if (!resp.IsSuccessStatusCode)
             {
                 _debugService?.LogError("GrokAuth", $"Grok token refresh failed: {resp.StatusCode}", body);
-                return false;
+                if ((int)resp.StatusCode == 400 || (int)resp.StatusCode == 401)
+                {
+                    try
+                    {
+                        if (body.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase))
+                            return GrokRefreshResult.InvalidGrant;
+                    }
+                    catch { }
+                }
+                return GrokRefreshResult.Failed;
             }
 
             var doc = JsonDocument.Parse(body);
@@ -191,12 +210,12 @@ public class GrokCredentialService
 
             await SaveCredentialsAsync(newAccess!, newRefresh!, _expiresAt);
             _debugService?.LogInfo("GrokAuth", "Grok token refreshed successfully");
-            return true;
+            return GrokRefreshResult.Success;
         }
         catch (Exception ex)
         {
             _debugService?.LogError("GrokAuth", $"Grok token refresh exception: {ex.Message}", ex.ToString());
-            return false;
+            return GrokRefreshResult.Failed;
         }
     }
 

@@ -43,11 +43,16 @@ public class GrokUsageClient
             if (_credentialService.NeedsRefresh())
             {
                 _debugService?.LogInfo("Grok", "Token needs refresh, attempting refresh");
-                var ok = await _credentialService.RefreshTokenAsync();
-                if (!ok)
+                var result = await _credentialService.RefreshTokenAsync();
+                if (result == GrokRefreshResult.InvalidGrant)
                 {
                     usageData.Error = "Grok auth expired. Run `grok login` again.";
                     usageData.NeedsReauth = true;
+                    return usageData;
+                }
+                if (result == GrokRefreshResult.Failed)
+                {
+                    usageData.Error = "Token refresh failed. Will retry.";
                     return usageData;
                 }
             }
@@ -63,8 +68,14 @@ public class GrokUsageClient
             if (billingResp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 _debugService?.LogWarning("Grok", "Got 401/403, attempting refresh");
-                var refreshed = await _credentialService.RefreshTokenAsync();
-                if (refreshed)
+                var result = await _credentialService.RefreshTokenAsync();
+                if (result == GrokRefreshResult.InvalidGrant)
+                {
+                    usageData.Error = "Grok auth expired. Run `grok login` again.";
+                    usageData.NeedsReauth = true;
+                    return usageData;
+                }
+                if (result == GrokRefreshResult.Success)
                 {
                     token = _credentialService.AccessToken!;
                     billingResp = await SendRequestAsync(BillingUrl, token);
@@ -123,6 +134,10 @@ public class GrokUsageClient
             usageData.SecondaryStatusText = onDemand.Value > 0
                 ? $"{onDemand.Value:N0} pay-as-you-go cap"
                 : "Pay as you go disabled";
+
+            // Pay-as-you-go is a cap, not a tracked utilization percentage.
+            // Hide the secondary progress bar (we still show the status text above).
+            usageData.ShowSecondary = false;
 
             // Best-effort plan name
             try
