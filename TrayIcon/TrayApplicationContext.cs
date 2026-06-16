@@ -387,14 +387,7 @@ public class TrayApplicationContext : ApplicationContext
 
     private static TimeSpan ResolveMonthEndWindowDuration(DateTime? resetsAt)
     {
-        if (resetsAt == null)
-            return TimeSpan.FromDays(30);
-
-        var reset = resetsAt.Value;
-        var firstDayOfCurrentMonth = new DateTime(reset.Year, reset.Month, 1, 0, 0, 0, reset.Kind);
-        var firstDayOfPreviousMonth = firstDayOfCurrentMonth.AddMonths(-1);
-        var duration = reset - firstDayOfPreviousMonth;
-        return duration > TimeSpan.Zero ? duration : TimeSpan.FromDays(30);
+        return TimeSpan.FromDays(30);
     }
 
     /// <summary>
