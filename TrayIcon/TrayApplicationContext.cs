@@ -391,8 +391,9 @@ public class TrayApplicationContext : ApplicationContext
             return TimeSpan.FromDays(30);
 
         var reset = resetsAt.Value;
-        var previousMonthLastDay = new DateTime(reset.Year, reset.Month, 1, reset.Hour, reset.Minute, reset.Second, reset.Kind).AddDays(-1);
-        var duration = reset - previousMonthLastDay;
+        var firstDayOfCurrentMonth = new DateTime(reset.Year, reset.Month, 1, 0, 0, 0, reset.Kind);
+        var firstDayOfPreviousMonth = firstDayOfCurrentMonth.AddMonths(-1);
+        var duration = reset - firstDayOfPreviousMonth;
         return duration > TimeSpan.Zero ? duration : TimeSpan.FromDays(30);
     }
 
