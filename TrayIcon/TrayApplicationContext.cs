@@ -380,9 +380,20 @@ public class TrayApplicationContext : ApplicationContext
             "Claude" => TimeSpan.FromHours(5),
             "Codex" => TimeSpan.FromHours(5),
             "Cursor" => TimeSpan.FromDays(30),
-            "Grok" => TimeSpan.FromDays(30),   // Grok credits billing cycle (typically monthly)
+            "Grok" => ResolveMonthEndWindowDuration(data.Current.ResetsAt),
             _ => TimeSpan.FromHours(5)
         };
+    }
+
+    private static TimeSpan ResolveMonthEndWindowDuration(DateTime? resetsAt)
+    {
+        if (resetsAt == null)
+            return TimeSpan.FromDays(30);
+
+        var reset = resetsAt.Value;
+        var periodStart = reset.AddMonths(-1);
+        var duration = reset - periodStart;
+        return duration > TimeSpan.Zero ? duration : TimeSpan.FromDays(30);
     }
 
     /// <summary>

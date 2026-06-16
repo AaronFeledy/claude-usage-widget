@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -117,20 +118,27 @@ public class GrokUsageClient
                 return usageData;
             }
 
+            if (!DateTimeOffset.TryParse(resetsAtStr, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var resetsAt))
+            {
+                usageData.Error = "Grok billing response changed.";
+                return usageData;
+            }
+
+            var resetsAtUtc = resetsAt.UtcDateTime;
             var percent = (float)(used.Value / limit.Value * 100.0);
             usageData.Current = new UsageBucket
             {
                 Utilization = Math.Clamp(percent, 0f, 100f),
-                ResetsAt = DateTime.TryParse(resetsAtStr, out var dt) ? dt.ToUniversalTime() : null
+                ResetsAt = resetsAtUtc
             };
 
             usageData.Weekly = new UsageBucket
             {
                 Utilization = 0,
-                ResetsAt = usageData.Current.ResetsAt
+                ResetsAt = resetsAtUtc
             };
 
-            usageData.PrimaryStatusText = $"{used.Value:N0} / {limit.Value:N0} credits";
+            usageData.PrimaryStatusText = $"{used.Value:N0} / {limit.Value:N0} credits · {FormatResetDate(resetsAtUtc)}";
             usageData.SecondaryStatusText = onDemand.Value > 0
                 ? $"{onDemand.Value:N0} pay-as-you-go cap"
                 : "Pay as you go disabled";
@@ -192,5 +200,12 @@ public class GrokUsageClient
         if (!el.TryGetProperty("val", out var vEl))
             return null;
         return vEl.ValueKind == JsonValueKind.Number ? vEl.GetDouble() : null;
+    }
+
+    private static string FormatResetDate(DateTime resetsAt)
+    {
+        var localReset = resetsAt.ToLocalTime();
+        var format = localReset.Year == DateTime.Now.Year ? "MMM d" : "MMM d, yyyy";
+        return $"Resets {localReset.ToString(format, CultureInfo.InvariantCulture)}";
     }
 }

@@ -213,6 +213,12 @@ public class ProviderUsagePanel : Panel
                 _primaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, TimeSpan.FromDays(30));
                 _secondaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, TimeSpan.FromDays(30));
                 break;
+            case "Grok":
+                _primaryProgress.Notches = 3;
+                _secondaryProgress.Notches = 3;
+                _primaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, ResolveMonthEndWindowDuration(data.Current.ResetsAt));
+                _secondaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, ResolveMonthEndWindowDuration(data.Weekly.ResetsAt));
+                break;
             default:
                 _primaryProgress.Notches = 0;
                 _secondaryProgress.Notches = 0;
@@ -243,6 +249,17 @@ public class ProviderUsagePanel : Panel
             return 0;
 
         return (float)(elapsed / windowDuration * 100);
+    }
+
+    private static TimeSpan ResolveMonthEndWindowDuration(DateTime? resetsAt)
+    {
+        if (resetsAt == null)
+            return TimeSpan.FromDays(30);
+
+        var reset = resetsAt.Value;
+        var periodStart = reset.AddMonths(-1);
+        var duration = reset - periodStart;
+        return duration > TimeSpan.Zero ? duration : TimeSpan.FromDays(30);
     }
 
     private static string BuildResetText(DateTime? resetsAt, string prefix)
