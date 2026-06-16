@@ -387,7 +387,13 @@ public class TrayApplicationContext : ApplicationContext
 
     private static TimeSpan ResolveMonthEndWindowDuration(DateTime? resetsAt)
     {
-        return TimeSpan.FromDays(30);
+        if (resetsAt == null)
+            return TimeSpan.FromDays(30);
+
+        var reset = resetsAt.Value;
+        var periodStart = reset.AddMonths(-1);
+        var duration = reset - periodStart;
+        return duration > TimeSpan.Zero ? duration : TimeSpan.FromDays(30);
     }
 
     /// <summary>
