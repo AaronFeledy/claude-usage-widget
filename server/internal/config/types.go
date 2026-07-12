@@ -33,6 +33,9 @@ func Defaults() Config {
 		PollInterval: 60 * time.Second,
 		Providers: map[string]ProviderConfig{
 			"claude": {Enabled: true, CredentialsPath: "~/.claude/.credentials.json"},
+			"codex":  {Enabled: false},
+			"cursor": {Enabled: false},
+			"grok":   {Enabled: false},
 		},
 	}
 }

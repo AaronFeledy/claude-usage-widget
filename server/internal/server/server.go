@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,14 +12,9 @@ import (
 
 type RunOptions struct {
 	Listener net.Listener
+	Handler  http.Handler
 	Logger   *slog.Logger
 	Ready    chan<- net.Addr
-}
-
-func NewHandler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/health", health)
-	return mux
 }
 
 func Run(ctx context.Context, opts RunOptions) error {
@@ -28,8 +22,12 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	handler := opts.Handler
+	if handler == nil {
+		handler = http.NotFoundHandler()
+	}
 	srv := &http.Server{
-		Handler:           NewHandler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -61,13 +59,5 @@ func Run(ctx context.Context, opts RunOptions) error {
 			return fmt.Errorf("serve: %w", err)
 		}
 		return nil
-	}
-}
-
-func health(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		slog.Default().Error("write health response", slog.Any("err", err))
 	}
 }

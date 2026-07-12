@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,40 +11,38 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/server"
 )
 
-func Test_Handler_returns_health_json(t *testing.T) {
+func Test_Run_serves_injected_handler(t *testing.T) {
 	// Given
-	handler := server.NewHandler()
-	srv := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer listener.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan net.Addr, 1)
 	done := make(chan error, 1)
-	go func() { done <- srv.Serve(listener) }()
-	t.Cleanup(func() { _ = srv.Close(); <-done })
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	go func() {
+		done <- server.Run(ctx, server.RunOptions{Listener: listener, Handler: handler, Logger: slog.Default(), Ready: ready})
+	}()
+	addr := <-ready
 
 	// When
 	client := &http.Client{Timeout: time.Second}
-	resp, err := client.Get("http://" + listener.Addr().String() + "/api/v1/health")
+	resp, err := client.Get("http://" + addr.String() + "/api/v1/health")
 
 	// Then
 	if err != nil {
-		t.Fatalf("GET health: %v", err)
+		t.Fatalf("GET injected handler: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
-	var body struct {
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.Status != "ok" {
-		t.Fatalf("status body = %q, want ok", body.Status)
-	}
+	cancel()
+	<-done
 }
 
 func Test_Run_exits_after_context_cancel(t *testing.T) {
