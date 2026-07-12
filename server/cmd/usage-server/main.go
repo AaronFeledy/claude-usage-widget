@@ -64,6 +64,10 @@ type appRuntime struct {
 }
 
 func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, []string, error) {
+	allowLocalDiscovery, err := api.IsLoopbackListenAddr(cfg.ListenAddr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	providerPoller := poller.New(poller.Options{})
 	var cursorClient *cursor.Client
 	names := []string{}
@@ -71,7 +75,7 @@ func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, []string, e
 		if !providerCfg.Enabled {
 			continue
 		}
-		provider, err := buildProvider(name, providerCfg)
+		provider, err := buildProvider(name, providerCfg, allowLocalDiscovery)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -86,14 +90,14 @@ func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, []string, e
 	return providerPoller, cursorClient, names, nil
 }
 
-func buildProvider(name string, providerCfg config.ProviderConfig) (usage.Provider, error) {
+func buildProvider(name string, providerCfg config.ProviderConfig, allowLocalDiscovery bool) (usage.Provider, error) {
 	switch strings.ToLower(name) {
 	case "claude":
 		return claude.New(claude.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	case "codex":
 		return codex.New(codex.Options{CredentialsPath: providerCfg.CredentialsPath}), nil
 	case "cursor":
-		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, AllowLocalDiscovery: true}), nil
+		return cursor.NewClient(cursor.Options{AuthPath: providerCfg.CredentialsPath, AllowLocalDiscovery: allowLocalDiscovery}), nil
 	case "grok":
 		return grok.NewProvider(grok.Options{CredentialsPath: providerCfg.CredentialsPath})
 	default:
