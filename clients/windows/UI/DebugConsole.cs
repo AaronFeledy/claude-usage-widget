@@ -1,5 +1,6 @@
 using System.Drawing;
 using ClaudeUsageWidget.Services;
+using ClaudeUsageWidget.TrayIcon;
 
 namespace ClaudeUsageWidget.UI;
 
@@ -22,6 +23,7 @@ public class DebugConsole : Form
     private readonly Button _clearButton;
     private readonly CheckBox _autoScrollCheckbox;
     private readonly Label _countLabel;
+    private readonly OwnedGeneratedIcon _ownedIcon;
     private bool _autoScroll = true;
 
     public DebugConsole(DebugService debugService)
@@ -34,7 +36,8 @@ public class DebugConsole : Form
         MinimumSize = new Size(500, 300);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = BackgroundColor;
-        Icon = TrayIcon.IconGenerator.GenerateAppIcon();
+        _ownedIcon = new OwnedGeneratedIcon(IconGenerator.GenerateAppIcon());
+        Icon = _ownedIcon.Icon;
 
         // Toolbar panel
         var toolbar = new Panel
@@ -221,5 +224,15 @@ public class DebugConsole : Form
         {
             base.OnFormClosing(e);
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            Icon = null;
+            _ownedIcon.Dispose();
+        }
+        base.Dispose(disposing);
     }
 }

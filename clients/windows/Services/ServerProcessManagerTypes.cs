@@ -19,7 +19,8 @@ public enum ServerProcessError
     ReadinessFailed,
     RestartFailed,
     LaunchFailed,
-    Disposed
+    Disposed,
+    InvalidApiUrl
 }
 
 public sealed record ServerProcessResult(

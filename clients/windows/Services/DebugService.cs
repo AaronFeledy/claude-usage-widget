@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace ClaudeUsageWidget.Services;
 
 /// <summary>
@@ -41,6 +43,9 @@ public class DebugEntry
 public class DebugService
 {
     private const int MaxEntries = 500;
+    private static readonly Regex SecretPattern = new(
+        "(?i)(authorization\\s*[:=]\\s*bearer\\s+|api[-_ ]?token\\s*[:=]\\s*|access_token\\s*[:=]\\s*|WorkosCursorSessionToken=|next-auth\\.session-token=|__Secure-next-auth\\.session-token=)[^\\s;\"']+",
+        RegexOptions.Compiled);
     private readonly List<DebugEntry> _entries = new();
     private readonly object _lock = new();
 
@@ -94,8 +99,8 @@ public class DebugService
             Timestamp = DateTime.Now,
             Level = level,
             Category = category,
-            Message = message,
-            Details = details
+            Message = Redact(message)!,
+            Details = Redact(details)
         };
 
         lock (_lock)
@@ -122,5 +127,15 @@ public class DebugService
         {
             _entries.Clear();
         }
+    }
+
+    public static string? Redact(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        return SecretPattern.Replace(value, match => match.Groups[1].Value + "[redacted]");
     }
 }

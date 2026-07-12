@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace ClaudeUsageWidget.Services;
 
-public class WindowsBrowserCookieReader
+public class WindowsBrowserCookieReader : ICursorCookieReader
 {
     private static readonly string[] SessionCookieNames =
     {
@@ -20,7 +20,7 @@ public class WindowsBrowserCookieReader
         _debugService = debugService;
     }
 
-    public string? ReadCursorCookieHeader()
+    public virtual string? ReadCursorCookieHeader()
     {
         foreach (var chromiumBrowser in GetChromiumBrowserRoots())
         {
@@ -32,7 +32,7 @@ public class WindowsBrowserCookieReader
             }
             catch (Exception ex)
             {
-                _debugService?.LogWarning("Cursor", $"Cookie import failed for {chromiumBrowser.name}", ex.Message);
+                _debugService?.LogWarning("Cursor", $"Cookie import failed for {chromiumBrowser.name}", ex.GetType().Name);
             }
         }
 
@@ -46,7 +46,7 @@ public class WindowsBrowserCookieReader
             }
             catch (Exception ex)
             {
-                _debugService?.LogWarning("Cursor", $"Cookie import failed for Firefox ({Path.GetFileName(firefoxProfile)})", ex.Message);
+                _debugService?.LogWarning("Cursor", "Cookie import failed for Firefox", ex.GetType().Name);
             }
         }
 
@@ -64,7 +64,7 @@ public class WindowsBrowserCookieReader
             var cookieHeader = TryReadCookiesFromDatabase(cookiePath, masterKey);
             if (!string.IsNullOrWhiteSpace(cookieHeader))
             {
-                _debugService?.LogInfo("Cursor", $"Using browser cookies from {browserRoot.name}", cookiePath);
+                _debugService?.LogInfo("Cursor", $"Using browser cookies from {browserRoot.name}");
                 return cookieHeader;
             }
         }
@@ -78,90 +78,82 @@ public class WindowsBrowserCookieReader
         if (!File.Exists(cookieDbPath))
             return null;
 
-        var tempPath = Path.Combine(Path.GetTempPath(), $"cursor-firefox-cookies-{Guid.NewGuid():N}.sqlite");
-        File.Copy(cookieDbPath, tempPath, overwrite: true);
+        using var snapshot = BrowserCookieDatabaseSnapshot.Create(cookieDbPath);
+        using var connection = OpenReadOnlyCookieDatabase(snapshot.DatabasePath);
+        connection.Open();
 
-        try
-        {
-            using var connection = new SqliteConnection($"Data Source={tempPath}");
-            connection.Open();
-
-            using var command = connection.CreateCommand();
-            command.CommandText = @"
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
                 SELECT host, name, value
                 FROM moz_cookies
                 WHERE (host LIKE '%cursor.com' OR host LIKE '%cursor.sh')
                   AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')
                 ORDER BY LENGTH(host) DESC, expiry DESC, lastAccessed DESC";
 
-            using var reader = command.ExecuteReader();
-            var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
 
-            while (reader.Read())
-            {
-                var name = reader.GetString(1);
-                if (cookies.ContainsKey(name))
-                    continue;
-
-                var value = reader.GetString(2);
-                if (!string.IsNullOrWhiteSpace(value))
-                    cookies[name] = value;
-            }
-
-            if (cookies.Count == 0)
-                return null;
-
-            _debugService?.LogInfo("Cursor", "Using browser cookies from Firefox", cookieDbPath);
-            return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
-        }
-        finally
+        while (reader.Read())
         {
-            TryDeleteFile(tempPath);
+            var name = reader.GetString(1);
+            if (cookies.ContainsKey(name))
+                continue;
+
+            var value = reader.GetString(2);
+            if (!string.IsNullOrWhiteSpace(value))
+                cookies[name] = value;
         }
+
+        if (cookies.Count == 0)
+            return null;
+
+        _debugService?.LogInfo("Cursor", "Using browser cookies from Firefox");
+        return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
     }
 
     private string? TryReadCookiesFromDatabase(string cookieDbPath, byte[] masterKey)
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), $"cursor-cookies-{Guid.NewGuid():N}.db");
-        File.Copy(cookieDbPath, tempPath, overwrite: true);
+        using var snapshot = BrowserCookieDatabaseSnapshot.Create(cookieDbPath);
+        using var connection = OpenReadOnlyCookieDatabase(snapshot.DatabasePath);
+        connection.Open();
 
-        try
-        {
-            using var connection = new SqliteConnection($"Data Source={tempPath}");
-            connection.Open();
-
-            using var command = connection.CreateCommand();
-            command.CommandText = @"
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
                 SELECT host_key, name, encrypted_value
                 FROM cookies
                 WHERE (host_key LIKE '%cursor.com' OR host_key LIKE '%cursor.sh')
                   AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')
                 ORDER BY LENGTH(host_key) DESC, expires_utc DESC";
 
-            using var reader = command.ExecuteReader();
-            var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var reader = command.ExecuteReader();
+        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
 
-            while (reader.Read())
-            {
-                var name = reader.GetString(1);
-                if (cookies.ContainsKey(name))
-                    continue;
-
-                var encryptedValue = (byte[])reader[2];
-                var decryptedValue = DecryptCookieValue(encryptedValue, masterKey);
-                if (!string.IsNullOrWhiteSpace(decryptedValue))
-                    cookies[name] = decryptedValue;
-            }
-
-            if (cookies.Count == 0)
-                return null;
-
-            return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
-        }
-        finally
+        while (reader.Read())
         {
-            TryDeleteFile(tempPath);
+            var name = reader.GetString(1);
+            if (cookies.ContainsKey(name))
+                continue;
+
+            var encryptedValue = (byte[])reader[2];
+            var decryptedValue = DecryptCookieValue(encryptedValue, masterKey);
+            if (!string.IsNullOrWhiteSpace(decryptedValue))
+                cookies[name] = decryptedValue;
         }
+
+        if (cookies.Count == 0)
+            return null;
+
+        return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
+    }
+
+    private static SqliteConnection OpenReadOnlyCookieDatabase(string path)
+    {
+        var builder = new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadOnly
+        };
+        return new SqliteConnection(builder.ToString());
     }
 
     private static byte[] GetChromiumMasterKey(string userDataPath)
@@ -250,15 +242,4 @@ public class WindowsBrowserCookieReader
             yield return profileDir;
     }
 
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-        catch
-        {
-        }
-    }
 }

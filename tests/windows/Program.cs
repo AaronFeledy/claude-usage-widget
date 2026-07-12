@@ -23,6 +23,12 @@ await tests.Test_ReadinessException_when_AfterLaunch();
 await tests.Test_AcquirerRethrowsCancellation_and_CleansTemp();
 await tests.Test_RestartMonitorFailure_when_AcquirerThrows();
 await tests.Test_RestartMonitorFailure_when_ReadinessThrows();
+await TrayApiHarnessRunner.RunAsync();
+var snapshotTests = new BrowserCookieSnapshotTests();
+await snapshotTests.Test_SnapshotCopiesWalDatabaseAndCleansArtifacts();
+await snapshotTests.Test_SnapshotCleansArtifactsWhenOpenFails();
+var iconOwnershipTests = new IconOwnershipTests();
+await iconOwnershipTests.Test_NativeIconLeaseDisposesHandleExactlyOnce();
 Console.WriteLine("ServerProcessManager tests passed");
 
 internal sealed partial class ServerProcessManagerTests

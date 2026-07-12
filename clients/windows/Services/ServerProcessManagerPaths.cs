@@ -10,13 +10,27 @@ public sealed partial class ServerProcessManager
 
     private static Uri LocalBaseUrl(int port) => new($"http://127.0.0.1:{port}/");
 
-    private static Uri? NormalizeBaseUrl(string? apiUrl)
+    private static NormalizedApiUrl NormalizeBaseUrl(string? apiUrl)
     {
-        if (string.IsNullOrWhiteSpace(apiUrl))
+        if (apiUrl == null || apiUrl.Length == 0)
         {
-            return null;
+            return new NormalizedApiUrl(null, null);
         }
-        var uri = new Uri(apiUrl.Trim(), UriKind.Absolute);
-        return uri.AbsolutePath.EndsWith('/') ? uri : new Uri(uri + "/");
+        if (string.IsNullOrWhiteSpace(apiUrl) || apiUrl != apiUrl.Trim())
+        {
+            return new NormalizedApiUrl(null, "Invalid ApiUrl setting.");
+        }
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var uri))
+        {
+            return new NormalizedApiUrl(null, "Invalid ApiUrl setting.");
+        }
+        if (uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(uri.Host) || !string.IsNullOrEmpty(uri.UserInfo) || uri.Port < -1)
+        {
+            return new NormalizedApiUrl(null, "Invalid ApiUrl setting.");
+        }
+        var normalized = uri.AbsolutePath.EndsWith('/') ? uri : new Uri(uri + "/");
+        return new NormalizedApiUrl(normalized, null);
     }
+
+    private sealed record NormalizedApiUrl(Uri? BaseUrl, string? Error);
 }

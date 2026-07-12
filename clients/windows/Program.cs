@@ -32,31 +32,53 @@ static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        using var httpClient = new HttpClient();
-        httpClient.Timeout = TimeSpan.FromSeconds(30);
+        using var apiHttpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        using var updateHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 
         var settingsService = new SettingsService();
         var debugService = new DebugService();
-        var credentialService = new CredentialService(httpClient, debugService);
-        var usageApiClient = new UsageApiClient(httpClient, credentialService, debugService);
-        var codexCredentialService = new CodexCredentialService(httpClient, debugService);
-        var codexUsageClient = new CodexUsageClient(httpClient, codexCredentialService, debugService);
+        if (!string.IsNullOrWhiteSpace(settingsService.LoadError))
+        {
+            debugService.LogWarning("Settings", settingsService.LoadError);
+        }
+
+        var serverManager = new ServerProcessManager(
+            new ServerProcessOptions(ApiUrl: settingsService.Settings.ApiUrl),
+            new ServerProcessDependencies(
+                new ServerHealthProbe(updateHttpClient),
+                new SidecarServerBinaryVersionReader(),
+                new UpdateServiceServerBinaryAcquirer(updateHttpClient),
+                new ServerProcessLauncher(),
+                new WindowsServerJobAssigner(),
+                new RealServerDelay()));
+
+        ServerProcessResult serverStartup;
+        try
+        {
+            serverStartup = serverManager.EnsureStartedAsync().GetAwaiter().GetResult();
+            if (serverStartup.Error == ServerProcessError.InvalidApiUrl)
+            {
+                debugService.LogWarning("Settings", "Invalid ApiUrl setting; tray will remain offline until corrected.");
+            }
+        }
+        catch (Exception ex)
+        {
+            serverStartup = new ServerProcessResult(ServerProcessState.Failed, serverManager.EffectiveBaseUrl, false, ServerProcessError.LaunchFailed, ex.Message);
+            debugService.LogWarning("Server", "Usage server startup failed; tray will retry in offline mode", ex.Message);
+        }
+
+        var apiSettings = new TrayApiClientSettingsAdapter(settingsService, serverStartup.EffectiveBaseUrl);
+        var apiClient = new ApiClient(apiHttpClient, apiSettings);
         var browserCookieReader = new WindowsBrowserCookieReader(debugService);
-        var cursorUsageClient = new CursorUsageClient(httpClient, browserCookieReader, debugService);
+        var usagePoller = new TrayUsagePoller(apiClient, serverManager, browserCookieReader, debugService);
 
-        var grokCredentialService = new GrokCredentialService(httpClient, debugService);
-        var grokUsageClient = new GrokUsageClient(httpClient, grokCredentialService, debugService);
-
-        Application.Run(new TrayApplicationContext(
-            usageApiClient,
-            codexCredentialService,
-            codexUsageClient,
-            cursorUsageClient,
-            grokCredentialService,
-            grokUsageClient,
-            credentialService,
-            settingsService,
-            debugService,
-            httpClient));
+        try
+        {
+            Application.Run(new TrayApplicationContext(usagePoller, settingsService, debugService, updateHttpClient));
+        }
+        finally
+        {
+            serverManager.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
     }
 }

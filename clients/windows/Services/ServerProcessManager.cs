@@ -6,6 +6,7 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
 
     private readonly ServerProcessOptions _options;
     private readonly ServerProcessDependencies _dependencies;
+    private readonly ServerProcessResult? _invalidConfiguration;
     private readonly SemaphoreSlim _lifecycle = new(1, 1);
     private readonly CancellationTokenSource _disposed = new();
     private IManagedServerProcess? _process;
@@ -19,7 +20,12 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
     {
         _options = options;
         _dependencies = dependencies;
-        EffectiveBaseUrl = NormalizeBaseUrl(options.ApiUrl) ?? LocalBaseUrl(options.Port);
+        var normalized = NormalizeBaseUrl(options.ApiUrl);
+        EffectiveBaseUrl = normalized.BaseUrl ?? LocalBaseUrl(options.Port);
+        if (normalized.Error != null)
+        {
+            _invalidConfiguration = new ServerProcessResult(ServerProcessState.Failed, EffectiveBaseUrl, false, ServerProcessError.InvalidApiUrl, normalized.Error);
+        }
     }
 
     public Uri EffectiveBaseUrl { get; private set; }
@@ -33,7 +39,12 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
             return new ServerProcessResult(ServerProcessState.Failed, EffectiveBaseUrl, false, ServerProcessError.Disposed);
         }
 
-        var remoteUrl = NormalizeBaseUrl(_options.ApiUrl);
+        if (_invalidConfiguration != null)
+        {
+            return _invalidConfiguration;
+        }
+
+        var remoteUrl = NormalizeBaseUrl(_options.ApiUrl).BaseUrl;
         if (remoteUrl != null)
         {
             EffectiveBaseUrl = remoteUrl;
@@ -70,7 +81,7 @@ public sealed partial class ServerProcessManager : IAsyncDisposable
 
     public async Task RestartOwnedAsync(CancellationToken cancellationToken = default)
     {
-        if (!OwnsProcess || _disposeStarted != 0)
+        if (_disposeStarted != 0 || (!OwnsProcess && _started?.Error != ServerProcessError.RestartFailed))
         {
             return;
         }
