@@ -11,6 +11,7 @@
     <Compile Include="../../clients/windows/Services/DebugService.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/SettingsService.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/ServerProcessManager*.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../../clients/windows/Services/UpdateServiceBundle*.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/TrayApiClientSettingsAdapter.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/TrayUsagePoller.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/TrayVisualState.cs" Link="Services/%(Filename)%(Extension)" />
