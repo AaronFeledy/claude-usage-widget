@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../windows/Models/UsageData.cs" Link="Models/UsageData.cs" />
+    <Compile Include="../windows/Services/ApiClient.cs" Link="Services/ApiClient.cs" />
+    <Compile Include="../windows/Services/ApiClientModels.cs" Link="Services/ApiClientModels.cs" />
+    <Compile Include="../windows/Services/ApiClientWire.cs" Link="Services/ApiClientWire.cs" />
+  </ItemGroup>
+</Project>
