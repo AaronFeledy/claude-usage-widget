@@ -31,8 +31,10 @@ func Test_Load_returns_defaults_when_config_file_missing(t *testing.T) {
 	if cfg.PollInterval != 60*time.Second {
 		t.Fatalf("PollInterval = %s, want 60s", cfg.PollInterval)
 	}
-	if got := cfg.Providers["claude"].Enabled; !got {
-		t.Fatalf("claude provider enabled = %v, want true", got)
+	for _, name := range []string{"claude", "codex", "cursor", "grok"} {
+		if got := cfg.Providers[name].Enabled; !got {
+			t.Fatalf("%s provider enabled = %v, want true", name, got)
+		}
 	}
 }
 

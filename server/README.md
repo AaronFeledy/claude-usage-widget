@@ -88,17 +88,17 @@ providers:
     enabled: true
     credentials_path: ~/.claude/.credentials.json
   codex:
-    enabled: false
+    enabled: true
     credentials_path: ~/.codex/auth.json
   cursor:
-    enabled: false
+    enabled: true
     credentials_path: ""
   grok:
-    enabled: false
+    enabled: true
     credentials_path: ~/.grok/auth.json
 ```
 
-Provider defaults are Claude enabled with `~/.claude/.credentials.json`; Codex, Cursor, and Grok disabled. Codex can also discover `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode auth. Cursor local discovery is intended for local browser sessions; remote deployments should prefer tray-pushed in-memory Cursor credentials. Grok defaults to `~/.grok/auth.json` and can discover Windows WSL auth.
+All four providers are enabled by default; Claude defaults to `~/.claude/.credentials.json`, and the others discover credentials automatically when no path is set. Disable unwanted providers with `enabled: false` or `USAGE_PROVIDER_<NAME>_ENABLED=false`. Codex can also discover `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode auth. Cursor local discovery is intended for local browser sessions; remote deployments should prefer tray-pushed in-memory Cursor credentials. Grok defaults to `~/.grok/auth.json` and can discover Windows WSL auth.
 
 ## Authentication Safety
 
