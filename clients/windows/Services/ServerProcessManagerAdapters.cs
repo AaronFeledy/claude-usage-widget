@@ -19,7 +19,10 @@ public sealed class ServerHealthProbe : IServerHealthProbe
         {
             var healthUrl = new Uri(baseUrl, "api/v1/health");
             var health = await _httpClient.GetFromJsonAsync<ServerHealth>(healthUrl, cancellationToken).ConfigureAwait(false);
-            return string.Equals(health?.Status, "ok", StringComparison.OrdinalIgnoreCase);
+            // Reachability != provider health: "degraded" still means the server is up and
+            // serving. Requiring "ok" would reject a live server while any provider is erroring
+            // or mid-first-poll; those are surfaced separately via usage data.
+            return health is not null && !string.IsNullOrWhiteSpace(health.Status);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

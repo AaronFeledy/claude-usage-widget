@@ -19,6 +19,7 @@ internal static class WindowsHarnessRunner
         await tests.Test_AcquisitionCleansTemp_when_DownloadFails();
         await tests.Test_AcquisitionWritesVersionManifest_when_DownloadSucceeds();
         await tests.Test_HealthProbeAcceptsHealthyServer_when_VersionDiffers();
+        await tests.Test_HealthProbeAcceptsDegradedServer_when_ProviderErroring();
         await tests.Test_AcquisitionCancellation_when_BeforeLaunch();
         await tests.Test_ReadinessCancellation_when_AfterLaunch();
         await tests.Test_ReadinessException_when_AfterLaunch();

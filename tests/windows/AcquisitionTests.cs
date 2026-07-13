@@ -45,6 +45,17 @@ internal sealed partial class ServerProcessManagerTests
         AssertEqual(true, healthy);
     }
 
+    public async Task Test_HealthProbeAcceptsDegradedServer_when_ProviderErroring()
+    {
+        using var http = new HttpClient(new FakeHealthHandler("{\"status\":\"degraded\",\"version\":\"dev\",\"providers\":[{\"name\":\"Cursor\",\"ok\":false,\"fetched_at\":null}]}"));
+        http.BaseAddress = new Uri("http://127.0.0.1:7823/");
+        var probe = new ServerHealthProbe(http);
+
+        var healthy = await probe.IsHealthyAsync(http.BaseAddress, "", CancellationToken.None);
+
+        AssertEqual(true, healthy);
+    }
+
     public async Task Test_AcquirerRethrowsCancellation_and_CleansTemp()
     {
         using var http = new HttpClient(new FakeReleaseHandler(true));
