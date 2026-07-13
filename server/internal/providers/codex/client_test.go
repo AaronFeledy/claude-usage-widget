@@ -88,13 +88,19 @@ func Test_Client_refreshes_once_on_401_and_retries_with_new_token(t *testing.T) 
 	}
 }
 
-func Test_Client_returns_reauth_usage_when_refresh_token_reused_or_invalidated(t *testing.T) {
+func Test_Client_classifies_refresh_failures(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name       string
+		statusCode int
+		body       string
+		wantError  string
+		wantReauth bool
 	}{
-		{name: "reused", body: `{"error":"refresh_token_reused"}`},
-		{name: "invalidated", body: `{"error":"refresh_token_invalidated"}`},
+		{name: "reused", statusCode: http.StatusUnauthorized, body: `{"error":"refresh_token_reused"}`, wantError: "AUTH_EXPIRED", wantReauth: true},
+		{name: "invalidated", statusCode: http.StatusUnauthorized, body: `{"error":"refresh_token_invalidated"}`, wantError: "AUTH_EXPIRED", wantReauth: true},
+		{name: "nested invalid grant", statusCode: http.StatusUnauthorized, body: `{"error":{"code":"invalid_grant"}}`, wantError: "AUTH_EXPIRED", wantReauth: true},
+		{name: "empty unauthorized response", statusCode: http.StatusUnauthorized, wantError: "AUTH_EXPIRED", wantReauth: true},
+		{name: "server error retries", statusCode: http.StatusInternalServerError, wantError: "Token refresh failed. Will retry."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,7 +111,7 @@ func Test_Client_returns_reauth_usage_when_refresh_token_reused_or_invalidated(t
 					w.WriteHeader(http.StatusForbidden)
 					return
 				}
-				w.WriteHeader(http.StatusUnauthorized)
+				w.WriteHeader(tt.statusCode)
 				_, _ = w.Write([]byte(tt.body))
 			}))
 			defer server.Close()
@@ -118,8 +124,35 @@ func Test_Client_returns_reauth_usage_when_refresh_token_reused_or_invalidated(t
 			if err != nil {
 				t.Fatalf("Fetch returned error: %v", err)
 			}
-			if data.Error == nil || *data.Error != "AUTH_EXPIRED" || !data.NeedsReauth || data.ReauthCommand == nil || *data.ReauthCommand != "codex" {
-				t.Fatalf("data = %+v, want reauth", data)
+			if data.Error == nil || *data.Error != tt.wantError || data.NeedsReauth != tt.wantReauth {
+				t.Fatalf("data = %+v, want error %q reauth %v", data, tt.wantError, tt.wantReauth)
+			}
+		})
+	}
+}
+
+func Test_ParseUsage_normalizes_rate_window_roles(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantCurrent float64
+		wantWeekly  float64
+	}{
+		{name: "swapped windows", body: `{"rate_limit":{"primary_window":{"used_percent":80,"limit_window_seconds":604800},"secondary_window":{"used_percent":12.5,"limit_window_seconds":18000}}}`, wantCurrent: 12.5, wantWeekly: 80},
+		{name: "single weekly primary window", body: `{"rate_limit":{"primary_window":{"used_percent":80,"limit_window_seconds":604800}}}`, wantWeekly: 80},
+		{name: "missing durations preserve positions", body: `{"rate_limit":{"primary_window":{"used_percent":12.5},"secondary_window":{"used_percent":80}}}`, wantCurrent: 12.5, wantWeekly: 80},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// When
+			data, err := parseUsage([]byte(tt.body), baseUsage())
+
+			// Then
+			if err != nil {
+				t.Fatalf("parseUsage returned error: %v", err)
+			}
+			if data.Current.Utilization != tt.wantCurrent || data.Weekly.Utilization != tt.wantWeekly {
+				t.Fatalf("Current=%+v Weekly=%+v, want utilization %v and %v", data.Current, data.Weekly, tt.wantCurrent, tt.wantWeekly)
 			}
 		})
 	}

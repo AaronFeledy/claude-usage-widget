@@ -177,7 +177,7 @@ func (c *Client) doRefresh(ctx context.Context, creds Credentials) (usage.Refres
 		return usage.RefreshFailed, closeErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		if resp.StatusCode == http.StatusUnauthorized && isInvalidGrantBody(string(responseBody)) {
+		if resp.StatusCode == http.StatusUnauthorized || isInvalidGrantBody(responseBody) {
 			return usage.RefreshInvalidGrant, nil
 		}
 		return usage.RefreshFailed, nil
