@@ -21,9 +21,10 @@ Local managed mode, default Windows install
   Windows tray app
     | ApiUrl empty in %APPDATA%/ClaudeUsageWidget/settings.json
     | spawns/probes bundled usage-server.exe on 127.0.0.1:7823
+    | discovers Cursor browser credentials and pushes them in memory
     v
   usage-server.exe
-    | reads local provider credentials and browser sessions
+    | reads credential files for enabled providers
     v
   Claude / Codex / Cursor / Grok upstream APIs
 
@@ -41,9 +42,11 @@ Remote mode, shared server or Home Assistant
 
 The server default is intentionally local-only: `127.0.0.1:7823`. Binding to any non-loopback address without a bearer token is rejected before the server listens or providers are constructed.
 
+Claude is enabled by default. Enable Codex, Cursor, and Grok in `%APPDATA%\ClaudeUsageWidget\config.yaml` for a local Windows install, or through the server's YAML/environment configuration for other deployments.
+
 ## Features
 
-- Multi-provider popup for Claude, Codex, Cursor, and Grok.
+- Multi-provider popup for enabled Claude, Codex, Cursor, and Grok providers.
 - Primary provider selection for tray icon, tooltip, top card, and notifications.
 - Dynamic tray icon with provider badge and usage fill color.
 - Local managed server mode with matched tray/server release assets.
@@ -68,11 +71,11 @@ The installer downloads the latest matching Windows tray and server assets for y
 
 ## Provider Credentials
 
-The server reads credentials on the host where `usage-server` runs:
+The server reads credentials for enabled providers on the host where `usage-server` runs. The Windows tray can also push discovered Cursor browser credentials to the server in memory.
 
-- Claude: `~/.claude/.credentials.json`, with OpenCode auth fallback.
+- Claude: `~/.claude/.credentials.json`, Windows WSL auth, or OpenCode auth fallback.
 - Codex: `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, or OpenCode auth fallback.
-- Cursor: local browser/session discovery when running locally; remote deployments normally need credentials pushed from the tray.
+- Cursor: server-side local auth-file discovery on loopback deployments, or browser credentials discovered and pushed in memory by the Windows tray. Remote deployments normally need credentials pushed from the tray.
 - Grok: `~/.grok/auth.json`, with Windows WSL fallback.
 
 ## API Shape
