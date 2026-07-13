@@ -47,6 +47,43 @@ func Test_Client_Fetch_returns_usage_when_claude_credentials_are_valid(t *testin
 	}
 }
 
+func Test_parseUsageResponse_selects_primary_window_and_clamps_utilization(t *testing.T) {
+	tests := []struct {
+		name, body, wantLabel   string
+		wantCurrent, wantWeekly float64
+		wantErr                 bool
+	}{
+		{name: "normal five hour and seven day windows", body: `{"five_hour":{"utilization":42.5},"seven_day":{"utilization":71}}`, wantCurrent: 42.5, wantWeekly: 71, wantLabel: "Current Session"},
+		{name: "null five hour falls back to seven day", body: `{"five_hour":null,"seven_day":{"utilization":71}}`, wantCurrent: 71, wantWeekly: 71, wantLabel: "Weekly"},
+		{name: "all windows null returns error", body: `{"five_hour":null,"seven_day":null,"seven_day_oauth_apps":null,"seven_day_sonnet":null,"seven_day_opus":null}`, wantErr: true},
+		{name: "utilization above range clamps to maximum", body: `{"five_hour":{"utilization":150}}`, wantCurrent: 100, wantLabel: "Current Session"},
+		{name: "utilization below range clamps to minimum", body: `{"five_hour":{"utilization":-5}}`, wantCurrent: 0, wantLabel: "Current Session"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// When
+			got, err := parseUsageResponse([]byte(tt.body), nil)
+
+			// Then
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseUsageResponse error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseUsageResponse returned error: %v", err)
+			}
+			if got.Current.Utilization != tt.wantCurrent || got.Weekly.Utilization != tt.wantWeekly {
+				t.Fatalf("utilization = %.1f/%.1f, want %.1f/%.1f", got.Current.Utilization, got.Weekly.Utilization, tt.wantCurrent, tt.wantWeekly)
+			}
+			if got.PrimaryLabel != tt.wantLabel {
+				t.Fatalf("PrimaryLabel = %q, want %q", got.PrimaryLabel, tt.wantLabel)
+			}
+		})
+	}
+}
+
 func Test_Client_Fetch_refreshes_expired_token_and_preserves_unknown_fields(t *testing.T) {
 	// Given
 	credentialsPath := writeClaudeCredentials(t, credentialFixture{Access: "old-access", Refresh: "old-refresh", ExpiresAt: pastMillis(t), Subscription: "pro", Extra: `,"custom":{"keep":true}`})

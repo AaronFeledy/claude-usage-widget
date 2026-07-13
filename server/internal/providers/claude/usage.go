@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -13,13 +14,16 @@ import (
 )
 
 type usageResponse struct {
-	FiveHour usageBucketResponse `json:"five_hour"`
-	SevenDay usageBucketResponse `json:"seven_day"`
+	FiveHour          *usageBucketResponse `json:"five_hour"`
+	SevenDay          *usageBucketResponse `json:"seven_day"`
+	SevenDayOAuthApps *usageBucketResponse `json:"seven_day_oauth_apps"`
+	SevenDaySonnet    *usageBucketResponse `json:"seven_day_sonnet"`
+	SevenDayOpus      *usageBucketResponse `json:"seven_day_opus"`
 }
 
 type usageBucketResponse struct {
-	Utilization float64 `json:"utilization"`
-	ResetsAt    string  `json:"resets_at"`
+	Utilization *float64 `json:"utilization"`
+	ResetsAt    string   `json:"resets_at"`
 }
 
 type statusError struct {
@@ -66,21 +70,49 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 	if err := json.Unmarshal(body, &response); err != nil {
 		return usage.UsageData{}, fmt.Errorf("parse usage response: %w", err)
 	}
-	current, err := response.FiveHour.toUsageBucket()
-	if err != nil {
-		return usage.UsageData{}, fmt.Errorf("five_hour: %w", err)
+	primaryLabelValue := primaryLabel
+	var current usage.UsageBucket
+	primaryWindows := []struct {
+		name   string
+		window *usageBucketResponse
+	}{
+		{name: "five_hour", window: response.FiveHour},
+		{name: "seven_day", window: response.SevenDay},
+		{name: "seven_day_oauth_apps", window: response.SevenDayOAuthApps},
+		{name: "seven_day_sonnet", window: response.SevenDaySonnet},
+		{name: "seven_day_opus", window: response.SevenDayOpus},
 	}
-	weekly, err := response.SevenDay.toUsageBucket()
-	if err != nil {
-		return usage.UsageData{}, fmt.Errorf("seven_day: %w", err)
+	primaryFound := false
+	for index, candidate := range primaryWindows {
+		if candidate.window == nil || candidate.window.Utilization == nil {
+			continue
+		}
+		var err error
+		current, err = candidate.window.toUsageBucket()
+		if err != nil {
+			return usage.UsageData{}, fmt.Errorf("%s: %w", candidate.name, err)
+		}
+		if index > 0 {
+			primaryLabelValue = secondaryLabel
+		}
+		primaryFound = true
+		break
 	}
-	return usage.UsageData{ProviderName: providerName, PrimaryLabel: primaryLabel, SecondaryLabel: secondaryLabel, ShowSecondary: true, Subtitle: subscription, Current: current, Weekly: weekly}, nil
+	if !primaryFound {
+		return usage.UsageData{}, fmt.Errorf("missing session data")
+	}
+	var weekly usage.UsageBucket
+	if response.SevenDay != nil && response.SevenDay.Utilization != nil {
+		var err error
+		weekly, err = response.SevenDay.toUsageBucket()
+		if err != nil {
+			return usage.UsageData{}, fmt.Errorf("seven_day: %w", err)
+		}
+	}
+	return usage.UsageData{ProviderName: providerName, PrimaryLabel: primaryLabelValue, SecondaryLabel: secondaryLabel, ShowSecondary: true, Subtitle: subscription, Current: current, Weekly: weekly}, nil
 }
 
 func (b usageBucketResponse) toUsageBucket() (usage.UsageBucket, error) {
-	if b.Utilization < 0 || b.Utilization > 100 {
-		return usage.UsageBucket{}, fmt.Errorf("utilization %.2f out of range", b.Utilization)
-	}
 	var reset *time.Time
 	if strings.TrimSpace(b.ResetsAt) != "" {
 		parsed, err := time.Parse(time.RFC3339, b.ResetsAt)
@@ -90,7 +122,7 @@ func (b usageBucketResponse) toUsageBucket() (usage.UsageBucket, error) {
 		utc := parsed.UTC()
 		reset = &utc
 	}
-	return usage.UsageBucket{Utilization: b.Utilization, ResetsAt: reset}, nil
+	return usage.UsageBucket{Utilization: math.Min(math.Max(*b.Utilization, 0), 100), ResetsAt: reset}, nil
 }
 
 func formatCredentialError(err error) string {
