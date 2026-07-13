@@ -58,10 +58,11 @@ jobs:
       - run: mv clients/windows/bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
       - name: Build usage server
         shell: pwsh
+        working-directory: server
         run: |
           $env:GOOS = 'windows'
           $env:GOARCH = '${{ matrix.goarch }}'
-          go build -trimpath -ldflags "-s -w" -o usage-server-${{ matrix.runtime }}.exe ./server/cmd/usage-server
+          go build -trimpath -ldflags "-s -w" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeUsageWidget-${{ matrix.runtime }}
@@ -113,10 +114,11 @@ jobs:
       - run: mv clients/windows/bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
       - name: Build usage server
         shell: pwsh
+        working-directory: server
         run: |
           $env:GOOS = 'windows'
           $env:GOARCH = '${{ matrix.goarch }}'
-          go build -trimpath -ldflags "-s -w" -o usage-server-${{ matrix.runtime }}.exe ./server/cmd/usage-server
+          go build -trimpath -ldflags "-s -w" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeUsageWidget-${{ matrix.runtime }}
