@@ -93,7 +93,7 @@ if (-not $serverUrl) {
 $version = $release.tag_name
 Write-Host " $version" -ForegroundColor Green
 
-if ($PSCmdlet.ShouldProcess($installDir, 'Install Claude Usage Widget and usage server')) {
+if ($null -eq $PSCmdlet -or $PSCmdlet.ShouldProcess($installDir, 'Install Claude Usage Widget and usage server')) {
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
     $running = Get-Process -Name 'ClaudeUsageWidget', 'usage-server' -ErrorAction SilentlyContinue
