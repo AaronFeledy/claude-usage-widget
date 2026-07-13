@@ -1,0 +1,11 @@
+.git
+.github
+.omo
+bin/
+dist/
+tmp/
+/*.exe
+/usage-server
+/usage-server-*
+coverage.out
+*.test

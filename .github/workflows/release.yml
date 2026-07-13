@@ -35,24 +35,40 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        runtime: [win-x64, win-arm64]
+        include:
+          - runtime: win-x64
+            goarch: amd64
+          - runtime: win-arm64
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
       - name: Update version in csproj
         shell: pwsh
         run: |
           $version = "${{ needs.version.outputs.new_version }}"
-          (Get-Content ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content ClaudeUsageWidget.csproj
+          (Get-Content clients/windows/ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content clients/windows/ClaudeUsageWidget.csproj
       - name: Publish
-        run: dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
-      - run: mv bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
+        run: dotnet publish clients/windows/ClaudeUsageWidget.csproj -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
+      - run: mv clients/windows/bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
+      - name: Build usage server
+        shell: pwsh
+        working-directory: server
+        run: |
+          $env:GOOS = 'windows'
+          $env:GOARCH = '${{ matrix.goarch }}'
+          go build -trimpath -ldflags "-s -w" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeUsageWidget-${{ matrix.runtime }}
-          path: ClaudeUsageWidget-${{ matrix.runtime }}.exe
+          path: |
+            ClaudeUsageWidget-${{ matrix.runtime }}.exe
+            usage-server-${{ matrix.runtime }}.exe
 
   release-branch:
     needs: [version, build-branch]
@@ -75,24 +91,40 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        runtime: [win-x64, win-arm64]
+        include:
+          - runtime: win-x64
+            goarch: amd64
+          - runtime: win-arm64
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
       - name: Update version in csproj
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart("v")
-          (Get-Content ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content ClaudeUsageWidget.csproj
+          (Get-Content clients/windows/ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content clients/windows/ClaudeUsageWidget.csproj
       - name: Publish
-        run: dotnet publish -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
-      - run: mv bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
+        run: dotnet publish clients/windows/ClaudeUsageWidget.csproj -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
+      - run: mv clients/windows/bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
+      - name: Build usage server
+        shell: pwsh
+        working-directory: server
+        run: |
+          $env:GOOS = 'windows'
+          $env:GOARCH = '${{ matrix.goarch }}'
+          go build -trimpath -ldflags "-s -w" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeUsageWidget-${{ matrix.runtime }}
-          path: ClaudeUsageWidget-${{ matrix.runtime }}.exe
+          path: |
+            ClaudeUsageWidget-${{ matrix.runtime }}.exe
+            usage-server-${{ matrix.runtime }}.exe
 
   release-tag:
     needs: build-tag
