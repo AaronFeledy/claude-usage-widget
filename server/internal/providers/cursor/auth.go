@@ -28,7 +28,17 @@ func cookieFromAccessToken(accessToken string) (string, error) {
 	if strings.TrimSpace(claims.Subject) == "" {
 		return "", fmt.Errorf("missing subject: %w", ErrInvalidToken)
 	}
-	return "WorkosCursorSessionToken=" + claims.Subject + "::" + trimmed, nil
+	subjectParts := strings.Split(claims.Subject, "|")
+	userID := subjectParts[len(subjectParts)-1]
+	if userID == "" {
+		return "", fmt.Errorf("missing user ID: %w", ErrInvalidToken)
+	}
+	for _, char := range userID {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != '-' {
+			return "", fmt.Errorf("invalid user ID: %w", ErrInvalidToken)
+		}
+	}
+	return "WorkosCursorSessionToken=" + userID + "%3A%3A" + trimmed, nil
 }
 
 func decodeJWTClaims(accessToken string) (jwtClaims, error) {

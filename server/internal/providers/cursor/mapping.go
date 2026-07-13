@@ -15,6 +15,7 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 	planUsedRaw := intValue(planUsage(summary).Used)
 	planLimitRaw := intValue(planUsage(summary).Limit)
 	planPercent := percentFromPlan(summary, planUsedRaw, planLimitRaw)
+	statusUsedRaw, statusLimitRaw := headlineMoneyUsage(summary, planUsedRaw, planLimitRaw)
 
 	requestsUsed, requestsLimit, hasRequests := requestUsage(legacyUsage)
 	if hasRequests {
@@ -23,7 +24,7 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 		primaryStatus := fmt.Sprintf("%d / %d requests this cycle", requestsUsed, requestsLimit)
 		data.PrimaryStatusText = &primaryStatus
 	} else {
-		primaryStatus := fmt.Sprintf("$%s / $%s this cycle", money(planUsedRaw), money(planLimitRaw))
+		primaryStatus := fmt.Sprintf("$%s / $%s this cycle", money(statusUsedRaw), money(statusLimitRaw))
 		data.PrimaryStatusText = &primaryStatus
 	}
 
@@ -41,6 +42,18 @@ func populateOnDemand(data *usage.UsageData, summary cursorUsageSummary, billing
 		secondaryStatus := fmt.Sprintf("$%s / $%s on-demand", money(onDemandUsedRaw), money(onDemandLimitRaw))
 		data.SecondaryStatusText = &secondaryStatus
 		return
+	}
+	if summary.TeamUsage != nil && summary.TeamUsage.OnDemand != nil {
+		teamOnDemand := *summary.TeamUsage.OnDemand
+		if teamOnDemand.Limit != nil && *teamOnDemand.Limit > 0 {
+			teamUsedRaw := intValue(teamOnDemand.Used)
+			teamLimitRaw := *teamOnDemand.Limit
+			teamPercent := float64(teamUsedRaw) / float64(teamLimitRaw) * 100
+			data.Weekly = usage.UsageBucket{Utilization: clampPercent(teamPercent), ResetsAt: billingCycleEnd}
+			secondaryStatus := fmt.Sprintf("$%s / $%s team on-demand", money(teamUsedRaw), money(teamLimitRaw))
+			data.SecondaryStatusText = &secondaryStatus
+			return
+		}
 	}
 	data.ShowSecondary = false
 	secondaryStatus := "No on-demand cap exposed by Cursor"
@@ -82,17 +95,54 @@ func requestUsage(legacyUsage *cursorUsageResponse) (int, int, bool) {
 }
 
 func percentFromPlan(summary cursorUsageSummary, planUsedRaw int, planLimitRaw int) float64 {
+	plan := planUsage(summary)
+	if plan.TotalPercentUsed != nil {
+		return clampPercent(*plan.TotalPercentUsed)
+	}
+	if plan.AutoPercentUsed != nil && plan.APIPercentUsed != nil {
+		return (clampPercent(*plan.AutoPercentUsed) + clampPercent(*plan.APIPercentUsed)) / 2
+	}
+	if plan.APIPercentUsed != nil {
+		return clampPercent(*plan.APIPercentUsed)
+	}
+	if plan.AutoPercentUsed != nil {
+		return clampPercent(*plan.AutoPercentUsed)
+	}
 	if planLimitRaw > 0 {
 		return float64(planUsedRaw) / float64(planLimitRaw) * 100
 	}
-	plan := planUsage(summary)
-	if plan.TotalPercentUsed == nil {
-		return 0
+	if summary.IndividualUsage != nil && summary.IndividualUsage.Overall != nil {
+		overall := summary.IndividualUsage.Overall
+		limit := intValue(overall.Limit)
+		if limit > 0 {
+			return float64(intValue(overall.Used)) / float64(limit) * 100
+		}
 	}
-	if *plan.TotalPercentUsed <= 1 {
-		return *plan.TotalPercentUsed * 100
+	if summary.TeamUsage != nil && summary.TeamUsage.Pooled != nil {
+		pooled := summary.TeamUsage.Pooled
+		limit := intValue(pooled.Limit)
+		if limit > 0 {
+			return float64(intValue(pooled.Used)) / float64(limit) * 100
+		}
 	}
-	return *plan.TotalPercentUsed
+	return 0
+}
+
+func headlineMoneyUsage(summary cursorUsageSummary, planUsedRaw int, planLimitRaw int) (int, int) {
+	if planUsedRaw > 0 || planLimitRaw > 0 {
+		return planUsedRaw, planLimitRaw
+	}
+	if summary.IndividualUsage != nil && summary.IndividualUsage.Overall != nil {
+		overall := summary.IndividualUsage.Overall
+		used, limit := intValue(overall.Used), intValue(overall.Limit)
+		if used > 0 || limit > 0 {
+			return used, limit
+		}
+	}
+	if summary.TeamUsage != nil && summary.TeamUsage.Pooled != nil {
+		return intValue(summary.TeamUsage.Pooled.Used), intValue(summary.TeamUsage.Pooled.Limit)
+	}
+	return 0, 0
 }
 
 func parseDate(value *string) *time.Time {

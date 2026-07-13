@@ -36,7 +36,7 @@ func Test_Client_Fetch_maps_usage_summary_when_cookie_pushed(t *testing.T) {
 	assertStringPtr(t, got.Subtitle, "pro")
 	assertStringPtr(t, got.PrimaryStatusText, "$12.34 / $100 this cycle")
 	assertStringPtr(t, got.SecondaryStatusText, "$5 / $20 on-demand")
-	if got.Current.Utilization != 12.34 || got.Weekly.Utilization != 25 || !got.ShowSecondary {
+	if got.Current.Utilization != 0.3 || got.Weekly.Utilization != 25 || !got.ShowSecondary {
 		t.Fatalf("usage = current %.2f weekly %.2f show %v", got.Current.Utilization, got.Weekly.Utilization, got.ShowSecondary)
 	}
 	if got.Current.ResetsAt == nil || got.Current.ResetsAt.UTC().Format(time.RFC3339) != "2026-08-01T12:00:00Z" {
@@ -143,10 +143,10 @@ func Test_Client_Fetch_honors_canceled_context(t *testing.T) {
 	}
 }
 
-func Test_Client_SetAccessToken_builds_workos_cookie_from_jwt_subject(t *testing.T) {
+func Test_Client_SetAccessToken_builds_workos_cookie_from_last_jwt_subject_segment(t *testing.T) {
 	// Given
-	token := jwtWithSub("subject-1", "payload")
-	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=subject-1::" + token})
+	token := jwtWithSub("auth0|user_abc", "payload")
+	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=user_abc%3A%3A" + token})
 	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
 
 	// When
@@ -176,7 +176,7 @@ func Test_Client_Fetch_uses_local_auth_only_when_discovery_enabled(t *testing.T)
 	// Given
 	token := jwtWithSub("local-sub", "payload")
 	authPath := writeAuthFile(t, token)
-	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=local-sub::" + token})
+	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "WorkosCursorSessionToken=local-sub%3A%3A" + token})
 	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client(), AuthPath: authPath, AllowLocalDiscovery: true})
 
 	// When
