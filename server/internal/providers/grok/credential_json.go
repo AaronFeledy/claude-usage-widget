@@ -3,6 +3,7 @@ package grok
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 func updateCredentialJSON(data []byte, creds credentials) ([]byte, error) {
@@ -23,7 +24,7 @@ func updateCredentialJSON(data []byte, creds credentials) ([]byte, error) {
 		entry["refresh_token"] = jsonStringRaw(creds.refreshToken)
 	}
 	if !creds.expiresAt.IsZero() {
-		entry["expires_at"] = []byte(fmt.Sprintf("%d", creds.expiresAt.UnixMilli()))
+		entry["expires_at"] = jsonStringRaw(creds.expiresAt.UTC().Format(time.RFC3339Nano))
 	}
 	updated, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {

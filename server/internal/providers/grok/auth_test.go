@@ -169,8 +169,18 @@ func assertAuthFileEntry(t *testing.T, path string, entryKey string, wantKey str
 	if string(entry["refresh_token"]) != `"`+wantRefresh+`"` {
 		t.Fatalf("%s refresh_token = %s, want %q", entryKey, entry["refresh_token"], wantRefresh)
 	}
-	if _, ok := entry["expires_at"]; ok != wantExpires {
-		t.Fatalf("%s expires_at present = %v, want %v", entryKey, ok, wantExpires)
+	rawExpires, hasExpires := entry["expires_at"]
+	if hasExpires != wantExpires {
+		t.Fatalf("%s expires_at present = %v, want %v", entryKey, hasExpires, wantExpires)
+	}
+	if wantExpires {
+		var expiresAt string
+		if err := json.Unmarshal(rawExpires, &expiresAt); err != nil {
+			t.Fatalf("%s expires_at is not a JSON string (got %s): %v", entryKey, rawExpires, err)
+		}
+		if expiresAt == "" {
+			t.Fatalf("%s expires_at is empty", entryKey)
+		}
 	}
 	if _, ok := entry["unknown"]; ok != wantUnknown {
 		t.Fatalf("%s unknown preserved = %v, want %v", entryKey, ok, wantUnknown)
