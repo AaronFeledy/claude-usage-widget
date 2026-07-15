@@ -18,9 +18,13 @@ func parseUsage(body []byte, data usage.UsageData) (usage.UsageData, error) {
 		data.Subtitle = decoded.PlanType
 	}
 	current, weekly := normalizeWindows(decoded.RateLimit.PrimaryWindow, decoded.RateLimit.SecondaryWindow)
-	data.Current = usageBucket(current)
-	data.Weekly = usageBucket(weekly)
-	return data, nil
+	currentUsage := usageBucket(current)
+	weeklyUsage := usageBucket(weekly)
+	data.ProviderName = providerName
+	return data.WithBuckets([]usage.Bucket{
+		{ID: usage.BucketSession, Label: "5-Hour", Utilization: currentUsage.Utilization, ResetsAt: currentUsage.ResetsAt},
+		{ID: usage.BucketWeekly, Label: "Weekly", Utilization: weeklyUsage.Utilization, ResetsAt: weeklyUsage.ResetsAt},
+	}), nil
 }
 
 func baseUsage() usage.UsageData {

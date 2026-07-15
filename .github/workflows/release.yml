@@ -50,8 +50,12 @@ jobs:
           go-version: '1.23.x'
       - name: Update version in csproj
         shell: pwsh
+        env:
+          RAW_VERSION: ${{ needs.version.outputs.new_version }}
+          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
         run: |
-          $version = "${{ needs.version.outputs.new_version }}"
+          $version = ("$env:RAW_VERSION").TrimStart("v")
+          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
           (Get-Content clients/windows/ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content clients/windows/ClaudeUsageWidget.csproj
       - name: Publish
         run: dotnet publish clients/windows/ClaudeUsageWidget.csproj -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
@@ -59,10 +63,15 @@ jobs:
       - name: Build usage server
         shell: pwsh
         working-directory: server
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          RAW_VERSION: ${{ needs.version.outputs.new_version }}
+          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
         run: |
-          $env:GOOS = 'windows'
-          $env:GOARCH = '${{ matrix.goarch }}'
-          go build -trimpath -ldflags "-s -w" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
+          $version = ("$env:RAW_VERSION").TrimStart("v")
+          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeUsageWidget-${{ matrix.runtime }}
@@ -106,8 +115,12 @@ jobs:
           go-version: '1.23.x'
       - name: Update version in csproj
         shell: pwsh
+        env:
+          RAW_VERSION: ${{ github.ref_name }}
+          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $version = ("$env:RAW_VERSION").TrimStart("v")
+          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
           (Get-Content clients/windows/ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content clients/windows/ClaudeUsageWidget.csproj
       - name: Publish
         run: dotnet publish clients/windows/ClaudeUsageWidget.csproj -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
@@ -115,10 +128,15 @@ jobs:
       - name: Build usage server
         shell: pwsh
         working-directory: server
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          RAW_VERSION: ${{ github.ref_name }}
+          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
         run: |
-          $env:GOOS = 'windows'
-          $env:GOARCH = '${{ matrix.goarch }}'
-          go build -trimpath -ldflags "-s -w" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
+          $version = ("$env:RAW_VERSION").TrimStart("v")
+          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
       - uses: actions/upload-artifact@v4
         with:
           name: ClaudeUsageWidget-${{ matrix.runtime }}

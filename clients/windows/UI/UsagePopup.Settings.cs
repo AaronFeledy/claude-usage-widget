@@ -11,6 +11,11 @@ public partial class UsagePopup
         ApplyProviderOrder();
     }
 
+    public void SetApiClient(ApiClient apiClient)
+    {
+        _apiClient = apiClient;
+    }
+
     private void LoadSettingsToControls()
     {
         if (_settingsService == null) return;
@@ -53,6 +58,58 @@ public partial class UsagePopup
             RecalculateLayout();
             PositionNearTray();
         }
+
+        _ = RefreshServerVersionAsync();
+    }
+
+    private async Task RefreshServerVersionAsync()
+    {
+        var requestId = ++_serverVersionRequestId;
+        SetVersionLabelText(loading: true);
+
+        if (_apiClient == null)
+        {
+            SetVersionLabelText(serverLine: "server —");
+            return;
+        }
+
+        ApiResult<ServerHealthInfo> result;
+        try
+        {
+            result = await _apiClient.GetHealthAsync().ConfigureAwait(true);
+        }
+        catch
+        {
+            if (!IsDisposed && requestId == _serverVersionRequestId)
+            {
+                SetVersionLabelText(serverLine: "server —");
+            }
+            return;
+        }
+
+        if (IsDisposed || requestId != _serverVersionRequestId)
+        {
+            return;
+        }
+
+        SetVersionLabelText(serverLine: FormatServerVersionLine(result));
+    }
+
+    private static string FormatServerVersionLine(ApiResult<ServerHealthInfo> result) => result.Status switch
+    {
+        ApiResultStatus.Success when !string.IsNullOrWhiteSpace(result.Value?.Version)
+            => $"server {result.Value.Version.Trim()}",
+        ApiResultStatus.Offline => "server offline",
+        ApiResultStatus.Unauthorized => "server unauthorized",
+        _ => "server —"
+    };
+
+    private void SetVersionLabelText(string? serverLine = null, bool loading = false)
+    {
+        var appVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var appText = $"app v{appVersion?.ToString(3) ?? "?"}";
+        var serverText = loading ? "server …" : (serverLine ?? "server —");
+        _versionLabel.Text = $"{appText}\n{serverText}";
     }
 
     private void HideSettings()

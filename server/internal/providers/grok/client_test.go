@@ -38,6 +38,9 @@ func Test_Provider_Fetch_maps_billing_and_settings_response_to_usage_data(t *tes
 	if data.Weekly.Utilization != 0 || data.Weekly.ResetsAt == nil || !data.Weekly.ResetsAt.Equal(*data.Current.ResetsAt) {
 		t.Fatalf("Weekly = %#v, want zero placeholder with same reset", data.Weekly)
 	}
+	if len(data.Buckets) != 1 || data.Buckets[0].ID != "credits" || data.Buckets[0].Label != "Credits" || data.Buckets[0].Utilization != data.Current.Utilization {
+		t.Fatalf("Buckets = %#v, want one Credits bucket matching Current", data.Buckets)
+	}
 	assertGrokHeaders(t, server.billingHeaders[0])
 }
 

@@ -18,6 +18,8 @@ public partial class UsagePopup
         var y = cursorPos.Y > workingArea.Top + workingArea.Height / 2
             ? workingArea.Bottom - Height - 8
             : workingArea.Top + 8;
+        if (y < workingArea.Top + 8)
+            y = workingArea.Top + 8;
 
         Location = new Point(x, y);
     }
@@ -25,9 +27,28 @@ public partial class UsagePopup
     private void RecalculateLayout()
     {
         _providerList.Location = new Point(12, 44);
+
+        var maxHeight = Screen.FromPoint(Cursor.Position).WorkingArea.Height - 16;
+        var settingsHeight = _settingsExpanded ? _settingsPanel.Height : 0;
+        var availableForList = maxHeight - _providerList.Top - 12 - settingsHeight;
+        var naturalListHeight = _providerList.PreferredSize.Height;
+
+        if (availableForList > 0 && naturalListHeight > availableForList)
+        {
+            _providerList.AutoSize = false;
+            _providerList.AutoScroll = true;
+            _providerList.Height = availableForList;
+        }
+        else
+        {
+            _providerList.AutoScroll = false;
+            _providerList.AutoSize = true;
+        }
+
         _settingsPanel.Location = new Point(0, _providerList.Bottom + 8);
         _collapsedHeight = _providerList.Bottom + 12;
-        Height = _settingsExpanded ? _collapsedHeight + _settingsPanel.Height : _collapsedHeight;
+        var desired = _settingsExpanded ? _collapsedHeight + _settingsPanel.Height : _collapsedHeight;
+        Height = Math.Min(desired, maxHeight);
     }
 
     protected override void OnPaint(PaintEventArgs e)

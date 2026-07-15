@@ -38,6 +38,15 @@ public partial class TrayApplicationContext
     {
         var stale = _snapshot.LastGoodAt?.ToLocalTime().ToString("g") ?? "unknown";
         var message = _snapshot.State == TrayApiState.Offline ? $"Stale: server offline since {stale}" : $"Stale: {_snapshot.Message ?? _snapshot.State.ToString()}";
+        var buckets = data.Buckets.Select(bucket => new UsageBucketDetail
+        {
+            Id = bucket.Id,
+            Label = bucket.Label,
+            Utilization = bucket.Utilization,
+            ResetsAt = bucket.ResetsAt,
+            StatusText = bucket.StatusText
+        }).ToList();
+        if (buckets.Count > 0) buckets[0].StatusText = message;
         return new UsageData
         {
             ProviderName = data.ProviderName,
@@ -48,6 +57,7 @@ public partial class TrayApplicationContext
             ReauthCommand = data.ReauthCommand,
             Current = data.Current,
             Weekly = data.Weekly,
+            Buckets = buckets,
             PrimaryStatusText = message,
             SecondaryStatusText = data.SecondaryStatusText
         };

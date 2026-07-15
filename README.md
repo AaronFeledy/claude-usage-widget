@@ -95,6 +95,11 @@ The server reads credentials for enabled providers on the host where `usage-serv
     "reauth_command": null,
     "current": { "utilization": 42.5, "resets_at": "2026-07-12T18:00:00Z" },
     "weekly": { "utilization": 17.0, "resets_at": null },
+    "buckets": [
+      { "id": "session", "label": "Current Session", "utilization": 42.5, "resets_at": "2026-07-12T18:00:00Z", "status_text": null },
+      { "id": "weekly", "label": "Weekly", "utilization": 17.0, "resets_at": null, "status_text": null },
+      { "id": "extra", "label": "Extra usage", "utilization": 12.0, "resets_at": null, "status_text": "120 / 1000 credits" }
+    ],
     "error": null,
     "needs_reauth": false,
     "is_success": true
@@ -102,7 +107,7 @@ The server reads credentials for enabled providers on the host where `usage-serv
 ]
 ```
 
-`is_success` is derived from `error == null`; optional strings and reset timestamps are emitted as explicit `null`.
+`is_success` is derived from `error == null`; optional strings and reset timestamps are emitted as explicit `null`. `buckets` is an additive array after `weekly` (always present, empty `[]` on error). Each bucket is `{id,label,utilization,resets_at,status_text}`. Providers normalize via `usage.FromBuckets` / `WithBuckets`. Credit meters (`extra`, `on_demand`) appear only when enabled or when there is non-zero usage. `current` / `weekly` stay populated for backward compatibility.
 
 ## Build And Verify
 

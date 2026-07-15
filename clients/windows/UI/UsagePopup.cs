@@ -29,13 +29,16 @@ public partial class UsagePopup : Form
     private readonly ComboBox _primaryProviderCombo;
     private readonly Label _refreshIntervalLabel;
     private readonly ComboBox _refreshIntervalCombo;
+    private readonly Label _versionLabel;
     private readonly OwnedGeneratedIcon _titleIcon;
     private readonly Bitmap _titleIconBitmap;
 
     // State
     private SettingsService? _settingsService;
+    private ApiClient? _apiClient;
     private bool _settingsExpanded;
     private int _collapsedHeight;
+    private int _serverVersionRequestId;
 
     // Events
     public event EventHandler? OnSettingsChanged;
@@ -201,16 +204,16 @@ public partial class UsagePopup : Form
         _refreshIntervalCombo.SelectedIndexChanged += OnRefreshIntervalChanged;
         _settingsPanel.Controls.Add(_refreshIntervalCombo);
 
-        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        var versionLabel = new Label
+        _versionLabel = new Label
         {
-            Text = $"v{version?.ToString(3) ?? "?"}",
             Font = new Font("Segoe UI", 8),
             ForeColor = Color.FromArgb(100, 100, 100),
-            Location = new Point(Width - 60, 12),
-            AutoSize = true
+            Location = new Point(Width - 148, 10),
+            Size = new Size(136, 28),
+            TextAlign = ContentAlignment.TopRight
         };
-        _settingsPanel.Controls.Add(versionLabel);
+        SetVersionLabelText(null);
+        _settingsPanel.Controls.Add(_versionLabel);
 
         Controls.Add(_settingsPanel);
         RecalculateLayout();

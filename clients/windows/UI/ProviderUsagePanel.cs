@@ -9,14 +9,19 @@ public class ProviderUsagePanel : Panel
     private const int ContentLeft = 10;
     private const int ContentWidth = 256;
     private const int PercentWidth = 48;
-    private const int PrimaryLabelY = 36;
-    private const int PrimaryPercentY = 34;
-    private const int PrimaryProgressY = 54;
-    private const int PrimaryStatusY = 71;
-    private const int SecondaryLabelY = 88;
-    private const int SecondaryPercentY = 86;
-    private const int SecondaryProgressY = 106;
-    private const int SecondaryStatusY = 123;
+
+    // Vertical layout. First bar row's section label sits at RowTopStart; each
+    // subsequent row is offset by RowPitch. Height = 92 + (N-1)*RowPitch, which
+    // reproduces the original anchors exactly: 1 bar -> 92, 2 bars -> 152.
+    private const int RowTopStart = 36;
+    private const int RowPitch = 60;
+    private const int SingleRowHeight = 92;
+
+    // Offsets of each control within a row, relative to the row's top (section label).
+    private const int PercentDeltaY = -2;
+    private const int ProgressDeltaY = 18;
+    private const int StatusDeltaY = 35;
+    private const int ProgressHeight = 14;
 
     private static readonly Color BackgroundColor = Color.FromArgb(36, 36, 36);
     private static readonly Color ProminentBackgroundColor = Color.FromArgb(44, 44, 44);
@@ -25,17 +30,11 @@ public class ProviderUsagePanel : Panel
     private static readonly Color SeparatorColor = Color.FromArgb(60, 60, 60);
     private static readonly Color AccentColor = Color.FromArgb(217, 119, 87);
     private static readonly Color PlanPillTextColor = Color.FromArgb(170, 170, 170);
+    private static readonly Color ReauthColor = Color.FromArgb(220, 53, 69);
 
     private readonly Label _titleLabel;
     private readonly Label _subtitleLabel;
-    private readonly Label _primaryLabel;
-    private readonly Label _primaryPercentLabel;
-    private readonly UsageProgressBar _primaryProgress;
-    private readonly Label _primaryStatusLabel;
-    private readonly Label _secondaryLabel;
-    private readonly Label _secondaryPercentLabel;
-    private readonly UsageProgressBar _secondaryProgress;
-    private readonly Label _secondaryStatusLabel;
+    private readonly List<BarRow> _rows = new();
     private bool _isProminent;
 
     public string ProviderName { get; }
@@ -45,7 +44,7 @@ public class ProviderUsagePanel : Panel
         ProviderName = providerName;
         BackColor = BackgroundColor;
         Width = PanelWidth;
-        Height = 116;
+        Height = SingleRowHeight;
         Margin = new Padding(0, 0, 0, 10);
         Padding = new Padding(10);
 
@@ -70,40 +69,6 @@ public class ProviderUsagePanel : Panel
             Visible = false
         };
         Controls.Add(_subtitleLabel);
-
-        _primaryLabel = CreateSectionLabel(new Point(10, PrimaryLabelY));
-        Controls.Add(_primaryLabel);
-
-        _primaryPercentLabel = CreatePercentLabel(new Point(ContentLeft + ContentWidth - PercentWidth, PrimaryPercentY));
-        Controls.Add(_primaryPercentLabel);
-
-        _primaryProgress = new UsageProgressBar
-        {
-            Location = new Point(10, PrimaryProgressY),
-            Size = new Size(ContentWidth, 14)
-        };
-        Controls.Add(_primaryProgress);
-
-        _primaryStatusLabel = CreateStatusLabel(new Point(10, PrimaryStatusY));
-        Controls.Add(_primaryStatusLabel);
-
-        _secondaryLabel = CreateSectionLabel(new Point(10, SecondaryLabelY));
-        Controls.Add(_secondaryLabel);
-
-        _secondaryPercentLabel = CreatePercentLabel(new Point(ContentLeft + ContentWidth - PercentWidth, SecondaryPercentY));
-        Controls.Add(_secondaryPercentLabel);
-
-        _secondaryProgress = new UsageProgressBar
-        {
-            Location = new Point(10, SecondaryProgressY),
-            Size = new Size(ContentWidth, 14)
-        };
-        Controls.Add(_secondaryProgress);
-
-        _secondaryStatusLabel = CreateStatusLabel(new Point(10, SecondaryStatusY));
-        Controls.Add(_secondaryStatusLabel);
-
-        SetSecondaryVisible(true);
     }
 
     public void UpdateData(UsageData? data)
@@ -112,53 +77,24 @@ public class ProviderUsagePanel : Panel
         {
             _titleLabel.Text = "Unavailable";
             _subtitleLabel.Visible = false;
-            _primaryLabel.Text = "Status";
-            _primaryPercentLabel.Text = "--";
-            _primaryProgress.Value = 0;
-            _primaryStatusLabel.Text = "No data";
-            SetSecondaryVisible(false);
+            RenderStatusOnly("Status", "No data", SecondaryTextColor);
             return;
         }
 
         _titleLabel.Text = data.ProviderName;
         _subtitleLabel.Text = data.Subtitle ?? string.Empty;
         _subtitleLabel.Visible = !string.IsNullOrWhiteSpace(data.Subtitle);
-        ApplyProviderStyles(data);
 
         if (!data.IsSuccess)
         {
-            _primaryLabel.Text = "Status";
-            _primaryPercentLabel.Text = "--";
-            _primaryProgress.Value = 0;
-            _primaryStatusLabel.ForeColor = data.NeedsReauth ? Color.FromArgb(220, 53, 69) : SecondaryTextColor;
-            _primaryStatusLabel.Text = data.NeedsReauth
-                ? BuildReauthText(data)
-                : data.Error ?? "Unavailable";
-            Invalidate();
-            SetSecondaryVisible(false);
+            var statusColor = data.NeedsReauth ? ReauthColor : SecondaryTextColor;
+            var statusText = data.NeedsReauth ? BuildReauthText(data) : data.Error ?? "Unavailable";
+            RenderStatusOnly("Status", statusText, statusColor);
             return;
         }
 
-        _primaryStatusLabel.ForeColor = SecondaryTextColor;
-        _primaryLabel.Text = data.PrimaryLabel;
-        _primaryPercentLabel.Text = $"{data.Current.Utilization:F0}%";
-        _primaryProgress.Value = data.Current.Utilization;
-        _primaryStatusLabel.Text = data.PrimaryStatusText ?? BuildResetText(data.Current.ResetsAt, "Resets in");
-
-        SetSecondaryVisible(data.ShowSecondary);
-        if (data.ShowSecondary)
-        {
-            _secondaryLabel.Text = data.SecondaryLabel;
-            _secondaryPercentLabel.Text = $"{data.Weekly.Utilization:F0}%";
-            _secondaryProgress.Value = data.Weekly.Utilization;
-            _secondaryStatusLabel.Text = data.SecondaryStatusText ?? BuildResetText(data.Weekly.ResetsAt, "Resets");
-        }
-        else
-        {
-            _secondaryStatusLabel.Text = data.SecondaryStatusText ?? string.Empty;
-        }
-
-        Invalidate();
+        var buckets = ResolveBuckets(data);
+        RenderBuckets(data, buckets);
     }
 
     public void SetProminent(bool isProminent)
@@ -187,45 +123,179 @@ public class ProviderUsagePanel : Panel
         }
     }
 
-    private void SetSecondaryVisible(bool visible)
+    protected override void Dispose(bool disposing)
     {
-        _secondaryLabel.Visible = visible;
-        _secondaryPercentLabel.Visible = visible;
-        _secondaryProgress.Visible = visible;
-        _secondaryStatusLabel.Visible = visible;
-        Height = visible ? 152 : 92;
+        if (disposing)
+        {
+            foreach (var row in _rows)
+                row.Dispose();
+            _rows.Clear();
+        }
+        base.Dispose(disposing);
     }
 
-    private void ApplyProviderStyles(UsageData data)
+    /// <summary>
+    /// Resolves the list of bar rows to render. Prefers the server-provided
+    /// <see cref="UsageData.Buckets"/>; if empty, synthesizes from Current
+    /// (and Weekly when <see cref="UsageData.ShowSecondary"/>) as a fallback.
+    /// </summary>
+    private static IReadOnlyList<UsageBucketDetail> ResolveBuckets(UsageData data)
     {
-        switch (data.ProviderName)
+        if (data.Buckets.Count > 0)
+            return data.Buckets;
+
+        var synthesized = new List<UsageBucketDetail>
+        {
+            new()
+            {
+                Id = "session",
+                Label = data.PrimaryLabel,
+                Utilization = data.Current.Utilization,
+                ResetsAt = data.Current.ResetsAt
+            }
+        };
+        if (data.ShowSecondary)
+        {
+            synthesized.Add(new UsageBucketDetail
+            {
+                Id = "weekly",
+                Label = data.SecondaryLabel,
+                Utilization = data.Weekly.Utilization,
+                ResetsAt = data.Weekly.ResetsAt
+            });
+        }
+        return synthesized;
+    }
+
+    private void RenderBuckets(UsageData data, IReadOnlyList<UsageBucketDetail> buckets)
+    {
+        EnsureRowCount(buckets.Count);
+
+        for (var i = 0; i < buckets.Count; i++)
+        {
+            var bucket = buckets[i];
+            var row = _rows[i];
+
+            row.Section.Text = bucket.Label;
+            row.Percent.Text = $"{bucket.Utilization:F0}%";
+            row.Progress.Value = bucket.Utilization;
+            row.Status.ForeColor = SecondaryTextColor;
+            row.Status.Text = ResolveStatusText(data, i, bucket);
+
+            ApplyBucketStyle(row.Progress, data.ProviderName, bucket);
+        }
+
+        ApplyHeight(buckets.Count);
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Collapses to a single row showing a status message (no-data / error / reauth paths).
+    /// </summary>
+    private void RenderStatusOnly(string label, string status, Color statusColor)
+    {
+        EnsureRowCount(1);
+        var row = _rows[0];
+        row.Section.Text = label;
+        row.Percent.Text = "--";
+        row.Progress.Value = 0;
+        row.Progress.Notches = 0;
+        row.Progress.BurnRatePercent = -1;
+        row.Status.ForeColor = statusColor;
+        row.Status.Text = status;
+        ApplyHeight(1);
+        Invalidate();
+    }
+
+    private static string ResolveStatusText(UsageData data, int index, UsageBucketDetail bucket)
+    {
+        if (!string.IsNullOrWhiteSpace(bucket.StatusText))
+            return bucket.StatusText;
+
+        return index switch
+        {
+            0 => data.PrimaryStatusText ?? BuildResetText(bucket.ResetsAt, "Resets in"),
+            1 => data.SecondaryStatusText ?? BuildResetText(bucket.ResetsAt, "Resets"),
+            _ => BuildResetText(bucket.ResetsAt, "Resets")
+        };
+    }
+
+    /// <summary>
+    /// Grows or shrinks the pool of bar rows to exactly <paramref name="count"/>,
+    /// disposing controls of any rows removed to avoid GDI handle leaks.
+    /// </summary>
+    private void EnsureRowCount(int count)
+    {
+        while (_rows.Count < count)
+        {
+            var row = BarRow.Create();
+            row.AddTo(Controls);
+            _rows.Add(row);
+        }
+        while (_rows.Count > count)
+        {
+            var row = _rows[^1];
+            _rows.RemoveAt(_rows.Count - 1);
+            row.RemoveFrom(Controls);
+            row.Dispose();
+        }
+        for (var i = 0; i < _rows.Count; i++)
+            _rows[i].Position(RowTopStart + i * RowPitch);
+    }
+
+    private void ApplyHeight(int count)
+    {
+        Height = SingleRowHeight + Math.Max(0, count - 1) * RowPitch;
+    }
+
+    private static void ApplyBucketStyle(UsageProgressBar bar, string providerName, UsageBucketDetail bucket)
+    {
+        switch (providerName)
         {
             case "Claude":
             case "Codex":
-                _primaryProgress.Notches = 4;
-                _secondaryProgress.Notches = 6;
-                _primaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, TimeSpan.FromHours(5));
-                _secondaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, TimeSpan.FromDays(7));
+                if (IsCreditBucket(bucket.Id))
+                {
+                    bar.Notches = 3;
+                    bar.BurnRatePercent = -1;
+                }
+                else if (IsWeeklyBucket(bucket.Id))
+                {
+                    bar.Notches = 6;
+                    bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromDays(7));
+                }
+                else
+                {
+                    bar.Notches = 4;
+                    bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromHours(5));
+                }
                 break;
             case "Cursor":
-                _primaryProgress.Notches = 3;
-                _secondaryProgress.Notches = 3;
-                _primaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, TimeSpan.FromDays(30));
-                _secondaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, TimeSpan.FromDays(30));
+                bar.Notches = 3;
+                bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromDays(30));
                 break;
             case "Grok":
-                _primaryProgress.Notches = 3;
-                _secondaryProgress.Notches = 3;
-                _primaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Current.ResetsAt, ResolveMonthEndWindowDuration(data.Current.ResetsAt));
-                _secondaryProgress.BurnRatePercent = CalculateElapsedPercent(data.Weekly.ResetsAt, ResolveMonthEndWindowDuration(data.Weekly.ResetsAt));
+                bar.Notches = 3;
+                bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, ResolveMonthEndWindowDuration(bucket.ResetsAt));
                 break;
             default:
-                _primaryProgress.Notches = 0;
-                _secondaryProgress.Notches = 0;
-                _primaryProgress.BurnRatePercent = -1;
-                _secondaryProgress.BurnRatePercent = -1;
+                bar.Notches = 0;
+                bar.BurnRatePercent = -1;
                 break;
         }
+    }
+
+    private static bool IsWeeklyBucket(string id)
+    {
+        return id.Equals("weekly", StringComparison.OrdinalIgnoreCase)
+            || id.StartsWith("weekly_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCreditBucket(string id)
+    {
+        return id.Equals("extra", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("credits", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("on_demand", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildReauthText(UsageData data)
@@ -269,7 +339,7 @@ public class ProviderUsagePanel : Panel
 
         var remaining = resetsAt.Value - DateTime.UtcNow;
         if (remaining <= TimeSpan.Zero)
-            return prefix == "Resets in" ? "Resets now" : "Resets now";
+            return "Resets now";
 
         if (remaining.TotalDays >= 1)
             return $"{prefix} {(int)remaining.TotalDays}d {remaining.Hours}h";
@@ -280,37 +350,78 @@ public class ProviderUsagePanel : Panel
         return $"{prefix} {Math.Max(remaining.Minutes, 1)}m";
     }
 
-    private static Label CreateSectionLabel(Point location)
+    /// <summary>
+    /// One bar row: section label, right-aligned percent, progress bar, and status line.
+    /// Controls are parented to the owning panel; <see cref="Position"/> lays them out
+    /// relative to the row's top y-coordinate.
+    /// </summary>
+    private sealed class BarRow
     {
-        return new Label
-        {
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-            ForeColor = TextColor,
-            Location = location,
-            AutoSize = true
-        };
-    }
+        public required Label Section { get; init; }
+        public required Label Percent { get; init; }
+        public required UsageProgressBar Progress { get; init; }
+        public required Label Status { get; init; }
 
-    private static Label CreatePercentLabel(Point location)
-    {
-        return new Label
+        public static BarRow Create()
         {
-            Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-            ForeColor = TextColor,
-            Location = location,
-            Size = new Size(48, 18),
-            TextAlign = ContentAlignment.MiddleRight
-        };
-    }
+            return new BarRow
+            {
+                Section = new Label
+                {
+                    Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                    ForeColor = TextColor,
+                    AutoSize = true
+                },
+                Percent = new Label
+                {
+                    Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                    ForeColor = TextColor,
+                    Size = new Size(PercentWidth, 18),
+                    TextAlign = ContentAlignment.MiddleRight
+                },
+                Progress = new UsageProgressBar
+                {
+                    Size = new Size(ContentWidth, ProgressHeight)
+                },
+                Status = new Label
+                {
+                    Font = new Font("Segoe UI", 8),
+                    ForeColor = SecondaryTextColor,
+                    Size = new Size(ContentWidth, 16)
+                }
+            };
+        }
 
-    private static Label CreateStatusLabel(Point location)
-    {
-        return new Label
+        public void AddTo(Control.ControlCollection controls)
         {
-            Font = new Font("Segoe UI", 8),
-            ForeColor = SecondaryTextColor,
-            Location = location,
-            Size = new Size(ContentWidth, 16)
-        };
+            controls.Add(Section);
+            controls.Add(Percent);
+            controls.Add(Progress);
+            controls.Add(Status);
+        }
+
+        public void RemoveFrom(Control.ControlCollection controls)
+        {
+            controls.Remove(Section);
+            controls.Remove(Percent);
+            controls.Remove(Progress);
+            controls.Remove(Status);
+        }
+
+        public void Position(int top)
+        {
+            Section.Location = new Point(ContentLeft, top);
+            Percent.Location = new Point(ContentLeft + ContentWidth - PercentWidth, top + PercentDeltaY);
+            Progress.Location = new Point(ContentLeft, top + ProgressDeltaY);
+            Status.Location = new Point(ContentLeft, top + StatusDeltaY);
+        }
+
+        public void Dispose()
+        {
+            Section.Dispose();
+            Percent.Dispose();
+            Progress.Dispose();
+            Status.Dispose();
+        }
     }
 }

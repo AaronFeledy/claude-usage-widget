@@ -22,7 +22,16 @@ var tests = new (string Name, Func<Task> Run)[]
     ("puts cursor cookie credential", PutsCursorCookieCredential),
     ("puts cursor access token credential", PutsCursorAccessTokenCredential),
     ("maps provider JSON errors", MapsProviderJsonErrors),
-    ("rejects contradictory is_success", RejectsContradictoryIsSuccess)
+    ("rejects contradictory is_success", RejectsContradictoryIsSuccess),
+    ("WIN-1 maps usage buckets", BucketMappingTests.MapsUsageBuckets),
+    ("WIN-2 synthesizes missing usage buckets", BucketMappingTests.SynthesizesMissingUsageBuckets),
+    ("WIN-3 rejects invalid bucket utilization", BucketMappingTests.RejectsInvalidBucketUtilization),
+    ("WIN-4 maps error response with empty buckets", BucketMappingTests.MapsErrorResponseWithEmptyBuckets),
+    ("WIN-5 rejects null bucket element", BucketMappingTests.RejectsNullBucketElement),
+    ("WIN-6 rejects oversized bucket list", BucketMappingTests.RejectsOversizedBucketList),
+    ("maps health version from /api/v1/health", MapsHealthVersion),
+    ("rejects blank health version", RejectsBlankHealthVersion),
+    ("returns unauthorized on health 401", ReturnsUnauthorizedOnHealth)
 };
 
 foreach (var test in tests)
@@ -225,6 +234,32 @@ static async Task RejectsContradictoryIsSuccess()
     var client = NewClient(new QueueHandler(Json(UsageJson().Replace("\"is_success\":true", "\"is_success\":false", StringComparison.Ordinal))));
     var result = await client.GetProviderAsync("Cursor");
     Assert(result.Status == ApiResultStatus.MalformedResponse, "contradictory derived is_success rejected");
+}
+
+static async Task MapsHealthVersion()
+{
+    var handler = new QueueHandler(Json("""{"status":"ok","version":"1.2.3","providers":[]}"""));
+    var client = NewClient(handler, " secret ");
+    var result = await client.GetHealthAsync();
+    Assert(result.Status == ApiResultStatus.Success, result.Error ?? "expected health success");
+    Assert(result.Value!.Version == "1.2.3", "health version mapped");
+    Assert(result.Value.Status == "ok", "health status mapped");
+    Assert(handler.Requests[0].RequestUri?.PathAndQuery == "/api/v1/health", "health path used");
+    Assert(handler.Requests[0].Headers.Authorization?.Parameter == "secret", "health uses bearer token");
+}
+
+static async Task RejectsBlankHealthVersion()
+{
+    var client = NewClient(new QueueHandler(Json("""{"status":"ok","version":"  ","providers":[]}""")));
+    var result = await client.GetHealthAsync();
+    Assert(result.Status == ApiResultStatus.MalformedResponse, "blank health version rejected");
+}
+
+static async Task ReturnsUnauthorizedOnHealth()
+{
+    var client = NewClient(new QueueHandler(new HttpResponseMessage(HttpStatusCode.Unauthorized)));
+    var result = await client.GetHealthAsync();
+    Assert(result.Status == ApiResultStatus.Unauthorized, "health 401 classified");
 }
 
 static ApiClient NewClient(HttpMessageHandler handler, string? token = null, TimeSpan? timeout = null)

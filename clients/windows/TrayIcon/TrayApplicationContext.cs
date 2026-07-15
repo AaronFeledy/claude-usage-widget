@@ -13,6 +13,7 @@ public partial class TrayApplicationContext : ApplicationContext
     private static readonly string[] DefaultProviderOrder = ["Claude", "Codex", "Cursor", "Grok"];
 
     private readonly TrayUsagePoller _usagePoller;
+    private readonly ApiClient _apiClient;
     private readonly SettingsService _settingsService;
     private readonly NotificationService _notificationService;
     private readonly UpdateService _updateService;
@@ -28,9 +29,10 @@ public partial class TrayApplicationContext : ApplicationContext
     private UsagePopup? _popup;
     private DebugConsole? _debugConsole;
 
-    public TrayApplicationContext(TrayUsagePoller usagePoller, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
+    public TrayApplicationContext(TrayUsagePoller usagePoller, ApiClient apiClient, SettingsService settingsService, DebugService debugService, HttpClient httpClient)
     {
         _usagePoller = usagePoller;
+        _apiClient = apiClient;
         _settingsService = settingsService;
         _debugService = debugService;
 

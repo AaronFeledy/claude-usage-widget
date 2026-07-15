@@ -49,6 +49,23 @@ internal sealed partial class TrayApiHarnessTests
         AssertEqual(90f, second.Providers[0].Current.Utilization);
     }
 
+    public async Task Test_OfflineSnapshotPreservesIndependentBucketCopies()
+    {
+        var handler = new QueueHandler(SuccessUsageWithBuckets(), null);
+        await using var manager = RemoteManager();
+        var poller = Poller(handler, manager);
+
+        var ready = await poller.PollAsync();
+        ready.Providers[0].Buckets[0].Label = "mutated";
+        var stale = await poller.PollAsync();
+
+        AssertEqual(1, stale.Providers[0].Buckets.Count);
+        AssertEqual("five-hour", stale.Providers[0].Buckets[0].Id);
+        AssertEqual("5-hour window", stale.Providers[0].Buckets[0].Label);
+        AssertEqual(37.5f, stale.Providers[0].Buckets[0].Utilization);
+        AssertEqual(new DateTime(2026, 7, 16, 12, 30, 0, DateTimeKind.Utc), stale.Providers[0].Buckets[0].ResetsAt);
+    }
+
     public async Task Test_UnauthorizedDistinctFromOffline()
     {
         var handler = new QueueHandler(SuccessUsage("Claude", 42), new HttpResponseMessage(HttpStatusCode.Unauthorized));
@@ -186,6 +203,43 @@ internal sealed partial class TrayApiHarnessTests
         AssertEqual(false, debug.GetEntries().Any(entry => entry.ToString().Contains("failed-push-secret", StringComparison.Ordinal)));
     }
 
+    public async Task Test_GetHealth_returns_server_version()
+    {
+        var handler = new QueueHandler(SuccessHealth("0.2.1", "ok"));
+        var client = new ApiClient(new HttpClient(handler), new TrayApiClientOptions { BaseUrl = new Uri("http://localhost:7823/") });
+
+        var result = await client.GetHealthAsync();
+
+        AssertEqual(true, result.IsSuccess);
+        AssertEqual("ok", result.Value!.Status);
+        AssertEqual("0.2.1", result.Value.Version);
+    }
+
+    public async Task Test_GetHealth_malformed_when_version_missing()
+    {
+        var handler = new QueueHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"status\":\"ok\",\"version\":null,\"providers\":[]}", Encoding.UTF8, "application/json")
+        });
+        var client = new ApiClient(new HttpClient(handler), new TrayApiClientOptions { BaseUrl = new Uri("http://localhost:7823/") });
+
+        var result = await client.GetHealthAsync();
+
+        AssertEqual(false, result.IsSuccess);
+        AssertEqual(ApiResultStatus.MalformedResponse, result.Status);
+    }
+
+    public async Task Test_GetHealth_offline_when_unreachable()
+    {
+        var handler = new QueueHandler((HttpResponseMessage?)null);
+        var client = new ApiClient(new HttpClient(handler), new TrayApiClientOptions { BaseUrl = new Uri("http://localhost:7823/") });
+
+        var result = await client.GetHealthAsync();
+
+        AssertEqual(false, result.IsSuccess);
+        AssertEqual(ApiResultStatus.Offline, result.Status);
+    }
+
     private static TrayUsagePoller Poller(QueueHandler handler, ServerProcessManager manager, Uri? baseUrl = null, ICursorCookieReader? cookieReader = null, DebugService? debug = null)
     {
         var client = new ApiClient(new HttpClient(handler), new TrayApiClientOptions { BaseUrl = baseUrl ?? new Uri("http://localhost:7823/") });
@@ -197,6 +251,11 @@ internal sealed partial class TrayApiHarnessTests
     private static HttpResponseMessage SuccessUsage(string provider, float utilization) => new(HttpStatusCode.OK)
     {
         Content = new StringContent($"[{{\"provider_name\":\"{provider}\",\"primary_label\":\"Current\",\"secondary_label\":\"Weekly\",\"show_secondary\":true,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":null,\"current\":{{\"utilization\":{utilization},\"resets_at\":null}},\"weekly\":{{\"utilization\":2,\"resets_at\":null}},\"error\":null,\"needs_reauth\":false,\"is_success\":true}}]", Encoding.UTF8, "application/json")
+    };
+
+    private static HttpResponseMessage SuccessUsageWithBuckets() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("[{\"provider_name\":\"Claude\",\"primary_label\":\"Current\",\"secondary_label\":\"Weekly\",\"show_secondary\":true,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":null,\"current\":{\"utilization\":37.5,\"resets_at\":null},\"weekly\":{\"utilization\":2,\"resets_at\":null},\"buckets\":[{\"id\":\"five-hour\",\"label\":\"5-hour window\",\"utilization\":37.5,\"resets_at\":\"2026-07-16T12:30:00Z\"}],\"error\":null,\"needs_reauth\":false,\"is_success\":true}]", Encoding.UTF8, "application/json")
     };
 
     private static HttpResponseMessage CursorNeedsAuth() => new(HttpStatusCode.OK)
@@ -222,6 +281,11 @@ internal sealed partial class TrayApiHarnessTests
     private static HttpResponseMessage CursorPutSuccess() => new(HttpStatusCode.OK)
     {
         Content = new StringContent("{\"provider\":\"Cursor\",\"refetched\":true,\"usage\":{\"provider_name\":\"Cursor\",\"primary_label\":\"Monthly\",\"secondary_label\":\"Monthly\",\"show_secondary\":false,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":null,\"current\":{\"utilization\":7,\"resets_at\":null},\"weekly\":{\"utilization\":0,\"resets_at\":null},\"error\":null,\"needs_reauth\":false,\"is_success\":true}}", Encoding.UTF8, "application/json")
+    };
+
+    private static HttpResponseMessage SuccessHealth(string version, string status) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent($"{{\"status\":\"{status}\",\"version\":\"{version}\",\"providers\":[]}}", Encoding.UTF8, "application/json")
     };
 
     internal static void AssertEqual<T>(T expected, T actual)

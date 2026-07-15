@@ -19,6 +19,8 @@ claude_usage_widget_auth: Bearer replace-with-a-long-random-token
 
 The server endpoint is `GET /api/v1/usage`. It returns one array entry per enabled provider, sorted by provider name. With all four providers enabled, the order is `Claude`, `Codex`, `Cursor`, then `Grok`.
 
+The `current` and `weekly` sensors below are unchanged and remain valid: keep any existing configuration exactly as it is. `buckets` is a new, additive array field added alongside them, described in [Returned Fields](#returned-fields).
+
 Copy this into `configuration.yaml` and replace `http://usage-server.local:7823` with your server URL:
 
 ```yaml
@@ -44,6 +46,7 @@ sensor:
       - reauth_command
       - current
       - weekly
+      - buckets
       - error
       - needs_reauth
       - is_success
@@ -69,6 +72,7 @@ sensor:
       - reauth_command
       - current
       - weekly
+      - buckets
       - error
       - needs_reauth
       - is_success
@@ -94,6 +98,7 @@ sensor:
       - reauth_command
       - current
       - weekly
+      - buckets
       - error
       - needs_reauth
       - is_success
@@ -119,6 +124,7 @@ sensor:
       - reauth_command
       - current
       - weekly
+      - buckets
       - error
       - needs_reauth
       - is_success
@@ -142,6 +148,12 @@ Each provider entry has this shape:
   "reauth_command": null,
   "current": { "utilization": 42.5, "resets_at": "2026-07-12T18:00:00Z" },
   "weekly": { "utilization": 17.0, "resets_at": null },
+  "buckets": [
+    { "id": "session", "label": "Current Session", "utilization": 42.5, "resets_at": "2026-07-12T18:00:00Z", "status_text": null },
+    { "id": "weekly", "label": "Weekly", "utilization": 17.0, "resets_at": null, "status_text": null },
+    { "id": "weekly_fable", "label": "Fable", "utilization": 5.0, "resets_at": null, "status_text": null },
+    { "id": "extra", "label": "Extra usage", "utilization": 12.0, "resets_at": null, "status_text": "120 / 1000 credits" }
+  ],
   "error": null,
   "needs_reauth": false,
   "is_success": true
@@ -149,3 +161,5 @@ Each provider entry has this shape:
 ```
 
 Optional strings and reset timestamps are explicit `null`. `is_success` is true only when `error` is `null`.
+
+`buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` are still populated from the first two header meters for backward compatibility, so existing sensors reading those fields keep working unchanged.

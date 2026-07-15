@@ -29,38 +29,77 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 	}
 
 	data.Current = usage.UsageBucket{Utilization: clampPercent(planPercent), ResetsAt: billingCycleEnd}
-	populateOnDemand(data, summary, billingCycleEnd)
+	onDemandBucket, onDemandStatus, showOnDemand := resolveOnDemandBucket(summary, billingCycleEnd)
+	if showOnDemand {
+		data.Weekly = usage.UsageBucket{Utilization: onDemandBucket.Utilization, ResetsAt: onDemandBucket.ResetsAt}
+		data.SecondaryStatusText = onDemandStatus
+	} else {
+		data.ShowSecondary = false
+		data.SecondaryStatusText = onDemandStatus
+	}
+
+	secondaryLabel := data.SecondaryLabel
+	primaryStatus := data.PrimaryStatusText
+	secondaryStatus := data.SecondaryStatusText
+	buckets := []usage.Bucket{{
+		ID:          usage.BucketPlan,
+		Label:       data.PrimaryLabel,
+		Utilization: data.Current.Utilization,
+		ResetsAt:    data.Current.ResetsAt,
+		StatusText:  primaryStatus,
+	}}
+	if showOnDemand {
+		buckets = append(buckets, onDemandBucket)
+	}
+	*data = data.WithBuckets(buckets)
+	data.PrimaryStatusText = primaryStatus
+	data.SecondaryStatusText = secondaryStatus
+	if !showOnDemand {
+		data.SecondaryLabel = secondaryLabel
+	}
 }
 
-func populateOnDemand(data *usage.UsageData, summary cursorUsageSummary, billingCycleEnd *time.Time) {
+func resolveOnDemandBucket(summary cursorUsageSummary, billingCycleEnd *time.Time) (usage.Bucket, *string, bool) {
 	onDemand := onDemandUsage(summary)
 	onDemandUsedRaw := intValue(onDemand.Used)
 	if onDemand.Limit != nil && *onDemand.Limit > 0 {
-		onDemandLimitRaw := *onDemand.Limit
-		onDemandPercent := float64(onDemandUsedRaw) / float64(onDemandLimitRaw) * 100
-		data.Weekly = usage.UsageBucket{Utilization: clampPercent(onDemandPercent), ResetsAt: billingCycleEnd}
-		secondaryStatus := fmt.Sprintf("$%s / $%s on-demand", money(onDemandUsedRaw), money(onDemandLimitRaw))
-		data.SecondaryStatusText = &secondaryStatus
-		return
+		limit := *onDemand.Limit
+		status := fmt.Sprintf("$%s / $%s on-demand", money(onDemandUsedRaw), money(limit))
+		return usage.Bucket{
+			ID:          usage.BucketOnDemand,
+			Label:       "On-Demand",
+			Utilization: clampPercent(float64(onDemandUsedRaw) / float64(limit) * 100),
+			ResetsAt:    billingCycleEnd,
+			StatusText:  &status,
+		}, &status, true
 	}
 	if summary.TeamUsage != nil && summary.TeamUsage.OnDemand != nil {
 		teamOnDemand := *summary.TeamUsage.OnDemand
 		if teamOnDemand.Limit != nil && *teamOnDemand.Limit > 0 {
-			teamUsedRaw := intValue(teamOnDemand.Used)
-			teamLimitRaw := *teamOnDemand.Limit
-			teamPercent := float64(teamUsedRaw) / float64(teamLimitRaw) * 100
-			data.Weekly = usage.UsageBucket{Utilization: clampPercent(teamPercent), ResetsAt: billingCycleEnd}
-			secondaryStatus := fmt.Sprintf("$%s / $%s team on-demand", money(teamUsedRaw), money(teamLimitRaw))
-			data.SecondaryStatusText = &secondaryStatus
-			return
+			teamUsed := intValue(teamOnDemand.Used)
+			teamLimit := *teamOnDemand.Limit
+			status := fmt.Sprintf("$%s / $%s team on-demand", money(teamUsed), money(teamLimit))
+			return usage.Bucket{
+				ID:          usage.BucketOnDemand,
+				Label:       "On-Demand",
+				Utilization: clampPercent(float64(teamUsed) / float64(teamLimit) * 100),
+				ResetsAt:    billingCycleEnd,
+				StatusText:  &status,
+			}, &status, true
 		}
 	}
-	data.ShowSecondary = false
-	secondaryStatus := "No on-demand cap exposed by Cursor"
-	if onDemandUsedRaw > 0 {
-		secondaryStatus = fmt.Sprintf("$%s on-demand this cycle", money(onDemandUsedRaw))
+	if usage.ShouldShowCreditMeter(false, float64(onDemandUsedRaw), nil) {
+		status := fmt.Sprintf("$%s on-demand this cycle", money(onDemandUsedRaw))
+		return usage.Bucket{
+			ID:          usage.BucketOnDemand,
+			Label:       "On-Demand",
+			Utilization: 0,
+			ResetsAt:    billingCycleEnd,
+			StatusText:  &status,
+		}, &status, true
 	}
-	data.SecondaryStatusText = &secondaryStatus
+	status := "No on-demand cap exposed by Cursor"
+	return usage.Bucket{}, &status, false
 }
 
 func planUsage(summary cursorUsageSummary) cursorPlanUsage {

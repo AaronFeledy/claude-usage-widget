@@ -68,18 +68,74 @@ func Test_populateUsageData_uses_pooled_fallback_for_percent_and_status(t *testi
 	assertStringPtr(t, data.PrimaryStatusText, "$30 / $120 this cycle")
 }
 
-func Test_populateOnDemand_falls_back_to_team_cap(t *testing.T) {
+func Test_resolveOnDemandBucket_falls_back_to_team_cap(t *testing.T) {
 	personalUsed, teamUsed, teamLimit := 100, 5000, 20000
 	summary := cursorUsageSummary{
 		IndividualUsage: &cursorIndividualUsage{OnDemand: &cursorOnDemandUsage{Used: &personalUsed}},
 		TeamUsage:       &cursorTeamUsage{OnDemand: &cursorOnDemandUsage{Used: &teamUsed, Limit: &teamLimit}},
 	}
-	data := usage.UsageData{ShowSecondary: true}
 
-	populateOnDemand(&data, summary, nil)
+	bucket, status, show := resolveOnDemandBucket(summary, nil)
 
-	if data.Weekly.Utilization != 25 {
-		t.Fatalf("utilization = %v, want 25", data.Weekly.Utilization)
+	if !show || bucket.Utilization != 25 || bucket.ID != usage.BucketOnDemand {
+		t.Fatalf("bucket = %#v show=%v", bucket, show)
 	}
-	assertStringPtr(t, data.SecondaryStatusText, "$50 / $200 team on-demand")
+	assertStringPtr(t, status, "$50 / $200 team on-demand")
+}
+
+func Test_resolveOnDemandBucket_shows_when_spend_without_cap(t *testing.T) {
+	used := 1500
+	summary := cursorUsageSummary{
+		IndividualUsage: &cursorIndividualUsage{OnDemand: &cursorOnDemandUsage{Used: &used}},
+	}
+
+	bucket, status, show := resolveOnDemandBucket(summary, nil)
+
+	if !show || bucket.Utilization != 0 || bucket.ID != usage.BucketOnDemand {
+		t.Fatalf("bucket = %#v show=%v", bucket, show)
+	}
+	assertStringPtr(t, status, "$15 on-demand this cycle")
+}
+
+func Test_populateUsageData_emits_buckets_matching_visible_header(t *testing.T) {
+	// Given
+	planUsed, planLimit, onDemandUsed, onDemandLimit := 2500, 10000, 500, 2000
+	summary := cursorUsageSummary{IndividualUsage: &cursorIndividualUsage{
+		Plan:     &cursorPlanUsage{Used: &planUsed, Limit: &planLimit},
+		OnDemand: &cursorOnDemandUsage{Used: &onDemandUsed, Limit: &onDemandLimit},
+	}}
+	data := baseUsageData()
+
+	// When
+	populateUsageData(&data, summary, nil)
+
+	// Then
+	if len(data.Buckets) != 2 {
+		t.Fatalf("Buckets = %#v, want plan and on_demand", data.Buckets)
+	}
+	primary, secondary := data.Buckets[0], data.Buckets[1]
+	if primary.ID != usage.BucketPlan || primary.Label != data.PrimaryLabel || primary.Utilization != data.Current.Utilization {
+		t.Fatalf("primary bucket = %#v, current = %#v label = %q", primary, data.Current, data.PrimaryLabel)
+	}
+	if secondary.ID != usage.BucketOnDemand || secondary.Label != "On-Demand" || secondary.Utilization != data.Weekly.Utilization {
+		t.Fatalf("secondary bucket = %#v, weekly = %#v label = %q", secondary, data.Weekly, data.SecondaryLabel)
+	}
+}
+
+func Test_populateUsageData_preserves_hidden_secondary_header_with_one_bucket(t *testing.T) {
+	// Given
+	planUsed, planLimit := 2500, 10000
+	summary := cursorUsageSummary{IndividualUsage: &cursorIndividualUsage{Plan: &cursorPlanUsage{Used: &planUsed, Limit: &planLimit}}}
+	data := baseUsageData()
+
+	// When
+	populateUsageData(&data, summary, nil)
+
+	// Then
+	if len(data.Buckets) != 1 || data.Buckets[0].ID != "plan" || data.Buckets[0].Label != "Included Plan" {
+		t.Fatalf("Buckets = %#v, want one Included Plan bucket", data.Buckets)
+	}
+	if data.ShowSecondary || data.SecondaryLabel != "On-Demand" || data.Weekly != (usage.UsageBucket{}) {
+		t.Fatalf("legacy header = show %v secondary %q weekly %#v", data.ShowSecondary, data.SecondaryLabel, data.Weekly)
+	}
 }
