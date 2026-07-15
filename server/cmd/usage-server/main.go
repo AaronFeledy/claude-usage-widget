@@ -24,6 +24,8 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
+var version = "dev"
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(os.Args[1:], os.Environ(), logger); err != nil {
@@ -49,7 +51,15 @@ func run(args []string, env []string, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	handler := api.NewHandler(api.Options{Cache: providerPoller, Cursor: cursorClient, Poller: providerPoller, Logger: logger, AuthToken: cfg.AuthToken, ProviderNames: names})
+	handler := api.NewHandler(api.Options{
+		Cache:         providerPoller,
+		Cursor:        cursorClient,
+		Poller:        providerPoller,
+		Logger:        logger,
+		AuthToken:     cfg.AuthToken,
+		Version:       version,
+		ProviderNames: names,
+	})
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return err

@@ -49,6 +49,15 @@ public class UsageBucket
     }
 }
 
+public class UsageBucketDetail
+{
+    public string Id { get; set; } = "";
+    public string Label { get; set; } = "";
+    public float Utilization { get; set; }
+    public DateTime? ResetsAt { get; set; }
+    public string? StatusText { get; set; }
+}
+
 /// <summary>
 /// Root usage data model returned by the API.
 /// </summary>
@@ -103,6 +112,8 @@ public class UsageData
     /// weekly rolling usage bucket.
     /// </summary>
     public UsageBucket Weekly { get; set; } = new();
+
+    public IReadOnlyList<UsageBucketDetail> Buckets { get; set; } = Array.Empty<UsageBucketDetail>();
 
     /// <summary>
     /// Error message if the API call failed.

@@ -25,6 +25,7 @@ public partial class TrayApplicationContext
         {
             _popup = new UsagePopup();
             _popup.SetSettingsService(_settingsService);
+            _popup.SetApiClient(_apiClient);
             _popup.OnSettingsChanged += OnSettingsChanged;
         }
         _popup.UpdateData(GetOrderedUsageDataForDisplay());

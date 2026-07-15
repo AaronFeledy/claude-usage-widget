@@ -177,6 +177,14 @@ public sealed class TrayUsagePoller
         Error = data.Error,
         NeedsReauth = data.NeedsReauth,
         Current = new UsageBucket { Utilization = data.Current.Utilization, ResetsAt = data.Current.ResetsAt },
-        Weekly = new UsageBucket { Utilization = data.Weekly.Utilization, ResetsAt = data.Weekly.ResetsAt }
+        Weekly = new UsageBucket { Utilization = data.Weekly.Utilization, ResetsAt = data.Weekly.ResetsAt },
+        Buckets = data.Buckets.Select(bucket => new UsageBucketDetail
+        {
+            Id = bucket.Id,
+            Label = bucket.Label,
+            Utilization = bucket.Utilization,
+            ResetsAt = bucket.ResetsAt,
+            StatusText = bucket.StatusText
+        }).ToList()
     };
 }

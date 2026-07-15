@@ -74,7 +74,7 @@ static class Program
 
         try
         {
-            Application.Run(new TrayApplicationContext(usagePoller, settingsService, debugService, updateHttpClient));
+            Application.Run(new TrayApplicationContext(usagePoller, apiClient, settingsService, debugService, updateHttpClient));
         }
         finally
         {

@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,39 @@ func Test_Poller_PollAll_retains_last_good_usage_when_later_provider_returns_err
 	}
 	if third.Data.Current.Utilization != 55 || third.Data.Error == nil || strings.Contains(*third.Data.Error, "secret") || strings.Contains(*third.Data.Error, "token") {
 		t.Fatalf("panic overlay leaked or wiped last-good data: %+v", third.Data)
+	}
+}
+
+func Test_Poller_PollAll_error_overlay_serializes_empty_buckets(t *testing.T) {
+	// Given
+	reset := time.Date(2026, 7, 12, 15, 0, 0, 0, time.UTC)
+	poller := New(Options{Clock: &stepClock{values: []time.Time{reset, reset.Add(time.Minute)}}})
+	success := usage.FromBuckets("Cursor", []usage.Bucket{
+		{ID: usage.BucketPlan, Label: "Requests", Utilization: 55, ResetsAt: &reset},
+		{ID: usage.BucketWeekly, Label: "Weekly", Utilization: 66},
+	})
+	provider := &sequenceProvider{name: "Cursor", responses: []providerResult{
+		{data: success},
+		{data: usage.UsageData{ProviderName: "Cursor", Error: strPtr("AUTH_EXPIRED"), NeedsReauth: true}},
+	}}
+	if err := poller.Register(provider, true); err != nil {
+		t.Fatalf("Register returned error: %v", err)
+	}
+
+	// When
+	poller.PollAll(context.Background())
+	second := poller.PollAll(context.Background())[0]
+
+	// Then
+	if second.Data.Error == nil || second.Data.Current.Utilization != 55 {
+		t.Fatalf("expected error overlay retaining last-good header, got %+v", second.Data)
+	}
+	encoded, err := json.Marshal(second.Data)
+	if err != nil {
+		t.Fatalf("marshal error overlay: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"buckets":[]`) {
+		t.Fatalf("error response must serialize empty buckets, got %s", encoded)
 	}
 }
 

@@ -14,6 +14,8 @@ public sealed class ApiClient
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    private const int MaxBuckets = 12;
+
     private readonly HttpClient _httpClient;
     private readonly ITrayApiClientSettings _settings;
 
@@ -33,6 +35,11 @@ public sealed class ApiClient
         if (string.IsNullOrWhiteSpace(providerName)) throw new ArgumentException("Provider name must not be blank.", nameof(providerName));
         var provider = Uri.EscapeDataString(providerName.Trim());
         return await RequestAsync(HttpMethod.Get, $"api/v1/usage/{provider}", null, MapUsage, cancellationToken);
+    }
+
+    public async Task<ApiResult<ServerHealthInfo>> GetHealthAsync(CancellationToken cancellationToken = default)
+    {
+        return await RequestAsync(HttpMethod.Get, "api/v1/health", null, MapHealth, cancellationToken);
     }
 
     public async Task<ApiResult<CursorCredentialResult>> PutCursorCredentialsAsync(
@@ -166,6 +173,23 @@ public sealed class ApiClient
         }
     }
 
+    private static ApiResult<ServerHealthInfo> MapHealth(string json)
+    {
+        try
+        {
+            var wire = JsonSerializer.Deserialize<HealthWire>(json, JsonOptions);
+            if (wire == null || string.IsNullOrWhiteSpace(wire.Status) || string.IsNullOrWhiteSpace(wire.Version))
+            {
+                return Malformed<ServerHealthInfo>();
+            }
+            return ApiResult<ServerHealthInfo>.Success(new ServerHealthInfo(wire.Status.Trim(), wire.Version.Trim()));
+        }
+        catch (JsonException)
+        {
+            return Malformed<ServerHealthInfo>();
+        }
+    }
+
     private static UsageData MapUsageWire(UsageWire wire)
     {
         ValidateUsage(wire);
@@ -181,6 +205,7 @@ public sealed class ApiClient
             ReauthCommand = wire.ReauthCommand,
             Current = MapBucket(wire.Current!),
             Weekly = MapBucket(wire.Weekly!),
+            Buckets = MapBuckets(wire),
             Error = wire.Error,
             NeedsReauth = wire.NeedsReauth!.Value
         };
@@ -192,6 +217,45 @@ public sealed class ApiClient
         ResetsAt = bucket.ResetsAt
     };
 
+    private static IReadOnlyList<UsageBucketDetail> MapBuckets(UsageWire wire)
+    {
+        if (wire.Buckets is { Count: > 0 })
+        {
+            return wire.Buckets.Select(bucket => new UsageBucketDetail
+            {
+                Id = bucket!.Id!,
+                Label = bucket.Label!,
+                Utilization = (float)bucket.Utilization!.Value,
+                ResetsAt = bucket.ResetsAt,
+                StatusText = bucket.StatusText
+            }).ToList();
+        }
+
+        var buckets = new List<UsageBucketDetail>
+        {
+            new()
+            {
+                Id = "session",
+                Label = wire.PrimaryLabel!,
+                Utilization = (float)wire.Current!.Utilization!.Value,
+                ResetsAt = wire.Current.ResetsAt,
+                StatusText = wire.PrimaryStatusText
+            }
+        };
+        if (wire.ShowSecondary!.Value)
+        {
+            buckets.Add(new UsageBucketDetail
+            {
+                Id = "weekly",
+                Label = wire.SecondaryLabel!,
+                Utilization = (float)wire.Weekly!.Utilization!.Value,
+                ResetsAt = wire.Weekly.ResetsAt,
+                StatusText = wire.SecondaryStatusText
+            });
+        }
+        return buckets;
+    }
+
     private static void ValidateUsage(UsageWire wire)
     {
         RequireText(wire.ProviderName);
@@ -201,12 +265,28 @@ public sealed class ApiClient
         if (wire.IsSuccess.Value != (wire.Error == null)) throw new WireValidationException();
         ValidateBucket(wire.Current);
         ValidateBucket(wire.Weekly);
+        if (wire.Buckets is { Count: > 0 })
+        {
+            if (wire.Buckets.Count > MaxBuckets) throw new WireValidationException();
+            foreach (var bucket in wire.Buckets)
+            {
+                if (bucket == null) throw new WireValidationException();
+                RequireText(bucket.Id);
+                RequireText(bucket.Label);
+                ValidateUtilization(bucket.Utilization);
+            }
+        }
     }
 
     private static void ValidateBucket(UsageBucketWire bucket)
     {
-        if (bucket.Utilization == null || !double.IsFinite(bucket.Utilization.Value)) throw new WireValidationException();
-        var utilization = bucket.Utilization.Value;
+        ValidateUtilization(bucket.Utilization);
+    }
+
+    private static void ValidateUtilization(double? value)
+    {
+        if (value == null || !double.IsFinite(value.Value)) throw new WireValidationException();
+        var utilization = value.Value;
         if (utilization is < 0 or > 100) throw new WireValidationException();
     }
 

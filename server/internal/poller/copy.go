@@ -11,6 +11,19 @@ func copyEntry(entry Entry) Entry {
 }
 
 func copyUsageData(data usage.UsageData) usage.UsageData {
+	var buckets []usage.Bucket
+	if data.Buckets != nil {
+		buckets = make([]usage.Bucket, len(data.Buckets))
+		for index, bucket := range data.Buckets {
+			buckets[index] = usage.Bucket{
+				ID:          bucket.ID,
+				Label:       bucket.Label,
+				Utilization: bucket.Utilization,
+				ResetsAt:    copyTime(bucket.ResetsAt),
+				StatusText:  copyString(bucket.StatusText),
+			}
+		}
+	}
 	return usage.UsageData{
 		ProviderName:        data.ProviderName,
 		PrimaryLabel:        data.PrimaryLabel,
@@ -22,6 +35,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		ReauthCommand:       copyString(data.ReauthCommand),
 		Current:             copyBucket(data.Current),
 		Weekly:              copyBucket(data.Weekly),
+		Buckets:             buckets,
 		Error:               copyString(data.Error),
 		NeedsReauth:         data.NeedsReauth,
 	}

@@ -132,6 +132,7 @@ func assertUsageKeys(t *testing.T, encoded []byte) {
 		"reauth_command",
 		"current",
 		"weekly",
+		"buckets",
 		"error",
 		"needs_reauth",
 		"is_success",
@@ -193,7 +194,7 @@ func sortedKeys(values map[string]json.RawMessage) []string {
 	order := map[string]int{
 		"provider_name": 0, "primary_label": 1, "secondary_label": 2, "show_secondary": 3,
 		"subtitle": 4, "primary_status_text": 5, "secondary_status_text": 6, "reauth_command": 7,
-		"current": 8, "weekly": 9, "error": 10, "needs_reauth": 11, "is_success": 12,
+		"current": 8, "weekly": 9, "buckets": 10, "error": 11, "needs_reauth": 12, "is_success": 13,
 	}
 	for key := range values {
 		keys = append(keys, key)

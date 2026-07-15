@@ -65,15 +65,17 @@ func mapBilling(body io.Reader, data *usage.UsageData, now time.Time) error {
 	}
 	reset = reset.UTC()
 	percent := math.Max(0, math.Min(100, (*used / *limit * 100)))
-	data.Current = usage.UsageBucket{Utilization: percent, ResetsAt: &reset}
-	data.Weekly = usage.UsageBucket{Utilization: 0, ResetsAt: &reset}
+	secondaryLabel := data.SecondaryLabel
+	legacyWeekly := usage.UsageBucket{Utilization: 0, ResetsAt: &reset}
+	*data = data.WithBuckets([]usage.Bucket{{ID: usage.BucketCredits, Label: "Credits", Utilization: percent, ResetsAt: &reset}})
+	data.Weekly = legacyWeekly
+	data.SecondaryLabel = secondaryLabel
 	data.PrimaryStatusText = strPtr(fmt.Sprintf("%s / %s credits · %s", formatWholeNumber(*used), formatWholeNumber(*limit), formatResetDate(reset, now)))
 	if *onDemand > 0 {
 		data.SecondaryStatusText = strPtr(fmt.Sprintf("%s pay-as-you-go cap", formatWholeNumber(*onDemand)))
 	} else {
 		data.SecondaryStatusText = strPtr("Pay as you go disabled")
 	}
-	data.ShowSecondary = false
 	return nil
 }
 

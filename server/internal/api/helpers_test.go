@@ -81,7 +81,11 @@ func (c *fakeCursor) SetAccessToken(token string) error {
 }
 
 func entry(provider string, current float64, weekly float64, err *string) poller.Entry {
-	return poller.Entry{Data: usage.UsageData{ProviderName: provider, PrimaryLabel: "Current", SecondaryLabel: "Weekly", ShowSecondary: true, Current: usage.UsageBucket{Utilization: current}, Weekly: usage.UsageBucket{Utilization: weekly}, Error: err}, FetchedAt: time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)}
+	data := usage.UsageData{ProviderName: provider, Error: err}.WithBuckets([]usage.Bucket{
+		{ID: "session", Label: "Current", Utilization: current},
+		{ID: "weekly", Label: "Weekly", Utilization: weekly},
+	})
+	return poller.Entry{Data: data, FetchedAt: time.Date(2026, 7, 12, 10, 0, 0, 0, time.UTC)}
 }
 
 func jwtWithSubject(subject string) string {

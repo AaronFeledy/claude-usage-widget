@@ -65,3 +65,5 @@ public sealed class CursorCredential
 }
 
 public sealed record CursorCredentialResult(string Provider, bool Refetched, Models.UsageData Usage);
+
+public sealed record ServerHealthInfo(string Status, string Version);
