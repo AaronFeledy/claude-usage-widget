@@ -50,7 +50,7 @@ func Test_parseUsageResponse_CLD3_backfills_legacy_session_and_weekly(t *testing
 	assertBuckets(t, got.Buckets, []bucketExpectation{{"session", "Current Session", 11}, {"weekly", "Weekly", 22}})
 }
 
-func Test_parseUsageResponse_CLD4_skips_inactive_scoped_limit(t *testing.T) {
+func Test_parseUsageResponse_CLD4_includes_inactive_scoped_limit_with_usage(t *testing.T) {
 	// Given
 	body := []byte(`{"limits":[{"kind":"session","percent":10},{"kind":"weekly_scoped","percent":20,"is_active":false,"scope":{"model":{"display_name":"Fable"}}}]}`)
 
@@ -61,7 +61,21 @@ func Test_parseUsageResponse_CLD4_skips_inactive_scoped_limit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseUsageResponse returned error: %v", err)
 	}
-	assertBuckets(t, got.Buckets, []bucketExpectation{{"session", "Current Session", 10}})
+	assertBuckets(t, got.Buckets, []bucketExpectation{{"session", "Current Session", 10}, {"weekly_fable", "Fable", 20}})
+}
+
+func Test_parseUsageResponse_prefers_active_header_limits_and_keeps_inactive_scoped_usage(t *testing.T) {
+	// Given
+	body := []byte(`{"limits":[{"kind":"session","percent":10,"is_active":false},{"kind":"session","percent":11,"is_active":true},{"kind":"weekly_all","percent":20,"is_active":false},{"kind":"weekly_all","percent":21,"is_active":true},{"kind":"weekly_scoped","percent":30,"is_active":false,"scope":{"model":{"display_name":"Fable"}}}]}`)
+
+	// When
+	got, err := parseUsageResponse(body, nil)
+
+	// Then
+	if err != nil {
+		t.Fatalf("parseUsageResponse returned error: %v", err)
+	}
+	assertBuckets(t, got.Buckets, []bucketExpectation{{"session", "Current Session", 11}, {"weekly", "Weekly", 21}, {"weekly_fable", "Fable", 30}})
 }
 
 func Test_parseUsageResponse_CLD5_appends_legacy_model_buckets(t *testing.T) {
