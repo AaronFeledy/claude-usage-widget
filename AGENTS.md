@@ -7,7 +7,7 @@ Monorepo for a Windows tray usage client and a Go usage API server. The app moni
 ## Layout
 
 - `clients/windows/` - .NET 8 WinForms tray client targeting `net8.0-windows`.
-- `server/` - Go 1.23 usage API server, provider integrations, config loader, Dockerfile.
+- `server/` - Go 1.25 usage API server, provider integrations, config loader, Dockerfile.
 - `tests/windows/` - C# harness tests for Windows client/server lifecycle seams that run on Linux.
 - `docs/` - user docs, including Home Assistant REST sensor guidance.
 - `.github/workflows/` - Windows client, server, Docker, and release automation.
@@ -17,7 +17,7 @@ Monorepo for a Windows tray usage client and a Go usage API server. The app moni
 - Windows local mode: empty `ApiUrl` in `%APPDATA%/ClaudeUsageWidget/settings.json` makes the tray use `http://127.0.0.1:7823/`, attach to a healthy local server if present, or spawn bundled `usage-server.exe` with `--listen-addr 127.0.0.1:7823`.
 - Windows remote mode: nonempty absolute HTTP(S) `ApiUrl` points the tray at an external server and disables local spawn. Nonempty `ApiToken` is sent as `Authorization: Bearer <token>`.
 - Server default bind is `127.0.0.1:7823`; off-loopback binds require `auth_token`, `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
-- API contract is frozen in `server/internal/usage`: snake_case fields, explicit `null` optional strings/reset timestamps, and `is_success` derived from `error == null`. `buckets[]` is an additive field after `weekly`: always present, empty `[]` on error, never omitted. Each bucket is `{id,label,utilization,resets_at,status_text}` (`status_text` may be null). Providers exit via `usage.FromBuckets` / `WithBuckets` (normalizes order, dedupes, caps at 12). Shared IDs: `session`/`plan`/`credits`, `weekly`, `weekly_<slug>`, `extra`/`on_demand`. Credit/billable meters (`extra`, `on_demand`) are included only when enabled on the account or non-zero usage is present. All other fields are unchanged.
+- API contract is frozen in `server/internal/usage`: snake_case fields, explicit `null` optional strings/reset timestamps, and `is_success` derived from `error == null`. `buckets[]` is an additive field after `weekly`: always present, empty `[]` on error, never omitted. Each bucket is `{id,label,utilization,resets_at,status_text}` (`status_text` may be null). Providers exit via `usage.FromBuckets` / `WithBuckets` (normalizes order, dedupes, caps at 12). Shared IDs: `session`/`plan`/`auto`/`api`/`credits`, `weekly`, `weekly_<slug>`, `extra`/`on_demand`. Credit/billable meters (`extra`, `on_demand`) are included only when enabled on the account or non-zero usage is present. All other fields are unchanged.
 
 ## Key Files
 

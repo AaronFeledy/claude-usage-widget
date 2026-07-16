@@ -21,7 +21,7 @@ Local managed mode, default Windows install
   Windows tray app
     | ApiUrl empty in %APPDATA%/ClaudeUsageWidget/settings.json
     | spawns/probes bundled usage-server.exe on 127.0.0.1:7823
-    | discovers Cursor browser credentials and pushes them in memory
+    | discovers Cursor and Grok browser credentials and pushes them in memory
     v
   usage-server.exe
     | reads credential files for enabled providers
@@ -42,7 +42,7 @@ Remote mode, shared server or Home Assistant
 
 The server default is intentionally local-only: `127.0.0.1:7823`. Binding to any non-loopback address without a bearer token is rejected before the server listens or providers are constructed.
 
-Claude is enabled by default. Enable Codex, Cursor, and Grok in `%APPDATA%\ClaudeUsageWidget\config.yaml` for a local Windows install, or through the server's YAML/environment configuration for other deployments.
+All four providers are enabled by default. Disable unwanted providers in `%APPDATA%\ClaudeUsageWidget\config.yaml` for a local Windows install, or through the server's YAML/environment configuration for other deployments.
 
 ## Features
 
@@ -71,12 +71,12 @@ The installer downloads the latest matching Windows tray and server assets for y
 
 ## Provider Credentials
 
-The server reads credentials for enabled providers on the host where `usage-server` runs. The Windows tray can also push discovered Cursor browser credentials to the server in memory.
+The server reads credentials for enabled providers on the host where `usage-server` runs. The Windows tray can also push discovered Cursor and Grok browser credentials to the server in memory. Browser credentials are sent only to a loopback server or a remote HTTPS URL; remote plain HTTP is intentionally unsupported.
 
 - Claude: `~/.claude/.credentials.json`, Windows WSL auth, or OpenCode auth fallback.
 - Codex: `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, or OpenCode auth fallback.
 - Cursor: server-side local auth-file discovery on loopback deployments, or browser credentials discovered and pushed in memory by the Windows tray. Remote deployments normally need credentials pushed from the tray.
-- Grok: `~/.grok/auth.json`, with Windows WSL fallback.
+- Grok: weekly usage primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json` or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback when CLI weekly data is unavailable.
 
 ## API Shape
 
@@ -107,7 +107,7 @@ The server reads credentials for enabled providers on the host where `usage-serv
 ]
 ```
 
-`is_success` is derived from `error == null`; optional strings and reset timestamps are emitted as explicit `null`. `buckets` is an additive array after `weekly` (always present, empty `[]` on error). Each bucket is `{id,label,utilization,resets_at,status_text}`. Providers normalize via `usage.FromBuckets` / `WithBuckets`. Credit meters (`extra`, `on_demand`) appear only when enabled or when there is non-zero usage. `current` / `weekly` stay populated for backward compatibility.
+`is_success` is derived from `error == null`; optional strings and reset timestamps are emitted as explicit `null`. `buckets` is an additive array after `weekly` (always present, empty `[]` on error). Each bucket is `{id,label,utilization,resets_at,status_text}`. Providers normalize via `usage.FromBuckets` / `WithBuckets`. Cursor can report separate `auto` and `api` meters. Credit meters (`extra`, `on_demand`) appear only when enabled or when there is non-zero usage. `current` / `weekly` stay populated for backward compatibility.
 
 ## Build And Verify
 
