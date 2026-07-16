@@ -28,14 +28,49 @@ var (
 )
 
 func acquireFileLock(ctx context.Context, path string) (fileLock, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	pathPtr, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return fileLock{}, fmt.Errorf("open credential lock: %w", err)
 	}
+	handle, err := syscall.CreateFile(
+		pathPtr,
+		syscall.GENERIC_READ|syscall.GENERIC_WRITE,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,
+		nil,
+		syscall.OPEN_ALWAYS,
+		syscall.FILE_ATTRIBUTE_NORMAL|syscall.FILE_FLAG_OPEN_REPARSE_POINT|syscall.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		return fileLock{}, fmt.Errorf("open credential lock: %w", err)
+	}
+	fileType, err := syscall.GetFileType(handle)
+	if err != nil {
+		closeErr := syscall.CloseHandle(handle)
+		return fileLock{}, fmt.Errorf("inspect credential lock: %w", errorsJoin(err, closeErr))
+	}
+	var info syscall.ByHandleFileInformation
+	if err := syscall.GetFileInformationByHandle(handle, &info); err != nil {
+		closeErr := syscall.CloseHandle(handle)
+		return fileLock{}, fmt.Errorf("inspect credential lock: %w", errorsJoin(err, closeErr))
+	}
+	if fileType != syscall.FILE_TYPE_DISK ||
+		info.FileAttributes&(syscall.FILE_ATTRIBUTE_REPARSE_POINT|syscall.FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+		info.NumberOfLinks != 1 {
+		closeErr := syscall.CloseHandle(handle)
+		validationErr := errors.New("credential lock must be a regular single-link file")
+		return fileLock{}, fmt.Errorf("inspect credential lock: %w", errorsJoin(validationErr, closeErr))
+	}
+	file := os.NewFile(uintptr(handle), path)
 	overlapped := &syscall.Overlapped{}
 	for {
 		err := lockFileEx(syscall.Handle(file.Fd()), lockfileExclusiveLock|lockfileFailImmediately, overlapped)
 		if err == nil {
+			if err := writeLockMetadata(file); err != nil {
+				unlockErr := unlockFileEx(syscall.Handle(file.Fd()), overlapped)
+				closeErr := file.Close()
+				return fileLock{}, fmt.Errorf("initialize credential lock: %w", errorsJoin(err, errorsJoin(unlockErr, closeErr)))
+			}
 			return fileLock{file: file}, nil
 		}
 		if !isLockContention(err) {
