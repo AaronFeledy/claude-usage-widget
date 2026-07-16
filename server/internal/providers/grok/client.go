@@ -14,31 +14,45 @@ import (
 )
 
 type billingResponse struct {
-	Config billingConfig `json:"config"`
+	Config          billingConfig `json:"config"`
+	OnDemandEnabled *bool         `json:"onDemandEnabled"`
 }
 
 type billingConfig struct {
-	Used             billingValue `json:"used"`
-	MonthlyLimit     billingValue `json:"monthlyLimit"`
-	OnDemandCap      billingValue `json:"onDemandCap"`
-	BillingPeriodEnd string       `json:"billingPeriodEnd"`
+	Used               billingValue   `json:"used"`
+	MonthlyLimit       billingValue   `json:"monthlyLimit"`
+	OnDemandUsed       billingValue   `json:"onDemandUsed"`
+	OnDemandCap        billingValue   `json:"onDemandCap"`
+	BillingPeriodEnd   string         `json:"billingPeriodEnd"`
+	CreditUsagePercent *float64       `json:"creditUsagePercent"`
+	CurrentPeriod      *billingPeriod `json:"currentPeriod"`
 }
 
 type billingValue struct {
 	Value *float64 `json:"val"`
 }
 
+type billingPeriodType string
+
+const billingPeriodTypeWeekly billingPeriodType = "USAGE_PERIOD_TYPE_WEEKLY"
+
+type billingPeriod struct {
+	Type billingPeriodType `json:"type"`
+	End  string            `json:"end"`
+}
+
 type settingsResponse struct {
 	SubscriptionTierDisplay string `json:"subscription_tier_display"`
 }
 
-func (p *Provider) sendGet(ctx context.Context, url string, token string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (p *Provider) sendGet(ctx context.Context, requestURL string, creds credentials) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create Grok request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+creds.accessToken)
 	req.Header.Set("X-XAI-Token-Auth", tokenAuthHeader)
+	req.Header.Set("x-userid", creds.userID)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := p.httpClient.Do(req)
@@ -53,34 +67,80 @@ func mapBilling(body io.Reader, data *usage.UsageData, now time.Time) error {
 	if err := json.NewDecoder(body).Decode(&decoded); err != nil {
 		return fmt.Errorf("decode billing: %w", err)
 	}
+	buckets := make([]usage.Bucket, 0, 2)
+	var weekly *usage.Bucket
+	period := decoded.Config.CurrentPeriod
+	if period != nil && period.Type == billingPeriodTypeWeekly {
+		reset, err := time.Parse(time.RFC3339, period.End)
+		if err == nil {
+			reset = reset.UTC()
+			utilization := 0.0
+			if decoded.Config.CreditUsagePercent != nil {
+				utilization = *decoded.Config.CreditUsagePercent
+			}
+			weekly = &usage.Bucket{
+				ID:          usage.BucketWeekly,
+				Label:       "Weekly",
+				Utilization: math.Max(0, math.Min(100, utilization)),
+				ResetsAt:    &reset,
+			}
+		}
+	}
 	used := decoded.Config.Used.Value
 	limit := decoded.Config.MonthlyLimit.Value
-	onDemand := decoded.Config.OnDemandCap.Value
-	if used == nil || limit == nil || *limit <= 0 || onDemand == nil || decoded.Config.BillingPeriodEnd == "" {
+	onDemandUsed := decoded.Config.OnDemandUsed.Value
+	onDemandCap := decoded.Config.OnDemandCap.Value
+	legacyMapped := used != nil && limit != nil && *limit > 0 && decoded.Config.BillingPeriodEnd != ""
+	var legacyReset time.Time
+	if legacyMapped {
+		reset, err := time.Parse(time.RFC3339, decoded.Config.BillingPeriodEnd)
+		if err != nil {
+			if weekly == nil {
+				return fmt.Errorf("parse billing period end: %w", err)
+			}
+			legacyMapped = false
+		} else {
+			legacyReset = reset.UTC()
+			percent := math.Max(0, math.Min(100, *used / *limit * 100))
+			primaryStatus := fmt.Sprintf("%s / %s credits · %s", formatWholeNumber(*used), formatWholeNumber(*limit), formatResetDate(legacyReset, now))
+			buckets = append(buckets, usage.Bucket{ID: usage.BucketCredits, Label: "Credits", Utilization: percent, ResetsAt: &legacyReset, StatusText: &primaryStatus})
+			data.PrimaryStatusText = &primaryStatus
+		}
+	}
+	var disabledStatus *string
+	if onDemandBucket, ok := onDemandMeter(decoded.OnDemandEnabled, onDemandUsed, onDemandCap); ok {
+		buckets = append(buckets, onDemandBucket)
+	} else if legacyMapped {
+		disabledStatus = strPtr("Pay as you go disabled")
+	}
+	if weekly != nil {
+		buckets = append(buckets, *weekly)
+	}
+	if len(buckets) == 0 {
 		return errorsChangedResponse()
 	}
-	reset, err := time.Parse(time.RFC3339, decoded.Config.BillingPeriodEnd)
-	if err != nil {
-		return fmt.Errorf("parse billing period end: %w", err)
-	}
-	reset = reset.UTC()
-	percent := math.Max(0, math.Min(100, (*used / *limit * 100)))
 	secondaryLabel := data.SecondaryLabel
-	legacyWeekly := usage.UsageBucket{Utilization: 0, ResetsAt: &reset}
-	*data = data.WithBuckets([]usage.Bucket{{ID: usage.BucketCredits, Label: "Credits", Utilization: percent, ResetsAt: &reset}})
-	data.Weekly = legacyWeekly
-	data.SecondaryLabel = secondaryLabel
-	data.PrimaryStatusText = strPtr(fmt.Sprintf("%s / %s credits · %s", formatWholeNumber(*used), formatWholeNumber(*limit), formatResetDate(reset, now)))
-	if *onDemand > 0 {
-		data.SecondaryStatusText = strPtr(fmt.Sprintf("%s pay-as-you-go cap", formatWholeNumber(*onDemand)))
-	} else {
-		data.SecondaryStatusText = strPtr("Pay as you go disabled")
+	showSecondary := data.ShowSecondary
+	legacyOnly := legacyMapped && weekly == nil
+	*data = data.WithBuckets(buckets)
+	switch {
+	case weekly != nil:
+		data.SecondaryStatusText = nil
+	case len(data.Buckets) >= 2:
+		data.SecondaryStatusText = data.Buckets[1].StatusText
+	default:
+		data.SecondaryStatusText = disabledStatus
+	}
+	if legacyOnly {
+		data.Weekly = usage.UsageBucket{Utilization: 0, ResetsAt: &legacyReset}
+		data.SecondaryLabel = secondaryLabel
+		data.ShowSecondary = showSecondary
 	}
 	return nil
 }
 
-func (p *Provider) populateSettings(ctx context.Context, token string, data *usage.UsageData) {
-	resp, err := p.sendGet(ctx, p.settingsURL, token)
+func (p *Provider) populateSettings(ctx context.Context, creds credentials, data *usage.UsageData) {
+	resp, err := p.sendGet(ctx, p.settingsURL, creds)
 	if err != nil {
 		return
 	}
@@ -140,6 +200,50 @@ func formatWholeNumber(value float64) string {
 		raw = raw[:i] + "," + raw[i:]
 	}
 	return raw
+}
+
+// onDemandMeter builds the pay-as-you-go meter. enabled is nil for legacy
+// responses that omit onDemandEnabled (a positive cap then implies enabled);
+// used/capacity are nil when their scalar was omitted. Utilization is set only
+// when used and a positive cap support a truthful percentage, else the meter is
+// status-only (zero utilization) so the tray never paints a misleading 0% bar.
+func onDemandMeter(enabled *bool, used *float64, capacity *float64) (usage.Bucket, bool) {
+	usedVal := 0.0
+	if used != nil {
+		usedVal = *used
+	}
+	capVal := 0.0
+	if capacity != nil {
+		capVal = *capacity
+	}
+	var included bool
+	if enabled != nil {
+		included = *enabled || usedVal > 0
+	} else {
+		included = usedVal > 0 || capVal > 0
+	}
+	if !included {
+		return usage.Bucket{}, false
+	}
+	status := onDemandStatusText(used, usedVal, capVal)
+	bucket := usage.Bucket{ID: usage.BucketOnDemand, Label: "Pay as you go", StatusText: &status}
+	if used != nil && capVal > 0 {
+		bucket.Utilization = math.Max(0, math.Min(100, usedVal/capVal*100))
+	}
+	return bucket, true
+}
+
+func onDemandStatusText(used *float64, usedVal float64, capVal float64) string {
+	switch {
+	case used != nil && capVal > 0:
+		return fmt.Sprintf("%s / %s pay-as-you-go", formatWholeNumber(usedVal), formatWholeNumber(capVal))
+	case capVal > 0:
+		return fmt.Sprintf("%s pay-as-you-go cap", formatWholeNumber(capVal))
+	case usedVal > 0:
+		return fmt.Sprintf("%s pay-as-you-go used", formatWholeNumber(usedVal))
+	default:
+		return "Pay as you go enabled"
+	}
 }
 
 func errorsChangedResponse() error {

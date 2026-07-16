@@ -47,13 +47,14 @@ func run(args []string, env []string, logger *slog.Logger) error {
 	if err := api.ValidateStartup(cfg.ListenAddr, cfg.AuthToken); err != nil {
 		return err
 	}
-	providerPoller, cursorClient, names, err := buildPoller(cfg)
+	providerPoller, cursorClient, grokProvider, names, err := buildPoller(cfg)
 	if err != nil {
 		return err
 	}
 	handler := api.NewHandler(api.Options{
 		Cache:         providerPoller,
 		Cursor:        cursorClient,
+		Grok:          grokProvider,
 		Poller:        providerPoller,
 		Logger:        logger,
 		AuthToken:     cfg.AuthToken,
@@ -73,13 +74,14 @@ type appRuntime struct {
 	interval time.Duration
 }
 
-func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, []string, error) {
+func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, *grok.Provider, []string, error) {
 	allowLocalDiscovery, err := api.IsLoopbackListenAddr(cfg.ListenAddr)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	providerPoller := poller.New(poller.Options{})
 	var cursorClient *cursor.Client
+	var grokProvider *grok.Provider
 	names := []string{}
 	for name, providerCfg := range cfg.Providers {
 		if !providerCfg.Enabled {
@@ -87,17 +89,20 @@ func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, []string, e
 		}
 		provider, err := buildProvider(name, providerCfg, allowLocalDiscovery)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		if c, ok := provider.(*cursor.Client); ok {
 			cursorClient = c
 		}
+		if g, ok := provider.(*grok.Provider); ok {
+			grokProvider = g
+		}
 		if err := providerPoller.Register(provider, true); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		names = append(names, provider.Name())
 	}
-	return providerPoller, cursorClient, names, nil
+	return providerPoller, cursorClient, grokProvider, names, nil
 }
 
 func buildProvider(name string, providerCfg config.ProviderConfig, allowLocalDiscovery bool) (usage.Provider, error) {

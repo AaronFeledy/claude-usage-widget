@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sync"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
@@ -14,6 +16,7 @@ const (
 	providerName       = "Grok"
 	billingURL         = "https://cli-chat-proxy.grok.com/v1/billing"
 	settingsURL        = "https://cli-chat-proxy.grok.com/v1/settings"
+	webBillingURL      = "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig"
 	tokenURL           = "https://auth.x.ai/oauth2/token"
 	oauthClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
 	tokenAuthHeader    = "xai-grok-cli"
@@ -33,6 +36,7 @@ type Options struct {
 	HTTPClient      *http.Client
 	BillingURL      string
 	SettingsURL     string
+	WebBillingURL   string
 	TokenURL        string
 	Now             func() time.Time
 }
@@ -42,9 +46,12 @@ type Provider struct {
 	httpClient      *http.Client
 	billingURL      string
 	settingsURL     string
+	webBillingURL   string
 	tokenURL        string
 	now             func() time.Time
 	store           credentialStore
+	webMu           sync.RWMutex
+	webCookie       string
 }
 
 func NewProvider(opts Options) (*Provider, error) {
@@ -61,6 +68,7 @@ func NewProvider(opts Options) (*Provider, error) {
 		httpClient:      client,
 		billingURL:      defaultString(opts.BillingURL, billingURL),
 		settingsURL:     defaultString(opts.SettingsURL, settingsURL),
+		webBillingURL:   defaultString(opts.WebBillingURL, webBillingURL),
 		tokenURL:        defaultString(opts.TokenURL, tokenURL),
 		now:             opts.Now,
 	}
@@ -76,19 +84,46 @@ func (p *Provider) Fetch(ctx context.Context) (usage.UsageData, error) {
 	data := baseUsageData()
 	creds, err := p.credentials(ctx)
 	if err != nil {
-		return p.authError(data, err)
-	}
-	if creds.needsRefresh(p.now()) {
-		creds, err = p.refresh(ctx, creds, refreshReasonProactive)
-		if err != nil {
-			return p.refreshError(data, err)
+		data, err = p.authError(data, err)
+	} else {
+		if creds.needsRefresh(p.now()) {
+			creds, err = p.refresh(ctx, creds, refreshReasonProactive)
+			if err != nil {
+				data, err = p.refreshError(data, err)
+			}
+		}
+		if err == nil {
+			data, err = p.fetchWithToken(ctx, data, creds)
 		}
 	}
-	return p.fetchWithToken(ctx, data, creds)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return data, err
+	}
+	for _, bucket := range data.Buckets {
+		if bucket.ID == usage.BucketWeekly {
+			return data, err
+		}
+	}
+	webAdded, webErr := p.populateWebUsage(ctx, &data)
+	if webErr != nil {
+		return data, webErr
+	}
+	if webAdded {
+		return data, nil
+	}
+	return data, err
 }
 
 func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, creds credentials) (usage.UsageData, error) {
-	billingResp, err := p.sendGet(ctx, p.billingURL, creds.accessToken)
+	parsedURL, err := url.Parse(p.billingURL)
+	if err != nil {
+		return data, fmt.Errorf("parse Grok billing URL: %w", err)
+	}
+	query := parsedURL.Query()
+	query.Set("format", "credits")
+	parsedURL.RawQuery = query.Encode()
+	requestURL := parsedURL.String()
+	billingResp, err := p.sendGet(ctx, requestURL, creds)
 	if err != nil {
 		return data, err
 	}
@@ -102,7 +137,7 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 			return p.refreshError(data, err)
 		}
 		creds = refreshed
-		billingResp, err = p.sendGet(ctx, p.billingURL, creds.accessToken)
+		billingResp, err = p.sendGet(ctx, requestURL, creds)
 		if err != nil {
 			return data, err
 		}
@@ -131,7 +166,7 @@ func (p *Provider) fetchWithToken(ctx context.Context, data usage.UsageData, cre
 	if err := drainAndClose(billingResp); err != nil {
 		return data, err
 	}
-	p.populateSettings(ctx, creds.accessToken, &data)
+	p.populateSettings(ctx, creds, &data)
 	return data, nil
 }
 

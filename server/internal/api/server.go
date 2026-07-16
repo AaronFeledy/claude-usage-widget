@@ -11,7 +11,7 @@ func NewHandler(opts Options) http.Handler {
 	if version == "" {
 		version = DefaultVersion
 	}
-	h := &handler{cache: opts.Cache, cursor: opts.Cursor, poller: opts.Poller, version: version, providerNames: normalizedNames(opts.ProviderNames)}
+	h := &handler{cache: opts.Cache, cursor: opts.Cursor, grok: opts.Grok, poller: opts.Poller, version: version, providerNames: normalizedNames(opts.ProviderNames)}
 	return chain(opts, h)
 }
 

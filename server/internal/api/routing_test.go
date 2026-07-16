@@ -21,10 +21,11 @@ func Test_Routing_returns_json_405_with_allow_for_known_routes_when_method_wrong
 		{"provider", http.MethodPost, "/api/v1/usage/claude", http.MethodGet},
 		{"health", http.MethodPost, "/api/v1/health", http.MethodGet},
 		{"cursor credentials", http.MethodGet, "/api/v1/providers/cursor/credentials", http.MethodPut},
+		{"Grok credentials", http.MethodGet, "/api/v1/providers/grok/credentials", http.MethodPut},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := api.NewHandler(api.Options{Cache: newFakeCache(), Cursor: &fakeCursor{}, Poller: newFakeCache(), ProviderNames: []string{"Claude", "Cursor"}})
+			handler := api.NewHandler(api.Options{Cache: newFakeCache(), Cursor: &fakeCursor{}, Grok: &fakeGrok{}, Poller: newFakeCache(), ProviderNames: []string{"Claude", "Cursor", "Grok"}})
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 
