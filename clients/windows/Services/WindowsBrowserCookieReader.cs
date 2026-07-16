@@ -4,14 +4,17 @@ using Microsoft.Data.Sqlite;
 
 namespace ClaudeUsageWidget.Services;
 
-public class WindowsBrowserCookieReader : ICursorCookieReader
+public class WindowsBrowserCookieReader : IProviderCookieReader
 {
-    private static readonly string[] SessionCookieNames =
-    {
-        "WorkosCursorSessionToken",
-        "__Secure-next-auth.session-token",
-        "next-auth.session-token"
-    };
+    private static readonly BrowserCookieQuery CursorCookies = new(
+        "Cursor",
+        "(host_key LIKE '%cursor.com' OR host_key LIKE '%cursor.sh') AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')",
+        "(host LIKE '%cursor.com' OR host LIKE '%cursor.sh') AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')");
+
+    private static readonly BrowserCookieQuery GrokCookies = new(
+        "Grok",
+        "host_key IN ('grok.com', '.grok.com') AND name = 'sso' AND (expires_utc = 0 OR expires_utc > (strftime('%s', 'now') + 11644473600) * 1000000)",
+        "host IN ('grok.com', '.grok.com') AND name = 'sso' AND (expiry = 0 OR expiry > strftime('%s', 'now'))");
 
     private readonly DebugService? _debugService;
 
@@ -20,19 +23,23 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
         _debugService = debugService;
     }
 
-    public virtual string? ReadCursorCookieHeader()
+    public virtual string? ReadCursorCookieHeader() => ReadCookieHeader(CursorCookies);
+
+    public virtual string? ReadGrokCookieHeader() => ReadCookieHeader(GrokCookies);
+
+    private string? ReadCookieHeader(BrowserCookieQuery query)
     {
         foreach (var chromiumBrowser in GetChromiumBrowserRoots())
         {
             try
             {
-                var cookieHeader = TryReadChromiumCookieHeader(chromiumBrowser);
+                var cookieHeader = TryReadChromiumCookieHeader(chromiumBrowser, query);
                 if (!string.IsNullOrWhiteSpace(cookieHeader))
                     return cookieHeader;
             }
             catch (Exception ex)
             {
-                _debugService?.LogWarning("Cursor", $"Cookie import failed for {chromiumBrowser.name}", ex.GetType().Name);
+                _debugService?.LogWarning(query.Provider, $"Cookie import failed for {chromiumBrowser.name}", ex.GetType().Name);
             }
         }
 
@@ -40,20 +47,20 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
         {
             try
             {
-                var cookieHeader = TryReadFirefoxCookieHeader(firefoxProfile);
+                var cookieHeader = TryReadFirefoxCookieHeader(firefoxProfile, query);
                 if (!string.IsNullOrWhiteSpace(cookieHeader))
                     return cookieHeader;
             }
             catch (Exception ex)
             {
-                _debugService?.LogWarning("Cursor", "Cookie import failed for Firefox", ex.GetType().Name);
+                _debugService?.LogWarning(query.Provider, "Cookie import failed for Firefox", ex.GetType().Name);
             }
         }
 
         return null;
     }
 
-    private string? TryReadChromiumCookieHeader((string name, string userDataPath) browserRoot)
+    private string? TryReadChromiumCookieHeader((string name, string userDataPath) browserRoot, BrowserCookieQuery query)
     {
         if (!Directory.Exists(browserRoot.userDataPath))
             return null;
@@ -61,10 +68,10 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
         var masterKey = GetChromiumMasterKey(browserRoot.userDataPath);
         foreach (var cookiePath in EnumerateCookieDatabases(browserRoot.userDataPath))
         {
-            var cookieHeader = TryReadCookiesFromDatabase(cookiePath, masterKey);
+            var cookieHeader = TryReadCookiesFromDatabase(cookiePath, masterKey, query);
             if (!string.IsNullOrWhiteSpace(cookieHeader))
             {
-                _debugService?.LogInfo("Cursor", $"Using browser cookies from {browserRoot.name}");
+                _debugService?.LogInfo(query.Provider, $"Using browser cookies from {browserRoot.name}");
                 return cookieHeader;
             }
         }
@@ -72,7 +79,7 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
         return null;
     }
 
-    private string? TryReadFirefoxCookieHeader(string profilePath)
+    private string? TryReadFirefoxCookieHeader(string profilePath, BrowserCookieQuery query)
     {
         var cookieDbPath = Path.Combine(profilePath, "cookies.sqlite");
         if (!File.Exists(cookieDbPath))
@@ -83,11 +90,10 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = @"
+        command.CommandText = $@"
                 SELECT host, name, value
                 FROM moz_cookies
-                WHERE (host LIKE '%cursor.com' OR host LIKE '%cursor.sh')
-                  AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')
+                WHERE {query.FirefoxWhere}
                 ORDER BY LENGTH(host) DESC, expiry DESC, lastAccessed DESC";
 
         using var reader = command.ExecuteReader();
@@ -107,22 +113,21 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
         if (cookies.Count == 0)
             return null;
 
-        _debugService?.LogInfo("Cursor", "Using browser cookies from Firefox");
+        _debugService?.LogInfo(query.Provider, "Using browser cookies from Firefox");
         return string.Join("; ", cookies.Select(x => $"{x.Key}={x.Value}"));
     }
 
-    private string? TryReadCookiesFromDatabase(string cookieDbPath, byte[] masterKey)
+    private string? TryReadCookiesFromDatabase(string cookieDbPath, byte[] masterKey, BrowserCookieQuery query)
     {
         using var snapshot = BrowserCookieDatabaseSnapshot.Create(cookieDbPath);
         using var connection = OpenReadOnlyCookieDatabase(snapshot.DatabasePath);
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = @"
+        command.CommandText = $@"
                 SELECT host_key, name, encrypted_value
                 FROM cookies
-                WHERE (host_key LIKE '%cursor.com' OR host_key LIKE '%cursor.sh')
-                  AND name IN ('WorkosCursorSessionToken', '__Secure-next-auth.session-token', 'next-auth.session-token')
+                WHERE {query.ChromiumWhere}
                 ORDER BY LENGTH(host_key) DESC, expires_utc DESC";
 
         using var reader = command.ExecuteReader();
@@ -242,4 +247,5 @@ public class WindowsBrowserCookieReader : ICursorCookieReader
             yield return profileDir;
     }
 
+    private sealed record BrowserCookieQuery(string Provider, string ChromiumWhere, string FirefoxWhere);
 }

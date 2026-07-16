@@ -177,10 +177,22 @@ public class ProviderUsagePanel : Panel
             var row = _rows[i];
 
             row.Section.Text = bucket.Label;
-            row.Percent.Text = $"{bucket.Utilization:F0}%";
-            row.Progress.Value = bucket.Utilization;
+            if (BucketPresentation.IsStatusOnly(bucket))
+            {
+                row.Percent.Visible = false;
+                row.Progress.Visible = false;
+                row.Percent.Text = string.Empty;
+                row.Progress.Value = 0;
+            }
+            else
+            {
+                row.Percent.Visible = true;
+                row.Progress.Visible = true;
+                row.Percent.Text = $"{bucket.Utilization:F0}%";
+                row.Progress.Value = bucket.Utilization;
+            }
             row.Status.ForeColor = SecondaryTextColor;
-            row.Status.Text = ResolveStatusText(data, i, bucket);
+            row.Status.Text = ResolveStatusText(i, bucket);
 
             ApplyBucketStyle(row.Progress, data.ProviderName, bucket);
         }
@@ -197,6 +209,8 @@ public class ProviderUsagePanel : Panel
         EnsureRowCount(1);
         var row = _rows[0];
         row.Section.Text = label;
+        row.Percent.Visible = true;
+        row.Progress.Visible = true;
         row.Percent.Text = "--";
         row.Progress.Value = 0;
         row.Progress.Notches = 0;
@@ -207,17 +221,12 @@ public class ProviderUsagePanel : Panel
         Invalidate();
     }
 
-    private static string ResolveStatusText(UsageData data, int index, UsageBucketDetail bucket)
+    private static string ResolveStatusText(int index, UsageBucketDetail bucket)
     {
         if (!string.IsNullOrWhiteSpace(bucket.StatusText))
             return bucket.StatusText;
 
-        return index switch
-        {
-            0 => data.PrimaryStatusText ?? BuildResetText(bucket.ResetsAt, "Resets in"),
-            1 => data.SecondaryStatusText ?? BuildResetText(bucket.ResetsAt, "Resets"),
-            _ => BuildResetText(bucket.ResetsAt, "Resets")
-        };
+        return BuildResetText(bucket.ResetsAt, index == 0 ? "Resets in" : "Resets");
     }
 
     /// <summary>

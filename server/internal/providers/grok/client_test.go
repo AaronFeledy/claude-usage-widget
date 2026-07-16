@@ -38,8 +38,14 @@ func Test_Provider_Fetch_maps_billing_and_settings_response_to_usage_data(t *tes
 	if data.Weekly.Utilization != 0 || data.Weekly.ResetsAt == nil || !data.Weekly.ResetsAt.Equal(*data.Current.ResetsAt) {
 		t.Fatalf("Weekly = %#v, want zero placeholder with same reset", data.Weekly)
 	}
-	if len(data.Buckets) != 1 || data.Buckets[0].ID != "credits" || data.Buckets[0].Label != "Credits" || data.Buckets[0].Utilization != data.Current.Utilization {
-		t.Fatalf("Buckets = %#v, want one Credits bucket matching Current", data.Buckets)
+	if len(data.Buckets) != 2 || data.Buckets[0].ID != "credits" || data.Buckets[0].Label != "Credits" || data.Buckets[0].Utilization != data.Current.Utilization {
+		t.Fatalf("Buckets = %#v, want Credits and on-demand buckets", data.Buckets)
+	}
+	if data.Buckets[0].StatusText == nil || !strings.Contains(*data.Buckets[0].StatusText, "25 / 100 credits") {
+		t.Fatalf("Credits StatusText = %v, want credit totals", data.Buckets[0].StatusText)
+	}
+	if data.Buckets[1].ID != "on_demand" || data.Buckets[1].StatusText == nil || *data.Buckets[1].StatusText != "40 pay-as-you-go cap" {
+		t.Fatalf("On-demand bucket = %#v, want enabled cap status", data.Buckets[1])
 	}
 	assertGrokHeaders(t, server.billingHeaders[0])
 }

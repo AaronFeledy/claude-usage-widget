@@ -122,6 +122,58 @@ func Test_populateUsageData_emits_buckets_matching_visible_header(t *testing.T) 
 	}
 }
 
+func Test_populateUsageData_emits_separate_auto_api_and_on_demand_buckets(t *testing.T) {
+	// Given
+	autoPercent, apiPercent := 20.0, 40.0
+	onDemandUsed, onDemandLimit := 500, 2000
+	summary := cursorUsageSummary{IndividualUsage: &cursorIndividualUsage{
+		Plan: &cursorPlanUsage{
+			AutoPercentUsed: &autoPercent,
+			APIPercentUsed:  &apiPercent,
+		},
+		OnDemand: &cursorOnDemandUsage{Used: &onDemandUsed, Limit: &onDemandLimit},
+	}}
+	data := baseUsageData()
+
+	// When
+	populateUsageData(&data, summary, nil)
+
+	// Then
+	if len(data.Buckets) != 3 {
+		t.Fatalf("Buckets = %#v, want auto, api, and on_demand", data.Buckets)
+	}
+	wantIDs := []string{"auto", "api", usage.BucketOnDemand}
+	wantLabels := []string{"Auto", "API", "On-Demand"}
+	wantUtilization := []float64{20, 40, 25}
+	for index, bucket := range data.Buckets {
+		if bucket.ID != wantIDs[index] || bucket.Label != wantLabels[index] || bucket.Utilization != wantUtilization[index] {
+			t.Fatalf("Buckets[%d] = %#v, want id=%q label=%q utilization=%v", index, bucket, wantIDs[index], wantLabels[index], wantUtilization[index])
+		}
+	}
+}
+
+func Test_populateUsageData_preserves_legacy_header_when_auto_and_api_are_separate(t *testing.T) {
+	// Given
+	autoPercent, apiPercent, totalPercent := 20.0, 40.0, 35.0
+	summary := cursorUsageSummary{IndividualUsage: &cursorIndividualUsage{Plan: &cursorPlanUsage{
+		AutoPercentUsed:  &autoPercent,
+		APIPercentUsed:   &apiPercent,
+		TotalPercentUsed: &totalPercent,
+	}}}
+	data := baseUsageData()
+
+	// When
+	populateUsageData(&data, summary, nil)
+
+	// Then
+	if len(data.Buckets) != 2 {
+		t.Fatalf("Buckets = %#v, want Auto and API", data.Buckets)
+	}
+	if data.Current.Utilization != 35 || data.Weekly != (usage.UsageBucket{}) || data.PrimaryLabel != "Included Plan" || data.SecondaryLabel != "On-Demand" || data.ShowSecondary {
+		t.Fatalf("legacy header changed: current=%#v weekly=%#v primary=%q secondary=%q show=%v", data.Current, data.Weekly, data.PrimaryLabel, data.SecondaryLabel, data.ShowSecondary)
+	}
+}
+
 func Test_populateUsageData_preserves_hidden_secondary_header_with_one_bucket(t *testing.T) {
 	// Given
 	planUsed, planLimit := 2500, 10000

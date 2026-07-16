@@ -25,6 +25,14 @@ func updateCredentialJSON(data []byte, creds credentials) ([]byte, error) {
 	}
 	if !creds.expiresAt.IsZero() {
 		entry["expires_at"] = jsonStringRaw(creds.expiresAt.UTC().Format(time.RFC3339Nano))
+	} else {
+		delete(entry, "expires_at")
+	}
+	if !creds.createTime.IsZero() {
+		entry["create_time"] = jsonStringRaw(creds.createTime.UTC().Format(time.RFC3339Nano))
+	}
+	if creds.clientID != "" {
+		entry["oidc_client_id"] = jsonStringRaw(creds.clientID)
 	}
 	updated, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {

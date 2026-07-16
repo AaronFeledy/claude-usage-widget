@@ -17,6 +17,7 @@ const maxCredentialBodyBytes = 1 << 20
 type handler struct {
 	cache         Cache
 	cursor        CursorCredentials
+	grok          GrokCredentials
 	poller        ProviderPoller
 	version       string
 	providerNames []string
@@ -39,6 +40,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "/api/v1/providers/cursor/credentials" {
 		h.route(w, r, http.MethodPut, h.cursorCredentials)
+		return
+	}
+	if path == "/api/v1/providers/grok/credentials" {
+		h.route(w, r, http.MethodPut, h.grokCredentials)
 		return
 	}
 	writeError(w, http.StatusNotFound, "not found")
@@ -101,9 +106,33 @@ func (h *handler) cursorCredentials(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid access token")
 		return
 	}
-	entry, ok, err := h.poller.PollProvider(r.Context(), "cursor")
+	h.writeRefetchedProvider(w, r, "cursor")
+}
+
+func (h *handler) grokCredentials(w http.ResponseWriter, r *http.Request) {
+	if h.grok == nil || h.poller == nil || !h.hasProvider("grok") {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+	request, err := decodeCredentialRequest(w, r)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "cursor refetch failed")
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.cookie == "" {
+		writeError(w, http.StatusBadRequest, "provide exactly one cookie credential")
+		return
+	}
+	h.credentialMu.Lock()
+	defer h.credentialMu.Unlock()
+	h.grok.SetCookieHeader(request.cookie)
+	h.writeRefetchedProvider(w, r, "grok")
+}
+
+func (h *handler) writeRefetchedProvider(w http.ResponseWriter, r *http.Request, providerName string) {
+	entry, ok, err := h.poller.PollProvider(r.Context(), providerName)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, providerName+" refetch failed")
 		return
 	}
 	if !ok {

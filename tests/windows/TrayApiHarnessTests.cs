@@ -203,6 +203,61 @@ internal sealed partial class TrayApiHarnessTests
         AssertEqual(false, debug.GetEntries().Any(entry => entry.ToString().Contains("failed-push-secret", StringComparison.Ordinal)));
     }
 
+    public async Task Test_GrokMissingWeeklyPushesBrowserCookie()
+    {
+        const string secret = "sso=grok-session-secret";
+        var handler = new QueueHandler(GrokCreditsOnly(), GrokPutSuccess());
+        var reader = new FakeCookieReader(null, secret);
+        await using var manager = RemoteManager();
+        var poller = Poller(handler, manager, cookieReader: reader);
+
+        var snapshot = await poller.PollAsync();
+
+        AssertEqual(TrayApiState.Ready, snapshot.State);
+        AssertEqual(1, reader.GrokCalls);
+        AssertEqual(1, handler.PutRequests);
+        AssertEqual(true, handler.PutBody?.Contains(secret, StringComparison.Ordinal) == true);
+        AssertEqual(2, snapshot.Providers[0].Buckets.Count);
+        AssertEqual("weekly", snapshot.Providers[0].Buckets[1].Id);
+    }
+
+    public async Task Test_GrokCliAuthErrorStillPushesBrowserCookie()
+    {
+        const string secret = "sso=grok-session-secret";
+        var handler = new QueueHandler(GrokNeedsCliAuth(), GrokWeeklyOnlyPutSuccess());
+        var reader = new FakeCookieReader(null, secret);
+        await using var manager = RemoteManager();
+        var poller = Poller(handler, manager, cookieReader: reader);
+
+        var snapshot = await poller.PollAsync();
+
+        AssertEqual(TrayApiState.Ready, snapshot.State);
+        AssertEqual(1, reader.GrokCalls);
+        AssertEqual(1, handler.PutRequests);
+        AssertEqual(null, snapshot.Providers[0].Error);
+        AssertEqual("weekly", snapshot.Providers[0].Buckets[0].Id);
+    }
+
+    public async Task Test_RemoteHttpDoesNotPushBrowserCredentials()
+    {
+        var handler = new QueueHandler(GrokCreditsOnly());
+        var reader = new FakeCookieReader(null, "sso=must-not-leave-device");
+        await using var manager = new ServerProcessManager(new ServerProcessOptions(ApiUrl: "http://remote.test:9000"), FakeDependencies.Create().Value);
+        var poller = Poller(handler, manager, new Uri("http://remote.test:9000/"), reader);
+
+        var snapshot = await poller.PollAsync();
+
+        AssertEqual(TrayApiState.Ready, snapshot.State);
+        AssertEqual(0, reader.GrokCalls);
+        AssertEqual(0, handler.PutRequests);
+    }
+
+    public Task Test_DebugServiceRedactsGrokSsoCookie()
+    {
+        AssertEqual("cookie sso=[redacted]", DebugService.Redact("cookie sso=secret-value"));
+        return Task.CompletedTask;
+    }
+
     public async Task Test_GetHealth_returns_server_version()
     {
         var handler = new QueueHandler(SuccessHealth("0.2.1", "ok"));
@@ -240,7 +295,7 @@ internal sealed partial class TrayApiHarnessTests
         AssertEqual(ApiResultStatus.Offline, result.Status);
     }
 
-    private static TrayUsagePoller Poller(QueueHandler handler, ServerProcessManager manager, Uri? baseUrl = null, ICursorCookieReader? cookieReader = null, DebugService? debug = null)
+    private static TrayUsagePoller Poller(QueueHandler handler, ServerProcessManager manager, Uri? baseUrl = null, IProviderCookieReader? cookieReader = null, DebugService? debug = null)
     {
         var client = new ApiClient(new HttpClient(handler), new TrayApiClientOptions { BaseUrl = baseUrl ?? new Uri("http://localhost:7823/") });
         return new TrayUsagePoller(client, manager, cookieReader ?? new FakeCookieReader(null), debug ?? new DebugService());
@@ -283,6 +338,26 @@ internal sealed partial class TrayApiHarnessTests
         Content = new StringContent("{\"provider\":\"Cursor\",\"refetched\":true,\"usage\":{\"provider_name\":\"Cursor\",\"primary_label\":\"Monthly\",\"secondary_label\":\"Monthly\",\"show_secondary\":false,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":null,\"current\":{\"utilization\":7,\"resets_at\":null},\"weekly\":{\"utilization\":0,\"resets_at\":null},\"error\":null,\"needs_reauth\":false,\"is_success\":true}}", Encoding.UTF8, "application/json")
     };
 
+    private static HttpResponseMessage GrokCreditsOnly() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("[{\"provider_name\":\"Grok\",\"primary_label\":\"Credits\",\"secondary_label\":\"Pay as you go\",\"show_secondary\":false,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":null,\"current\":{\"utilization\":15,\"resets_at\":null},\"weekly\":{\"utilization\":0,\"resets_at\":null},\"buckets\":[{\"id\":\"credits\",\"label\":\"Credits\",\"utilization\":15,\"resets_at\":null,\"status_text\":null}],\"error\":null,\"needs_reauth\":false,\"is_success\":true}]", Encoding.UTF8, "application/json")
+    };
+
+    private static HttpResponseMessage GrokPutSuccess() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("{\"provider\":\"Grok\",\"refetched\":true,\"usage\":{\"provider_name\":\"Grok\",\"primary_label\":\"Credits\",\"secondary_label\":\"Weekly\",\"show_secondary\":true,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":null,\"current\":{\"utilization\":15,\"resets_at\":null},\"weekly\":{\"utilization\":1,\"resets_at\":\"2026-07-21T18:35:57Z\"},\"buckets\":[{\"id\":\"credits\",\"label\":\"Credits\",\"utilization\":15,\"resets_at\":null,\"status_text\":null},{\"id\":\"weekly\",\"label\":\"Weekly\",\"utilization\":1,\"resets_at\":\"2026-07-21T18:35:57Z\",\"status_text\":null}],\"error\":null,\"needs_reauth\":false,\"is_success\":true}}", Encoding.UTF8, "application/json")
+    };
+
+    private static HttpResponseMessage GrokNeedsCliAuth() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("[{\"provider_name\":\"Grok\",\"primary_label\":\"Credits\",\"secondary_label\":\"Pay as you go\",\"show_secondary\":false,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":\"grok login\",\"current\":{\"utilization\":0,\"resets_at\":null},\"weekly\":{\"utilization\":0,\"resets_at\":null},\"buckets\":[],\"error\":\"Grok auth expired\",\"needs_reauth\":true,\"is_success\":false}]", Encoding.UTF8, "application/json")
+    };
+
+    private static HttpResponseMessage GrokWeeklyOnlyPutSuccess() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent("{\"provider\":\"Grok\",\"refetched\":true,\"usage\":{\"provider_name\":\"Grok\",\"primary_label\":\"Weekly\",\"secondary_label\":\"Weekly\",\"show_secondary\":false,\"subtitle\":null,\"primary_status_text\":null,\"secondary_status_text\":null,\"reauth_command\":\"grok login\",\"current\":{\"utilization\":1,\"resets_at\":\"2026-07-21T18:35:57Z\"},\"weekly\":{\"utilization\":0,\"resets_at\":null},\"buckets\":[{\"id\":\"weekly\",\"label\":\"Weekly\",\"utilization\":1,\"resets_at\":\"2026-07-21T18:35:57Z\",\"status_text\":null}],\"error\":null,\"needs_reauth\":false,\"is_success\":true}}", Encoding.UTF8, "application/json")
+    };
+
     private static HttpResponseMessage SuccessHealth(string version, string status) => new(HttpStatusCode.OK)
     {
         Content = new StringContent($"{{\"status\":\"{status}\",\"version\":\"{version}\",\"providers\":[]}}", Encoding.UTF8, "application/json")
@@ -320,19 +395,28 @@ internal sealed class QueueHandler : HttpMessageHandler
     }
 }
 
-internal sealed class FakeCookieReader : ICursorCookieReader
+internal sealed class FakeCookieReader : IProviderCookieReader
 {
     private readonly string? _cookie;
+    private readonly string? _grokCookie;
     public int Calls { get; private set; }
+    public int GrokCalls { get; private set; }
 
-    public FakeCookieReader(string? cookie)
+    public FakeCookieReader(string? cookie, string? grokCookie = null)
     {
         _cookie = cookie;
+        _grokCookie = grokCookie;
     }
 
     public string? ReadCursorCookieHeader()
     {
         Calls++;
         return _cookie;
+    }
+
+    public string? ReadGrokCookieHeader()
+    {
+        GrokCalls++;
+        return _grokCookie;
     }
 }

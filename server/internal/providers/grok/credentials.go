@@ -16,7 +16,10 @@ import (
 type credentials struct {
 	accessToken  string
 	refreshToken string
+	userID       string
+	clientID     string
 	expiresAt    time.Time
+	createTime   time.Time
 	entryKey     string
 }
 
@@ -36,10 +39,21 @@ const (
 )
 
 func (c credentials) needsRefresh(now time.Time) bool {
-	if c.refreshToken == "" || c.expiresAt.IsZero() {
+	expiresAt := c.effectiveExpiresAt()
+	if c.refreshToken == "" || expiresAt.IsZero() {
 		return false
 	}
-	return !now.Before(c.expiresAt.Add(-refreshBuffer))
+	return !now.Before(expiresAt.Add(-refreshBuffer))
+}
+
+func (c credentials) effectiveExpiresAt() time.Time {
+	if !c.expiresAt.IsZero() {
+		return c.expiresAt
+	}
+	if !c.createTime.IsZero() {
+		return c.createTime.Add(30 * 24 * time.Hour)
+	}
+	return time.Time{}
 }
 
 func (p *Provider) credentials(ctx context.Context) (credentials, error) {
@@ -52,7 +66,7 @@ func (p *Provider) credentials(ctx context.Context) (credentials, error) {
 		if err != nil {
 			return credentials{}, fmt.Errorf("stat Grok auth: %w", err)
 		}
-		state := credstore.RefreshState{Snapshot: snapshot, CurrentModTime: info.ModTime(), ExpiresAt: creds.expiresAt.Add(-refreshBuffer)}
+		state := credstore.RefreshState{Snapshot: snapshot, CurrentModTime: info.ModTime(), ExpiresAt: creds.effectiveExpiresAt().Add(-refreshBuffer)}
 		if credstore.ShouldRefresh(p.now(), state) != credstore.RefreshDecisionReload {
 			return creds, nil
 		}
@@ -110,10 +124,17 @@ func parseCredentialEntry(entryKey string, raw json.RawMessage) (credentials, er
 	if err != nil {
 		return credentials{}, err
 	}
+	createTime, err := parseCredentialTime(entry["create_time"], "create_time")
+	if err != nil {
+		return credentials{}, err
+	}
 	return credentials{
 		accessToken:  strings.TrimSpace(accessToken),
 		refreshToken: strings.TrimSpace(firstString(entry["refresh_token"], entry["refresh"])),
+		userID:       strings.TrimSpace(jsonString(entry["user_id"])),
+		clientID:     strings.TrimSpace(jsonString(entry["oidc_client_id"])),
 		expiresAt:    expiresAt,
+		createTime:   createTime,
 		entryKey:     entryKey,
 	}, nil
 }
@@ -137,35 +158,44 @@ func parseExpiresAt(raw json.RawMessage) (time.Time, error) {
 	return parsed.UTC(), nil
 }
 
+func parseCredentialTime(raw json.RawMessage, field string) (time.Time, error) {
+	value := jsonString(raw)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse Grok auth %s: %w", field, err)
+	}
+	return parsed.UTC(), nil
+}
+
 func (p *Provider) refresh(ctx context.Context, stale credentials, reason refreshReason) (credentials, error) {
 	p.store.refresh.Lock()
 	defer p.store.refresh.Unlock()
-	creds, err := p.credentials(ctx)
+	err := credstore.AtomicUpdate(ctx, p.credentialsPath, func(data []byte) ([]byte, error) {
+		current, err := parseCredentials(data)
+		if err != nil {
+			return nil, err
+		}
+		if current.accessToken != stale.accessToken || current.refreshToken != stale.refreshToken {
+			return data, nil
+		}
+		if reason == refreshReasonProactive && !current.needsRefresh(p.now()) {
+			return data, nil
+		}
+		if current.refreshToken == "" {
+			return nil, errInvalidGrant
+		}
+		refreshed, err := p.requestRefresh(ctx, current)
+		if err != nil {
+			return nil, err
+		}
+		refreshed.entryKey = current.entryKey
+		return updateCredentialJSON(data, refreshed)
+	})
 	if err != nil {
-		return credentials{}, err
-	}
-	if creds.accessToken != stale.accessToken || creds.refreshToken != stale.refreshToken {
-		return creds, nil
-	}
-	if reason == refreshReasonProactive && !creds.needsRefresh(p.now()) {
-		return creds, nil
-	}
-	if creds.refreshToken == "" {
-		return credentials{}, errInvalidGrant
-	}
-	refreshed, err := p.requestRefresh(ctx, creds.refreshToken, creds.expiresAt)
-	if err != nil {
-		return credentials{}, err
-	}
-	refreshed.entryKey = creds.entryKey
-	if err := p.saveCredentials(ctx, refreshed); err != nil {
 		return credentials{}, err
 	}
 	return p.loadCredentials(ctx)
-}
-
-func (p *Provider) saveCredentials(ctx context.Context, creds credentials) error {
-	return credstore.AtomicUpdate(ctx, p.credentialsPath, func(data []byte) ([]byte, error) {
-		return updateCredentialJSON(data, creds)
-	})
 }

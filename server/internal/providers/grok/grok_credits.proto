@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package grok;
+
+option go_package = "github.com/AaronFeledy/claude-usage-widget/server/internal/providers/grok";
+
+message Timestamp {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}
+
+enum UsagePeriodType {
+  USAGE_PERIOD_TYPE_UNSPECIFIED = 0;
+  USAGE_PERIOD_TYPE_MONTHLY = 1;
+  USAGE_PERIOD_TYPE_WEEKLY = 2;
+}
+
+message UsagePeriod {
+  UsagePeriodType type = 1;
+  Timestamp start = 2;
+  Timestamp end = 3;
+}
+
+message GrokCreditsConfig {
+  float credit_usage_percent = 1;
+  Timestamp billing_period_end = 5;
+  UsagePeriod current_period = 8;
+}
+
+message GetGrokCreditsConfigResponse {
+  GrokCreditsConfig config = 1;
+}

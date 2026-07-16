@@ -93,15 +93,15 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 	var weekly usage.Bucket
 	sessionFound := false
 	weeklyFound := false
+	sessionActive := false
+	weeklyActive := false
 	scoped := make([]usage.Bucket, 0, len(response.Limits))
 	for index, limit := range response.Limits {
-		if limit.IsActive != nil && !*limit.IsActive {
-			continue
-		}
+		active := limit.IsActive == nil || *limit.IsActive
 		window := usageBucketResponse{Utilization: limit.Percent, ResetsAt: limit.ResetsAt}
 		switch limit.Kind {
 		case "session":
-			if sessionFound || limit.Percent == nil {
+			if limit.Percent == nil || sessionFound && (sessionActive || !active) {
 				continue
 			}
 			bucket, err := window.toBucket("session", primaryLabel)
@@ -110,8 +110,9 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 			}
 			session = bucket
 			sessionFound = true
+			sessionActive = active
 		case "weekly_all":
-			if weeklyFound || limit.Percent == nil {
+			if limit.Percent == nil || weeklyFound && (weeklyActive || !active) {
 				continue
 			}
 			bucket, err := window.toBucket("weekly", secondaryLabel)
@@ -120,6 +121,7 @@ func parseUsageResponse(body []byte, subscription *string) (usage.UsageData, err
 			}
 			weekly = bucket
 			weeklyFound = true
+			weeklyActive = active
 		case "weekly_scoped":
 			if strings.TrimSpace(limit.Scope.Model.DisplayName) == "" || limit.Percent == nil {
 				continue

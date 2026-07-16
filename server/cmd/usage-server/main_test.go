@@ -79,7 +79,7 @@ func Test_BuildPoller_allows_cursor_local_discovery_only_for_loopback_listen_add
 			}
 
 			// When
-			_, cursorClient, _, err := buildPoller(cfg)
+			_, cursorClient, _, _, err := buildPoller(cfg)
 			if err != nil {
 				t.Fatalf("buildPoller error = %v", err)
 			}

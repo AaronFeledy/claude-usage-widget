@@ -10,6 +10,8 @@ const (
 	BucketSession  = "session"
 	BucketWeekly   = "weekly"
 	BucketPlan     = "plan"
+	BucketAuto     = "auto"
+	BucketAPI      = "api"
 	BucketCredits  = "credits"
 	BucketExtra    = "extra"
 	BucketOnDemand = "on_demand"
@@ -24,7 +26,7 @@ func FromBuckets(providerName string, buckets []Bucket) UsageData {
 // NormalizeBuckets orders meters consistently, drops empty IDs, dedupes by ID
 // (first wins), and caps length at MaxBuckets.
 //
-// Order: session-like (session/plan/credits) → weekly → weekly_* → credit-like
+// Order: session-like (session/plan/auto/api/credits) → weekly → weekly_* → credit-like
 // (extra/on_demand) → everything else (stable relative order within groups).
 func NormalizeBuckets(buckets []Bucket) []Bucket {
 	if len(buckets) == 0 {
@@ -54,7 +56,7 @@ func NormalizeBuckets(buckets []Bucket) []Bucket {
 
 func bucketGroup(id string) int {
 	switch {
-	case id == BucketSession || id == BucketPlan || id == BucketCredits:
+	case id == BucketSession || id == BucketPlan || id == BucketAuto || id == BucketAPI || id == BucketCredits:
 		return 0
 	case id == BucketWeekly:
 		return 1

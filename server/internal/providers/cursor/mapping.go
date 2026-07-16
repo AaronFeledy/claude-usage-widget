@@ -41,22 +41,49 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 	secondaryLabel := data.SecondaryLabel
 	primaryStatus := data.PrimaryStatusText
 	secondaryStatus := data.SecondaryStatusText
-	buckets := []usage.Bucket{{
-		ID:          usage.BucketPlan,
-		Label:       data.PrimaryLabel,
-		Utilization: data.Current.Utilization,
-		ResetsAt:    data.Current.ResetsAt,
-		StatusText:  primaryStatus,
-	}}
+	legacyCurrent := data.Current
+	legacyWeekly := data.Weekly
+	legacyPrimaryLabel := data.PrimaryLabel
+	legacyShowSecondary := data.ShowSecondary
+	plan := planUsage(summary)
+	separatePlanBuckets := plan.AutoPercentUsed != nil || plan.APIPercentUsed != nil
+	buckets := make([]usage.Bucket, 0, 3)
+	if plan.AutoPercentUsed != nil {
+		buckets = append(buckets, usage.Bucket{
+			ID:          usage.BucketAuto,
+			Label:       "Auto",
+			Utilization: clampPercent(*plan.AutoPercentUsed),
+			ResetsAt:    billingCycleEnd,
+		})
+	}
+	if plan.APIPercentUsed != nil {
+		buckets = append(buckets, usage.Bucket{
+			ID:          usage.BucketAPI,
+			Label:       "API",
+			Utilization: clampPercent(*plan.APIPercentUsed),
+			ResetsAt:    billingCycleEnd,
+		})
+	}
+	if !separatePlanBuckets {
+		buckets = append(buckets, usage.Bucket{
+			ID:          usage.BucketPlan,
+			Label:       data.PrimaryLabel,
+			Utilization: data.Current.Utilization,
+			ResetsAt:    data.Current.ResetsAt,
+			StatusText:  primaryStatus,
+		})
+	}
 	if showOnDemand {
 		buckets = append(buckets, onDemandBucket)
 	}
 	*data = data.WithBuckets(buckets)
+	data.Current = legacyCurrent
+	data.Weekly = legacyWeekly
+	data.PrimaryLabel = legacyPrimaryLabel
+	data.SecondaryLabel = secondaryLabel
+	data.ShowSecondary = legacyShowSecondary
 	data.PrimaryStatusText = primaryStatus
 	data.SecondaryStatusText = secondaryStatus
-	if !showOnDemand {
-		data.SecondaryLabel = secondaryLabel
-	}
 }
 
 func resolveOnDemandBucket(summary cursorUsageSummary, billingCycleEnd *time.Time) (usage.Bucket, *string, bool) {

@@ -36,6 +36,35 @@ func Test_CursorCredentials_updates_memory_credentials_and_refetches_once(t *tes
 	}
 }
 
+func Test_GrokCredentials_updates_web_cookie_and_refetches_once(t *testing.T) {
+	// Given
+	cache := newFakeCache(entry("Grok", 10, 20, nil))
+	grok := &fakeGrok{}
+	handler := api.NewHandler(api.Options{Cache: cache, Grok: grok, Poller: cache, ProviderNames: []string{"Grok"}})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/providers/grok/credentials", strings.NewReader(`{"cookie":"sso=session"}`))
+
+	// When
+	handler.ServeHTTP(rec, req)
+
+	// Then
+	assertStatus(t, rec, http.StatusOK)
+	if grok.cookie != "sso=session" {
+		t.Fatalf("cookie setter = %q", grok.cookie)
+	}
+	if cache.refetches != 1 {
+		t.Fatalf("refetches = %d, want 1", cache.refetches)
+	}
+}
+
+type fakeGrok struct {
+	cookie string
+}
+
+func (g *fakeGrok) SetCookieHeader(cookie string) {
+	g.cookie = cookie
+}
+
 func Test_CursorCredentials_accepts_access_token_and_rejects_bad_payloads(t *testing.T) {
 	// Given
 	validToken := jwtWithSubject("user-1")

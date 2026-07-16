@@ -42,17 +42,25 @@ public sealed class ApiClient
         return await RequestAsync(HttpMethod.Get, "api/v1/health", null, MapHealth, cancellationToken);
     }
 
-    public async Task<ApiResult<CursorCredentialResult>> PutCursorCredentialsAsync(
+    public async Task<ApiResult<ProviderCredentialResult>> PutCursorCredentialsAsync(
         CursorCredential credential,
         CancellationToken cancellationToken = default)
     {
-        var request = new CursorCredentialRequest(credential.Cookie, credential.AccessToken);
+        var request = new ProviderCredentialRequest(credential.Cookie, credential.AccessToken);
         return await RequestAsync(HttpMethod.Put, "api/v1/providers/cursor/credentials", request, MapCredentialResult, cancellationToken);
     }
 
-    public Task<ApiResult<CursorCredentialResult>> PutCursorCredentialAsync(
+    public Task<ApiResult<ProviderCredentialResult>> PutCursorCredentialAsync(
         CursorCredential credential,
         CancellationToken cancellationToken = default) => PutCursorCredentialsAsync(credential, cancellationToken);
+
+    public async Task<ApiResult<ProviderCredentialResult>> PutGrokCredentialsAsync(
+        GrokCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new ProviderCredentialRequest(credential.Cookie, null);
+        return await RequestAsync(HttpMethod.Put, "api/v1/providers/grok/credentials", request, MapCredentialResult, cancellationToken);
+    }
 
     private async Task<ApiResult<T>> RequestAsync<T>(
         HttpMethod method,
@@ -155,21 +163,21 @@ public sealed class ApiClient
         }
     }
 
-    private static ApiResult<CursorCredentialResult> MapCredentialResult(string json)
+    private static ApiResult<ProviderCredentialResult> MapCredentialResult(string json)
     {
         try
         {
-            var wire = JsonSerializer.Deserialize<CursorCredentialResponse>(json, JsonOptions);
-            if (wire?.Usage == null || string.IsNullOrWhiteSpace(wire.Provider) || wire.Refetched == null) return Malformed<CursorCredentialResult>();
-            return ApiResult<CursorCredentialResult>.Success(new CursorCredentialResult(wire.Provider, wire.Refetched.Value, MapUsageWire(wire.Usage)));
+            var wire = JsonSerializer.Deserialize<ProviderCredentialResponse>(json, JsonOptions);
+            if (wire?.Usage == null || string.IsNullOrWhiteSpace(wire.Provider) || wire.Refetched == null) return Malformed<ProviderCredentialResult>();
+            return ApiResult<ProviderCredentialResult>.Success(new ProviderCredentialResult(wire.Provider, wire.Refetched.Value, MapUsageWire(wire.Usage)));
         }
         catch (JsonException)
         {
-            return Malformed<CursorCredentialResult>();
+            return Malformed<ProviderCredentialResult>();
         }
         catch (WireValidationException)
         {
-            return Malformed<CursorCredentialResult>();
+            return Malformed<ProviderCredentialResult>();
         }
     }
 

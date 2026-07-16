@@ -48,6 +48,7 @@ curl -H 'Authorization: Bearer replace-with-a-long-random-token' \
 - `GET /api/v1/usage/{provider}` - one cached provider entry, for example `Claude` or `codex`.
 - `GET /api/v1/health` - server status, version, and provider health.
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one JSON field: `cookie` or `access_token`.
+- `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 
 When `auth_token` or `USAGE_AUTH_TOKEN` is set, every endpoint requires `Authorization: Bearer <token>`.
 
@@ -98,7 +99,7 @@ providers:
     credentials_path: ~/.grok/auth.json
 ```
 
-All four providers are enabled by default; Claude defaults to `~/.claude/.credentials.json`, and the others discover credentials automatically when no path is set. Disable unwanted providers with `enabled: false` or `USAGE_PROVIDER_<NAME>_ENABLED=false`. Codex can also discover `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode auth. Cursor local discovery is intended for local browser sessions; remote deployments should prefer tray-pushed in-memory Cursor credentials. Grok defaults to `~/.grok/auth.json` and can discover Windows WSL auth.
+All four providers are enabled by default; Claude defaults to `~/.claude/.credentials.json`, and the others discover credentials automatically when no path is set. Disable unwanted providers with `enabled: false` or `USAGE_PROVIDER_<NAME>_ENABLED=false`. Codex can also discover `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode auth. Cursor local discovery is intended for local browser sessions; remote deployments should prefer tray-pushed in-memory Cursor credentials over HTTPS because the tray never sends browser credentials to remote plain-HTTP URLs. Grok weekly usage primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json` or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback when CLI weekly data is unavailable.
 
 ## Authentication Safety
 
@@ -192,4 +193,4 @@ docker run --rm -p 7823:7823 \
   claude-usage-server --listen-addr 0.0.0.0:7823
 ```
 
-Add provider env/config and read-only credential mounts as needed. For example, enable Grok with `-e USAGE_PROVIDER_GROK_ENABLED=true` and mount `~/.grok/auth.json` to the path configured for the container user.
+Add read-only credential mounts as needed. All providers, including Grok, are enabled by default, so Grok only needs its credential file made available—for example, mount `~/.grok/auth.json` to the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs).

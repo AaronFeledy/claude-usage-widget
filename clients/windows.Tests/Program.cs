@@ -21,6 +21,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("returns offline on timeout", ReturnsOfflineOnTimeout),
     ("puts cursor cookie credential", PutsCursorCookieCredential),
     ("puts cursor access token credential", PutsCursorAccessTokenCredential),
+    ("puts Grok cookie credential", PutsGrokCookieCredential),
     ("maps provider JSON errors", MapsProviderJsonErrors),
     ("rejects contradictory is_success", RejectsContradictoryIsSuccess),
     ("WIN-1 maps usage buckets", BucketMappingTests.MapsUsageBuckets),
@@ -214,6 +215,17 @@ static async Task PutsCursorAccessTokenCredential()
     var body = await handler.Requests[0].Content!.ReadAsStringAsync();
     Assert(body.Contains("\"access_token\":\"access\"", StringComparison.Ordinal), "access token sent");
     Assert(!body.Contains("cookie", StringComparison.Ordinal), "cookie omitted");
+}
+
+static async Task PutsGrokCookieCredential()
+{
+    var handler = new QueueHandler(Json(CredentialJson().Replace("\"provider\":\"Cursor\"", "\"provider\":\"Grok\"", StringComparison.Ordinal)));
+    var client = NewClient(handler);
+    var result = await client.PutGrokCredentialsAsync(GrokCredential.FromCookie(" sso=session "));
+    var body = await handler.Requests[0].Content!.ReadAsStringAsync();
+    Assert(result.Status == ApiResultStatus.Success, "Grok credential put success");
+    Assert(handler.Requests[0].RequestUri?.PathAndQuery == "/api/v1/providers/grok/credentials", "uses Grok credential path");
+    Assert(body.Contains("\"cookie\":\"sso=session\"", StringComparison.Ordinal), "Grok cookie sent");
 }
 
 static async Task MapsProviderJsonErrors()

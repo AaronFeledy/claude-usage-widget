@@ -20,6 +20,10 @@ type CursorCredentials interface {
 	SetAccessToken(string) error
 }
 
+type GrokCredentials interface {
+	SetCookieHeader(string)
+}
+
 type ProviderPoller interface {
 	PollProvider(context.Context, string) (poller.Entry, bool, error)
 }
@@ -27,6 +31,7 @@ type ProviderPoller interface {
 type Options struct {
 	Cache         Cache
 	Cursor        CursorCredentials
+	Grok          GrokCredentials
 	Poller        ProviderPoller
 	Logger        Logger
 	AuthToken     string
