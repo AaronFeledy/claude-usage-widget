@@ -64,6 +64,23 @@ public sealed class CursorCredential
     }
 }
 
-public sealed record CursorCredentialResult(string Provider, bool Refetched, Models.UsageData Usage);
+public sealed class GrokCredential
+{
+    private GrokCredential(string cookie)
+    {
+        Cookie = cookie;
+    }
+
+    public string Cookie { get; }
+
+    public static GrokCredential FromCookie(string cookie)
+    {
+        var trimmed = cookie.Trim();
+        if (trimmed.Length == 0) throw new ArgumentException("Credential must not be empty.", nameof(cookie));
+        return new GrokCredential(trimmed);
+    }
+}
+
+public sealed record ProviderCredentialResult(string Provider, bool Refetched, Models.UsageData Usage);
 
 public sealed record ServerHealthInfo(string Status, string Version);

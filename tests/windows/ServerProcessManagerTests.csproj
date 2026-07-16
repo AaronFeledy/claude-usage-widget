@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../clients/windows/Models/UsageData.cs" Link="Models/%(Filename)%(Extension)" />
+    <Compile Include="../../clients/windows/Models/BucketPresentation.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/ApiClient*.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/DebugService.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/SettingsService.cs" Link="Services/%(Filename)%(Extension)" />
@@ -19,6 +20,7 @@
     <Compile Include="../../clients/windows/TrayIcon/NativeIconLease.cs" Link="TrayIcon/%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.29" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 </Project>

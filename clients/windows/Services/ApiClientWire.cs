@@ -2,11 +2,11 @@ using System.Text.Json.Serialization;
 
 namespace ClaudeUsageWidget.Services;
 
-internal sealed record CursorCredentialRequest(
+internal sealed record ProviderCredentialRequest(
     [property: JsonPropertyName("cookie")] string? Cookie,
     [property: JsonPropertyName("access_token")] string? AccessToken);
 
-internal sealed record CursorCredentialResponse(
+internal sealed record ProviderCredentialResponse(
     [property: JsonPropertyName("provider")] string? Provider,
     [property: JsonPropertyName("refetched")] bool? Refetched,
     [property: JsonPropertyName("usage")] UsageWire? Usage);

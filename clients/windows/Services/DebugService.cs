@@ -44,7 +44,7 @@ public class DebugService
 {
     private const int MaxEntries = 500;
     private static readonly Regex SecretPattern = new(
-        "(?i)(authorization\\s*[:=]\\s*bearer\\s+|api[-_ ]?token\\s*[:=]\\s*|access_token\\s*[:=]\\s*|WorkosCursorSessionToken=|next-auth\\.session-token=|__Secure-next-auth\\.session-token=)[^\\s;\"']+",
+        "(?i)(authorization\\s*[:=]\\s*bearer\\s+|api[-_ ]?token\\s*[:=]\\s*|access_token\\s*[:=]\\s*|WorkosCursorSessionToken=|next-auth\\.session-token=|__Secure-next-auth\\.session-token=|sso=)[^\\s;\"']+",
         RegexOptions.Compiled);
     private readonly List<DebugEntry> _entries = new();
     private readonly object _lock = new();

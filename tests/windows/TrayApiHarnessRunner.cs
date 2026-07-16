@@ -18,11 +18,18 @@ await trayTests.Test_UnauthorizedDistinctFromOffline();
         await trayTests.Test_CursorExpiredSessionPushesCookieOnce();
         await trayTests.Test_CursorGenericErrorDoesNotPushCookie();
         await trayTests.Test_CursorFailedPushRetainsOriginalState();
+        await trayTests.Test_GrokMissingWeeklyPushesBrowserCookie();
+        await trayTests.Test_GrokCliAuthErrorStillPushesBrowserCookie();
+        await trayTests.Test_RemoteHttpDoesNotPushBrowserCredentials();
+        await trayTests.Test_DebugServiceRedactsGrokSsoCookie();
         await trayTests.Test_GetHealth_returns_server_version();
         await trayTests.Test_GetHealth_malformed_when_version_missing();
         await trayTests.Test_GetHealth_offline_when_unreachable();
         await trayTests.Test_TooltipTextCapsEveryBranchSafely();
         await trayTests.Test_IconKindMapsNonReadyStatesBeforeStaleSuccessData();
         await trayTests.Test_IconKindPreservesReadyAndProviderAuthSemantics();
+        await trayTests.Test_BucketPresentation_StatusOnlyForEnabledOrCapOnlyOnDemand();
+        await trayTests.Test_BucketPresentation_MeasuredForUtilizedOnDemandAndOtherMeters();
+        await trayTests.Test_BucketPresentation_MeasuredForTruthfulZeroRatioOnDemand();
     }
 }

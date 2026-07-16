@@ -22,22 +22,23 @@ public sealed record TrayUsageSnapshot(
     public bool IsStale => State != TrayApiState.Ready && LastGoodAt != null;
 }
 
-public interface ICursorCookieReader
+public interface IProviderCookieReader
 {
     string? ReadCursorCookieHeader();
+    string? ReadGrokCookieHeader();
 }
 
 public sealed class TrayUsagePoller
 {
     private readonly ApiClient _apiClient;
     private readonly ServerProcessManager _serverManager;
-    private readonly ICursorCookieReader _cookieReader;
+    private readonly IProviderCookieReader _cookieReader;
     private readonly DebugService _debugService;
     private readonly Dictionary<string, UsageData> _lastGood = new(StringComparer.OrdinalIgnoreCase);
     private int _retryAttempt;
     private DateTime? _lastGoodAt;
 
-    public TrayUsagePoller(ApiClient apiClient, ServerProcessManager serverManager, ICursorCookieReader cookieReader, DebugService debugService)
+    public TrayUsagePoller(ApiClient apiClient, ServerProcessManager serverManager, IProviderCookieReader cookieReader, DebugService debugService)
     {
         _apiClient = apiClient;
         _serverManager = serverManager;
@@ -52,6 +53,7 @@ public sealed class TrayUsagePoller
         if (result.IsSuccess && result.Value != null)
         {
             var providers = await PushCursorCookieIfNeededAsync(result.Value, cancellationToken).ConfigureAwait(false);
+            providers = await PushGrokCookieIfNeededAsync(providers, cancellationToken).ConfigureAwait(false);
             StoreLastGood(providers);
             _retryAttempt = 0;
             return new TrayUsageSnapshot(TrayApiState.Ready, providers, _lastGoodAt, null, 0);
@@ -87,6 +89,10 @@ public sealed class TrayUsagePoller
 
     private async Task<IReadOnlyList<UsageData>> PushCursorCookieIfNeededAsync(IReadOnlyList<UsageData> providers, CancellationToken cancellationToken)
     {
+        if (!CanPushBrowserCredentials())
+        {
+            return providers;
+        }
         var cursor = providers.FirstOrDefault(x => x.ProviderName.Equals("Cursor", StringComparison.OrdinalIgnoreCase));
         if (!ShouldAttemptCursorCredentialPush(cursor))
         {
@@ -127,6 +133,40 @@ public sealed class TrayUsagePoller
             "Log in to cursor.com, or push Cursor credentials from the tray.",
             StringComparison.Ordinal);
     }
+
+    private async Task<IReadOnlyList<UsageData>> PushGrokCookieIfNeededAsync(IReadOnlyList<UsageData> providers, CancellationToken cancellationToken)
+    {
+        if (!CanPushBrowserCredentials())
+        {
+            return providers;
+        }
+        var grok = providers.FirstOrDefault(x => x.ProviderName.Equals("Grok", StringComparison.OrdinalIgnoreCase));
+        if (grok == null || grok.Buckets.Any(bucket => bucket.Id.Equals("weekly", StringComparison.OrdinalIgnoreCase)))
+        {
+            return providers;
+        }
+
+        var cookie = _cookieReader.ReadGrokCookieHeader();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                return providers;
+            }
+            var pushed = await _apiClient.PutGrokCredentialsAsync(GrokCredential.FromCookie(cookie), cancellationToken).ConfigureAwait(false);
+            return pushed.IsSuccess && pushed.Value != null
+                ? ReplaceProvider(providers, pushed.Value.Usage)
+                : providers;
+        }
+        finally
+        {
+            cookie = null;
+        }
+    }
+
+    private bool CanPushBrowserCredentials() =>
+        _serverManager.EffectiveBaseUrl.IsLoopback
+        || _serverManager.EffectiveBaseUrl.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
     private void StoreLastGood(IReadOnlyList<UsageData> providers)
     {
