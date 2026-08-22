@@ -10,9 +10,9 @@ namespace ClaudeUsageWidget.Models;
 /// truthful used/cap ratio (its status carries the " / " separator) is measured
 /// even at zero, so it keeps the percent label and 0% progress bar. Measured rows
 /// with utilization above zero always keep the percent label and progress bar.
-/// Header status fields are a fallback only: primary text applies to the first
-/// row, and secondary text applies to weekly / on-demand meters — never to sibling
-/// plan meters such as Cursor api.
+/// Header status fields are a fallback only: primary text applies to Other Models
+/// (api) or the first non-auto row, and secondary text applies to weekly /
+/// on-demand meters. Cursor Models (auto) keep a reset countdown.
 /// </summary>
 public static class BucketPresentation
 {
@@ -26,22 +26,32 @@ public static class BucketPresentation
 
     /// <summary>
     /// Prefers <see cref="UsageBucketDetail.StatusText"/>. When that is empty,
-    /// uses <see cref="UsageData.PrimaryStatusText"/> for the first row and
-    /// <see cref="UsageData.SecondaryStatusText"/> for weekly / on-demand meters.
-    /// Returns null when the caller should render a reset countdown instead.
+    /// uses <see cref="UsageData.PrimaryStatusText"/> for Other Models or the
+    /// first non-auto row, and <see cref="UsageData.SecondaryStatusText"/> for
+    /// weekly / on-demand meters. Returns null when the caller should render a
+    /// reset countdown instead — including Cursor Models.
     /// </summary>
     public static string? ResolveStatusOverride(UsageData data, int index, UsageBucketDetail bucket)
     {
         if (!string.IsNullOrWhiteSpace(bucket.StatusText))
             return bucket.StatusText;
 
-        if (index == 0 && !string.IsNullOrWhiteSpace(data.PrimaryStatusText))
+        if (IsPrimaryStatusFallback(index, bucket) && !string.IsNullOrWhiteSpace(data.PrimaryStatusText))
             return data.PrimaryStatusText;
 
         if (IsSecondaryHeaderBucket(bucket.Id) && !string.IsNullOrWhiteSpace(data.SecondaryStatusText))
             return data.SecondaryStatusText;
 
         return null;
+    }
+
+    private static bool IsPrimaryStatusFallback(int index, UsageBucketDetail bucket)
+    {
+        if (string.Equals(bucket.Id, "auto", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(bucket.Id, "api", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return index == 0;
     }
 
     private static bool IsMeasuredRatioStatus(string? statusText)

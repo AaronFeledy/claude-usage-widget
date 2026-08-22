@@ -49,14 +49,16 @@ internal sealed partial class TrayApiHarnessTests
         return Task.CompletedTask;
     }
 
-    public Task Test_BucketPresentation_FallsBackToPrimaryStatusOnFirstRow()
+    public Task Test_BucketPresentation_FallsBackToPrimaryStatusOnOtherModelsNotCursorModels()
     {
         var data = new UsageData { PrimaryStatusText = "$12 / $100 this cycle", SecondaryStatusText = "$5 / $20 on-demand" };
         var auto = new UsageBucketDetail { Id = "auto" };
         var api = new UsageBucketDetail { Id = "api" };
+        var plan = new UsageBucketDetail { Id = "plan" };
 
-        AssertEqual("$12 / $100 this cycle", BucketPresentation.ResolveStatusOverride(data, 0, auto));
-        AssertEqual(null, BucketPresentation.ResolveStatusOverride(data, 1, api));
+        AssertEqual(null, BucketPresentation.ResolveStatusOverride(data, 0, auto));
+        AssertEqual("$12 / $100 this cycle", BucketPresentation.ResolveStatusOverride(data, 1, api));
+        AssertEqual("$12 / $100 this cycle", BucketPresentation.ResolveStatusOverride(data, 0, plan));
         return Task.CompletedTask;
     }
 
