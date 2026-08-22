@@ -47,7 +47,7 @@ func Test_populateUsageData_uses_overall_fallback_for_percent_and_status(t *test
 	summary := cursorUsageSummary{IndividualUsage: &cursorIndividualUsage{Overall: &cursorOverallUsage{Used: &used, Limit: &limit}}}
 	data := usage.UsageData{}
 
-	populateUsageData(&data, summary, nil)
+	populateUsageData(&data, summary, nil, nil)
 
 	if data.Current.Utilization != 25 {
 		t.Fatalf("utilization = %v, want 25", data.Current.Utilization)
@@ -60,7 +60,7 @@ func Test_populateUsageData_uses_pooled_fallback_for_percent_and_status(t *testi
 	summary := cursorUsageSummary{TeamUsage: &cursorTeamUsage{Pooled: &cursorPooledUsage{Used: &used, Limit: &limit}}}
 	data := usage.UsageData{}
 
-	populateUsageData(&data, summary, nil)
+	populateUsageData(&data, summary, nil, nil)
 
 	if data.Current.Utilization != 25 {
 		t.Fatalf("utilization = %v, want 25", data.Current.Utilization)
@@ -97,6 +97,23 @@ func Test_resolveOnDemandBucket_shows_when_spend_without_cap(t *testing.T) {
 	assertStringPtr(t, status, "$15 on-demand this cycle")
 }
 
+func Test_resolveOnDemandBucket_shows_when_enabled_without_spend(t *testing.T) {
+	// Given
+	enabled := true
+	summary := cursorUsageSummary{
+		IndividualUsage: &cursorIndividualUsage{OnDemand: &cursorOnDemandUsage{Enabled: &enabled}},
+	}
+
+	// When
+	bucket, status, show := resolveOnDemandBucket(summary, nil)
+
+	// Then
+	if !show || bucket.Utilization != 0 || bucket.ID != usage.BucketOnDemand {
+		t.Fatalf("bucket = %#v show=%v", bucket, show)
+	}
+	assertStringPtr(t, status, "On-demand enabled")
+}
+
 func Test_populateUsageData_emits_buckets_matching_visible_header(t *testing.T) {
 	// Given
 	planUsed, planLimit, onDemandUsed, onDemandLimit := 2500, 10000, 500, 2000
@@ -107,7 +124,7 @@ func Test_populateUsageData_emits_buckets_matching_visible_header(t *testing.T) 
 	data := baseUsageData()
 
 	// When
-	populateUsageData(&data, summary, nil)
+	populateUsageData(&data, summary, nil, nil)
 
 	// Then
 	if len(data.Buckets) != 2 {
@@ -136,19 +153,25 @@ func Test_populateUsageData_emits_separate_auto_api_and_on_demand_buckets(t *tes
 	data := baseUsageData()
 
 	// When
-	populateUsageData(&data, summary, nil)
+	populateUsageData(&data, summary, nil, nil)
 
 	// Then
 	if len(data.Buckets) != 3 {
 		t.Fatalf("Buckets = %#v, want auto, api, and on_demand", data.Buckets)
 	}
 	wantIDs := []string{"auto", "api", usage.BucketOnDemand}
-	wantLabels := []string{"Auto", "API", "On-Demand"}
+	wantLabels := []string{"Cursor Models", "Other Models", "On-Demand"}
 	wantUtilization := []float64{20, 40, 25}
 	for index, bucket := range data.Buckets {
 		if bucket.ID != wantIDs[index] || bucket.Label != wantLabels[index] || bucket.Utilization != wantUtilization[index] {
 			t.Fatalf("Buckets[%d] = %#v, want id=%q label=%q utilization=%v", index, bucket, wantIDs[index], wantLabels[index], wantUtilization[index])
 		}
+	}
+	if data.Buckets[0].StatusText == nil || data.PrimaryStatusText == nil || *data.Buckets[0].StatusText != *data.PrimaryStatusText {
+		t.Fatalf("auto StatusText = %v, want primary %v", data.Buckets[0].StatusText, data.PrimaryStatusText)
+	}
+	if data.Buckets[1].StatusText != nil {
+		t.Fatalf("api StatusText = %v, want nil so on-demand text is not reused", data.Buckets[1].StatusText)
 	}
 }
 
@@ -163,11 +186,11 @@ func Test_populateUsageData_preserves_legacy_header_when_auto_and_api_are_separa
 	data := baseUsageData()
 
 	// When
-	populateUsageData(&data, summary, nil)
+	populateUsageData(&data, summary, nil, nil)
 
 	// Then
 	if len(data.Buckets) != 2 {
-		t.Fatalf("Buckets = %#v, want Auto and API", data.Buckets)
+		t.Fatalf("Buckets = %#v, want Cursor Models and Other Models", data.Buckets)
 	}
 	if data.Current.Utilization != 35 || data.Weekly != (usage.UsageBucket{}) || data.PrimaryLabel != "Included Plan" || data.SecondaryLabel != "On-Demand" || data.ShowSecondary {
 		t.Fatalf("legacy header changed: current=%#v weekly=%#v primary=%q secondary=%q show=%v", data.Current, data.Weekly, data.PrimaryLabel, data.SecondaryLabel, data.ShowSecondary)
@@ -181,7 +204,7 @@ func Test_populateUsageData_preserves_hidden_secondary_header_with_one_bucket(t 
 	data := baseUsageData()
 
 	// When
-	populateUsageData(&data, summary, nil)
+	populateUsageData(&data, summary, nil, nil)
 
 	// Then
 	if len(data.Buckets) != 1 || data.Buckets[0].ID != "plan" || data.Buckets[0].Label != "Included Plan" {

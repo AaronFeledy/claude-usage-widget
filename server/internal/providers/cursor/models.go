@@ -29,8 +29,9 @@ type cursorOverallUsage struct {
 }
 
 type cursorOnDemandUsage struct {
-	Used  *int `json:"used"`
-	Limit *int `json:"limit"`
+	Enabled *bool `json:"enabled"`
+	Used    *int  `json:"used"`
+	Limit   *int  `json:"limit"`
 }
 
 type cursorTeamUsage struct {
@@ -43,6 +44,12 @@ type cursorPooledUsage struct {
 	Used      *int  `json:"used"`
 	Limit     *int  `json:"limit"`
 	Remaining *int  `json:"remaining"`
+}
+
+type cursorSandUsage struct {
+	NextResetTimestampUtc   string  `json:"nextResetTimestampUtc"`
+	UsagePercent            float64 `json:"usagePercent"`
+	HasNonZeroIncludedLimit bool    `json:"hasNonZeroIncludedLimit"`
 }
 
 type cursorUserInfo struct {

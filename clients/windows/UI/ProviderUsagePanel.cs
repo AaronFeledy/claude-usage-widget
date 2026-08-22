@@ -151,7 +151,8 @@ public class ProviderUsagePanel : Panel
                 Id = "session",
                 Label = data.PrimaryLabel,
                 Utilization = data.Current.Utilization,
-                ResetsAt = data.Current.ResetsAt
+                ResetsAt = data.Current.ResetsAt,
+                StatusText = data.PrimaryStatusText
             }
         };
         if (data.ShowSecondary)
@@ -161,7 +162,8 @@ public class ProviderUsagePanel : Panel
                 Id = "weekly",
                 Label = data.SecondaryLabel,
                 Utilization = data.Weekly.Utilization,
-                ResetsAt = data.Weekly.ResetsAt
+                ResetsAt = data.Weekly.ResetsAt,
+                StatusText = data.SecondaryStatusText
             });
         }
         return synthesized;
@@ -192,7 +194,7 @@ public class ProviderUsagePanel : Panel
                 row.Progress.Value = bucket.Utilization;
             }
             row.Status.ForeColor = SecondaryTextColor;
-            row.Status.Text = ResolveStatusText(i, bucket);
+            row.Status.Text = ResolveStatusText(data, i, bucket);
 
             ApplyBucketStyle(row.Progress, data.ProviderName, bucket);
         }
@@ -221,12 +223,10 @@ public class ProviderUsagePanel : Panel
         Invalidate();
     }
 
-    private static string ResolveStatusText(int index, UsageBucketDetail bucket)
+    private static string ResolveStatusText(UsageData data, int index, UsageBucketDetail bucket)
     {
-        if (!string.IsNullOrWhiteSpace(bucket.StatusText))
-            return bucket.StatusText;
-
-        return BuildResetText(bucket.ResetsAt, index == 0 ? "Resets in" : "Resets");
+        return BucketPresentation.ResolveStatusOverride(data, index, bucket)
+            ?? BuildResetText(bucket.ResetsAt, index == 0 ? "Resets in" : "Resets");
     }
 
     /// <summary>
@@ -280,12 +280,28 @@ public class ProviderUsagePanel : Panel
                 }
                 break;
             case "Cursor":
-                bar.Notches = 3;
-                bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromDays(30));
+                if (IsWeeklyBucket(bucket.Id))
+                {
+                    bar.Notches = 6;
+                    bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromDays(7));
+                }
+                else
+                {
+                    bar.Notches = 3;
+                    bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromDays(30));
+                }
                 break;
             case "Grok":
-                bar.Notches = 3;
-                bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, ResolveMonthEndWindowDuration(bucket.ResetsAt));
+                if (IsWeeklyBucket(bucket.Id))
+                {
+                    bar.Notches = 6;
+                    bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, TimeSpan.FromDays(7));
+                }
+                else
+                {
+                    bar.Notches = 3;
+                    bar.BurnRatePercent = CalculateElapsedPercent(bucket.ResetsAt, ResolveMonthEndWindowDuration(bucket.ResetsAt));
+                }
                 break;
             default:
                 bar.Notches = 0;
