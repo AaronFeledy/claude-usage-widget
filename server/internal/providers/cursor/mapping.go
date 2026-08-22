@@ -10,7 +10,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
-func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacyUsage *cursorUsageResponse) {
+func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacyUsage *cursorUsageResponse, sand *cursorSandUsage) {
 	billingCycleEnd := parseDate(summary.BillingCycleEnd)
 	planUsedRaw := intValue(planUsage(summary).Used)
 	planLimitRaw := intValue(planUsage(summary).Limit)
@@ -47,21 +47,29 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 	legacyShowSecondary := data.ShowSecondary
 	plan := planUsage(summary)
 	separatePlanBuckets := plan.AutoPercentUsed != nil || plan.APIPercentUsed != nil
-	buckets := make([]usage.Bucket, 0, 3)
+	buckets := make([]usage.Bucket, 0, 4)
+	attachedPrimary := false
 	if plan.AutoPercentUsed != nil {
 		buckets = append(buckets, usage.Bucket{
 			ID:          usage.BucketAuto,
-			Label:       "Auto",
+			Label:       "Cursor Models",
 			Utilization: clampPercent(*plan.AutoPercentUsed),
 			ResetsAt:    billingCycleEnd,
+			StatusText:  primaryStatus,
 		})
+		attachedPrimary = true
 	}
 	if plan.APIPercentUsed != nil {
+		var apiStatus *string
+		if !attachedPrimary {
+			apiStatus = primaryStatus
+		}
 		buckets = append(buckets, usage.Bucket{
 			ID:          usage.BucketAPI,
-			Label:       "API",
+			Label:       "Other Models",
 			Utilization: clampPercent(*plan.APIPercentUsed),
 			ResetsAt:    billingCycleEnd,
+			StatusText:  apiStatus,
 		})
 	}
 	if !separatePlanBuckets {
@@ -72,6 +80,9 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 			ResetsAt:    data.Current.ResetsAt,
 			StatusText:  primaryStatus,
 		})
+	}
+	if grok, ok := grokBotBucket(sand); ok {
+		buckets = append(buckets, grok)
 	}
 	if showOnDemand {
 		buckets = append(buckets, onDemandBucket)
@@ -89,6 +100,7 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 func resolveOnDemandBucket(summary cursorUsageSummary, billingCycleEnd *time.Time) (usage.Bucket, *string, bool) {
 	onDemand := onDemandUsage(summary)
 	onDemandUsedRaw := intValue(onDemand.Used)
+	enabled := onDemand.Enabled != nil && *onDemand.Enabled
 	if onDemand.Limit != nil && *onDemand.Limit > 0 {
 		limit := *onDemand.Limit
 		status := fmt.Sprintf("$%s / $%s on-demand", money(onDemandUsedRaw), money(limit))
@@ -115,8 +127,11 @@ func resolveOnDemandBucket(summary cursorUsageSummary, billingCycleEnd *time.Tim
 			}, &status, true
 		}
 	}
-	if usage.ShouldShowCreditMeter(false, float64(onDemandUsedRaw), nil) {
+	if usage.ShouldShowCreditMeter(enabled, float64(onDemandUsedRaw), nil) {
 		status := fmt.Sprintf("$%s on-demand this cycle", money(onDemandUsedRaw))
+		if enabled && onDemandUsedRaw == 0 {
+			status = "On-demand enabled"
+		}
 		return usage.Bucket{
 			ID:          usage.BucketOnDemand,
 			Label:       "On-Demand",
@@ -215,7 +230,7 @@ func parseDate(value *string) *time.Time {
 	if value == nil || *value == "" {
 		return nil
 	}
-	parsed, err := time.Parse(time.RFC3339, *value)
+	parsed, err := time.Parse(time.RFC3339Nano, *value)
 	if err != nil {
 		return nil
 	}

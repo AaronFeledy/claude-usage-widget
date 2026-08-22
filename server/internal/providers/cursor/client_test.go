@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 func Test_Client_Fetch_maps_usage_summary_when_cookie_pushed(t *testing.T) {
@@ -41,6 +43,37 @@ func Test_Client_Fetch_maps_usage_summary_when_cookie_pushed(t *testing.T) {
 	}
 	if got.Current.ResetsAt == nil || got.Current.ResetsAt.UTC().Format(time.RFC3339) != "2026-08-01T12:00:00Z" {
 		t.Fatalf("reset = %v", got.Current.ResetsAt)
+	}
+	if bucketByID(got.Buckets, grokBotBucketID) != nil {
+		t.Fatalf("unexpected Grok Bot bucket: %#v", got.Buckets)
+	}
+}
+
+func Test_Client_Fetch_emits_grok_bot_bucket_when_sand_usage_present(t *testing.T) {
+	// Given
+	srv := newCursorTestServer(t, cursorTestBehavior{wantCookie: "cookie", sandUsage: true})
+	client := NewClient(Options{BaseURL: srv.URL, HTTPClient: srv.Client()})
+	client.SetCookieHeader("cookie")
+
+	// When
+	got, err := client.Fetch(context.Background())
+
+	// Then
+	if err != nil || got.Error != nil {
+		t.Fatalf("fetch/error = %v/%v", err, got.Error)
+	}
+	bucket := bucketByID(got.Buckets, grokBotBucketID)
+	if bucket == nil || bucket.Label != "Grok Bot" || bucket.Utilization != 98.343013 {
+		t.Fatalf("grok bot bucket = %#v buckets=%#v", bucket, got.Buckets)
+	}
+	if bucket.ResetsAt == nil || bucket.ResetsAt.UTC().Format(time.RFC3339) != "2026-08-22T23:57:03Z" {
+		t.Fatalf("grok bot reset = %v", bucket.ResetsAt)
+	}
+	if srv.seenSandMethod != http.MethodPost {
+		t.Fatalf("sand method = %q", srv.seenSandMethod)
+	}
+	if srv.seenSandOrigin != srv.URL {
+		t.Fatalf("sand origin = %q, want %q", srv.seenSandOrigin, srv.URL)
 	}
 }
 
@@ -239,6 +272,15 @@ func assertStringPtr(t *testing.T, got *string, want string) {
 	}
 }
 
+func bucketByID(buckets []usage.Bucket, id string) *usage.Bucket {
+	for index := range buckets {
+		if buckets[index].ID == id {
+			return &buckets[index]
+		}
+	}
+	return nil
+}
+
 func jwtWithSub(sub string, payloadPart string) string {
 	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":%q}`, sub)))
 	if payloadPart == "payload" {
@@ -263,11 +305,14 @@ type cursorTestBehavior struct {
 	status           int
 	legacyUsage      bool
 	malformedSummary bool
+	sandUsage        bool
 }
 
 type cursorTestServer struct {
 	*httptest.Server
 	seenLegacyQuery string
+	seenSandMethod  string
+	seenSandOrigin  string
 }
 
 func newCursorTestServer(t *testing.T, behavior cursorTestBehavior) *cursorTestServer {
@@ -305,6 +350,14 @@ func newCursorTestServer(t *testing.T, behavior cursorTestBehavior) *cursorTestS
 				return
 			}
 			_, _ = w.Write([]byte(`{"gpt-4":{"numRequestsTotal":10,"maxRequestUsage":20}}`))
+		case sandUsagePath:
+			if !behavior.sandUsage || r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			out.seenSandMethod = r.Method
+			out.seenSandOrigin = r.Header.Get("Origin")
+			_, _ = w.Write([]byte(`{"currentPeriodStart":"2026-08-15T23:57:03.809Z","nextResetTimestampUtc":"2026-08-22T23:57:03.809Z","usagePercent":98.343013,"hasAvailableUsage":true,"hasNonZeroIncludedLimit":true,"grokPlanLabel":"Grok Bot Plan"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}

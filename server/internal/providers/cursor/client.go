@@ -109,7 +109,8 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 	}
 	userInfo := c.fetchUserInfo(ctx, cookieHeader)
 	legacyUsage := c.fetchLegacyUsage(ctx, cookieHeader, userInfo.Sub)
-	populateUsageData(&data, summary, legacyUsage)
+	sand := c.fetchSandUsage(ctx, cookieHeader)
+	populateUsageData(&data, summary, legacyUsage, sand)
 	data.Subtitle = summary.MembershipType
 	return data, nil
 }
