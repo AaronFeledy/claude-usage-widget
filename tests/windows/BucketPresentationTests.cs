@@ -35,4 +35,41 @@ internal sealed partial class TrayApiHarnessTests
         AssertEqual(true, BucketPresentation.IsStatusOnly(capOnly));
         return Task.CompletedTask;
     }
+
+    public Task Test_BucketPresentation_UsesBucketStatusBeforeHeaderFields()
+    {
+        var data = new UsageData
+        {
+            PrimaryStatusText = "$12 / $100 this cycle",
+            SecondaryStatusText = "$5 / $20 on-demand"
+        };
+        var bucket = new UsageBucketDetail { Id = "auto", StatusText = "bucket copy" };
+
+        AssertEqual("bucket copy", BucketPresentation.ResolveStatusOverride(data, 0, bucket));
+        return Task.CompletedTask;
+    }
+
+    public Task Test_BucketPresentation_FallsBackToPrimaryStatusOnFirstRow()
+    {
+        var data = new UsageData { PrimaryStatusText = "$12 / $100 this cycle", SecondaryStatusText = "$5 / $20 on-demand" };
+        var auto = new UsageBucketDetail { Id = "auto" };
+        var api = new UsageBucketDetail { Id = "api" };
+
+        AssertEqual("$12 / $100 this cycle", BucketPresentation.ResolveStatusOverride(data, 0, auto));
+        AssertEqual(null, BucketPresentation.ResolveStatusOverride(data, 1, api));
+        return Task.CompletedTask;
+    }
+
+    public Task Test_BucketPresentation_FallsBackToSecondaryStatusOnlyForWeeklyOrOnDemand()
+    {
+        var data = new UsageData { PrimaryStatusText = "$12 / $100 this cycle", SecondaryStatusText = "$5 / $20 on-demand" };
+        var weekly = new UsageBucketDetail { Id = "weekly" };
+        var onDemand = new UsageBucketDetail { Id = "on_demand" };
+        var grokBot = new UsageBucketDetail { Id = "weekly_grok_bot" };
+
+        AssertEqual("$5 / $20 on-demand", BucketPresentation.ResolveStatusOverride(data, 1, weekly));
+        AssertEqual("$5 / $20 on-demand", BucketPresentation.ResolveStatusOverride(data, 2, onDemand));
+        AssertEqual(null, BucketPresentation.ResolveStatusOverride(data, 2, grokBot));
+        return Task.CompletedTask;
+    }
 }
