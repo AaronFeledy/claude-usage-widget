@@ -167,11 +167,11 @@ func Test_populateUsageData_emits_separate_auto_api_and_on_demand_buckets(t *tes
 			t.Fatalf("Buckets[%d] = %#v, want id=%q label=%q utilization=%v", index, bucket, wantIDs[index], wantLabels[index], wantUtilization[index])
 		}
 	}
-	if data.Buckets[0].StatusText == nil || data.PrimaryStatusText == nil || *data.Buckets[0].StatusText != *data.PrimaryStatusText {
-		t.Fatalf("auto StatusText = %v, want primary %v", data.Buckets[0].StatusText, data.PrimaryStatusText)
+	if data.Buckets[0].StatusText != nil {
+		t.Fatalf("auto StatusText = %v, want nil so the tray shows reset time", data.Buckets[0].StatusText)
 	}
-	if data.Buckets[1].StatusText != nil {
-		t.Fatalf("api StatusText = %v, want nil so on-demand text is not reused", data.Buckets[1].StatusText)
+	if data.Buckets[1].StatusText == nil || data.PrimaryStatusText == nil || *data.Buckets[1].StatusText != *data.PrimaryStatusText {
+		t.Fatalf("api StatusText = %v, want primary %v", data.Buckets[1].StatusText, data.PrimaryStatusText)
 	}
 }
 

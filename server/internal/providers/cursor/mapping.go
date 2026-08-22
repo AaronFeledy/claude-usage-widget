@@ -48,28 +48,21 @@ func populateUsageData(data *usage.UsageData, summary cursorUsageSummary, legacy
 	plan := planUsage(summary)
 	separatePlanBuckets := plan.AutoPercentUsed != nil || plan.APIPercentUsed != nil
 	buckets := make([]usage.Bucket, 0, 4)
-	attachedPrimary := false
 	if plan.AutoPercentUsed != nil {
 		buckets = append(buckets, usage.Bucket{
 			ID:          usage.BucketAuto,
 			Label:       "Cursor Models",
 			Utilization: clampPercent(*plan.AutoPercentUsed),
 			ResetsAt:    billingCycleEnd,
-			StatusText:  primaryStatus,
 		})
-		attachedPrimary = true
 	}
 	if plan.APIPercentUsed != nil {
-		var apiStatus *string
-		if !attachedPrimary {
-			apiStatus = primaryStatus
-		}
 		buckets = append(buckets, usage.Bucket{
 			ID:          usage.BucketAPI,
 			Label:       "Other Models",
 			Utilization: clampPercent(*plan.APIPercentUsed),
 			ResetsAt:    billingCycleEnd,
-			StatusText:  apiStatus,
+			StatusText:  primaryStatus,
 		})
 	}
 	if !separatePlanBuckets {
