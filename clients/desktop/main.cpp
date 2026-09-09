@@ -21,10 +21,12 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QQuickStyle>
 #include <QStandardPaths>
 #include <QSystemTrayIcon>
 
 int main(int argc, char **argv) {
+    QQuickStyle::setStyle("Basic");
     QApplication app(argc, argv);
     QPalette palette;
     palette.setColor(QPalette::Window, QColor("#282a36"));

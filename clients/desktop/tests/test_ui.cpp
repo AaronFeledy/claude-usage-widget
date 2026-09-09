@@ -6,6 +6,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QQuickStyle>
 #include <QQuickItem>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -37,6 +38,7 @@ private slots:
         QVERIFY(!engine.rootObjects().isEmpty());
         auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
         QVERIFY(window); QVERIFY(QTest::qWaitForWindowExposed(window));
+        QCOMPARE(QQuickStyle::name(), QString("Basic"));
         QVERIFY(window->flags().testFlag(Qt::FramelessWindowHint));
         QVERIFY(!window->flags().testFlag(Qt::WindowMinMaxButtonsHint));
         QTRY_COMPARE(controller.providers().size(), 4);
@@ -149,15 +151,21 @@ private slots:
                 if (prior) QVERIFY(std::abs(row->y() - prior->y() - prior->height() - 12) < 1);
                 bool firstMeter = true;
                 for (const auto &bucket : provider["buckets"].toList()) {
-                    auto meter = findItem(window->contentItem(), "meter_" + name + "_" + bucket.toMap()["id"].toString());
+                    const auto bucketId = bucket.toMap()["id"].toString();
+                    auto meter = findItem(window->contentItem(), "meter_" + name + "_" + bucketId);
                     QVERIFY(meter);
                     QCOMPARE(meter->property("accent").value<QColor>(), QColor("#bd93f9"));
                     if (firstMeter) QCOMPARE(meter->width(), meter->parentItem()->width());
                     firstMeter = false;
                     const auto origin = meter->mapToItem(row, QPointF(0, 0));
-                    QVERIFY(origin.x() >= 0); QVERIFY(origin.y() >= 0);
-                    QVERIFY(origin.x() + meter->width() <= row->width() + 1);
-                    QVERIFY(origin.y() + meter->height() <= row->height() + 1);
+                    const QString geometry = QString(
+                        "%1/%2 at window %3: origin=(%4,%5), meter=%6x%7, row=%8x%9")
+                        .arg(name, bucketId).arg(width).arg(origin.x()).arg(origin.y())
+                        .arg(meter->width()).arg(meter->height()).arg(row->width()).arg(row->height());
+                    QVERIFY2(origin.x() >= 0, qPrintable(geometry));
+                    QVERIFY2(origin.y() >= 0, qPrintable(geometry));
+                    QVERIFY2(origin.x() + meter->width() <= row->width() + 1, qPrintable(geometry));
+                    QVERIFY2(origin.y() + meter->height() <= row->height() + 1, qPrintable(geometry));
                 }
                 prior = row;
             }
@@ -165,5 +173,5 @@ private slots:
         }
     }
 };
-int main(int argc, char **argv) { QApplication app(argc, argv); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
+int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QApplication app(argc, argv); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
 #include "test_ui.moc"

@@ -70,6 +70,8 @@ jobs:
         run: cmake --build clients/desktop/build-ci --parallel
       - name: Test
         shell: pwsh
+        env:
+          QT_QPA_FONTDIR: C:/Windows/Fonts
         run: |
           ctest --test-dir clients/desktop/build-ci --output-on-failure
           $testExit = $LASTEXITCODE
@@ -87,6 +89,7 @@ jobs:
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: C:/Windows/Fonts
           QT_QUICK_BACKEND: software
         run: |
           $image = Join-Path $env:RUNNER_TEMP "headroom-windows.png"
