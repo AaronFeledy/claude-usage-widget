@@ -94,9 +94,23 @@ func expectations(v, p, a, n *string) contract.Expectations {
 }
 func inspect(args []string) (any, error) {
 	set := flag.NewFlagSet("inspect", flag.ContinueOnError)
-	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	archive := set.String("archive", "", "package archive")
+	root := set.String("install-root", "", "installation root")
 	if err := set.Parse(args); err != nil {
 		return nil, err
+	}
+	if *archive != "" && *root != "" {
+		return nil, fmt.Errorf("inspect accepts either --archive or --install-root")
+	}
+	if *archive != "" {
+		manifest, archiveRoot, err := contract.InspectArchive(*archive)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"manifest": manifest, "archive_root": archiveRoot}, nil
+	}
+	if *root == "" {
+		*root = defaultInstallRoot()
 	}
 	return contract.InspectInstall(*root), nil
 }
@@ -157,6 +171,9 @@ func createPackage(args []string) (any, error) {
 		return nil, err
 	}
 	if err = contract.WriteArchive(*root, *output); err != nil {
+		return nil, err
+	}
+	if _, _, err = contract.VerifyArchive(*output, contract.Expectations{Version: *version, Platform: *platform, Architecture: *arch, AssetName: manifest.AssetName}); err != nil {
 		return nil, err
 	}
 	size, hash, err := contract.FileDigest(*output)

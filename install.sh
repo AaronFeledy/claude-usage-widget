@@ -73,6 +73,7 @@ PY
 }
 
 if [ -n "$package_path" ]; then
+  [ "$(wc -c < "$manifest_path")" -le 4194304 ] || { echo 'release manifest is too large' >&2; exit 1; }
   cp -- "$manifest_path" "$release_json"
 else
   download "https://api.github.com/repos/$repo/releases/latest" "$github_json"
@@ -95,7 +96,9 @@ import json, re, sys
 d=json.load(open(sys.argv[1], encoding='utf-8'))
 semver=r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
 v=str(d.get('version',''))
-if d.get('schema') != 1 or d.get('product') != 'Headroom' or not re.fullmatch(semver,v): raise SystemExit('unrecognized release manifest')
+prerelease=v.split('+',1)[0].split('-',1)
+bad_numeric_prerelease=len(prerelease)==2 and any(x.isdigit() and len(x)>1 and x.startswith('0') for x in prerelease[1].split('.'))
+if d.get('schema') != 1 or d.get('product') != 'Headroom' or not re.fullmatch(semver,v) or bad_numeric_prerelease: raise SystemExit('unrecognized release manifest')
 n=f'Headroom-v{v}-linux-x86_64.tar.gz'
 p=[x for x in d.get('packages',[]) if x.get('platform')=='linux' and x.get('architecture')=='x86_64' and x.get('asset_name')==n]
 if len(p)!=1 or type(p[0].get('size')) is not int or not (0 < p[0]['size'] <= 2147483648) or not re.fullmatch(r'[0-9a-f]{64}',str(p[0].get('sha256',''))): raise SystemExit('Linux package metadata is missing or invalid')
@@ -107,7 +110,10 @@ asset_name=$(printf '%s\n' "$metadata" | sed -n '2p')
 expected_size=$(printf '%s\n' "$metadata" | sed -n '3p')
 expected_hash=$(printf '%s\n' "$metadata" | sed -n '4p')
 archive=$private_root/$asset_name
-if [ -n "$package_path" ]; then cp -- "$package_path" "$archive"; else
+if [ -n "$package_path" ]; then
+  [ "$(wc -c < "$package_path")" = "$expected_size" ] || { echo 'package size does not match release manifest' >&2; exit 1; }
+  cp -- "$package_path" "$archive"
+else
   package_url=$(python3 - "$github_json" "$asset_name" <<'PY'
 import json, sys
 d=json.load(open(sys.argv[1], encoding='utf-8')); a=[x for x in d.get('assets',[]) if x.get('name')==sys.argv[2]]
@@ -130,6 +136,7 @@ case "$listing" in -*) ;; *) echo 'package bootstrap entry is not a regular file
 [ "$manager_size" -gt 0 ] && [ "$manager_size" -le 67108864 ] || { echo 'package bootstrap entry is oversized' >&2; exit 1; }
 manager=$private_root/headroom-package
 tar -xOzf "$archive" "$manager_entry" > "$manager"
+[ "$(wc -c < "$manager")" = "$manager_size" ] && [ "$(wc -c < "$manager")" -le 67108864 ] || { echo 'package bootstrap extraction size mismatch' >&2; exit 1; }
 chmod 0700 "$manager"
 "$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
   --version "$version" --platform linux --arch x86_64 --asset "$asset_name"

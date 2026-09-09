@@ -46,9 +46,10 @@ install -m 0755 "$manager" "$package_root/bundle/bin/headroom-package"
 install -m 0644 packaging/THIRD_PARTY_NOTICES.txt "$package_root/bundle/share/headroom/THIRD_PARTY_NOTICES.txt"
 install -Dm0644 LICENSE "$package_root/bundle/share/licenses/headroom/LICENSE"
 mkdir -p "$package_root/bundle/share/licenses/qt" "$package_root/bundle/share/licenses/go/runtime" "$package_root/bundle/share/licenses/go/protobuf" "$package_root/bundle/share/licenses/go/yaml" "$package_root/bundle/share/licenses/openssl"
+find packaging/licenses/qt -maxdepth 1 -type f -exec install -Dm0644 '{}' "$package_root/bundle/share/licenses/qt/" \;
 mapfile -d '' qt_licenses < <(find "$qt_root" -maxdepth 3 -type f \( -name 'LICENSE*' -o -name '*NOTICE*' \) -print0)
-((${#qt_licenses[@]} > 0)) || { echo "Qt license inventory not found under $qt_root" >&2; exit 1; }
 for license in "${qt_licenses[@]}"; do relative=${license#"$qt_root"/}; install -Dm0644 "$license" "$package_root/bundle/share/licenses/qt/$relative"; done
+[[ -s "$package_root/bundle/share/licenses/qt/LGPL-3.0-only.txt" && -s "$package_root/bundle/share/licenses/qt/Qt-GPL-exception-1.0.txt" ]] || { echo 'required Qt license texts are missing' >&2; exit 1; }
 install -m 0644 "$(go env GOROOT)/LICENSE" "$package_root/bundle/share/licenses/go/runtime/LICENSE"
 module_cache=$(go env GOMODCACHE)
 install -m 0644 "$module_cache/google.golang.org/protobuf@v1.36.11/LICENSE" "$package_root/bundle/share/licenses/go/protobuf/LICENSE"

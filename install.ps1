@@ -69,6 +69,19 @@ function Read-ReleaseManifest {
     return ([System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json)
 }
 
+function Test-HeadroomVersion {
+    param([string]$Version)
+    if ($Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$') { return $false }
+    $withoutBuild = $Version.Split('+')[0]
+    $dash = $withoutBuild.IndexOf('-')
+    if ($dash -ge 0) {
+        foreach ($identifier in $withoutBuild.Substring($dash + 1).Split('.')) {
+            if ($identifier -match '^[0-9]+$' -and $identifier.Length -gt 1 -and $identifier[0] -eq '0') { return $false }
+        }
+    }
+    return $true
+}
+
 Write-Host "Headroom installer ($assetArchitecture)" -ForegroundColor Cyan
 if ($WhatIfPreference) {
     Write-Host "WhatIf: would validate and install a complete package at $InstallRoot with stable entry $EntryPath"
@@ -80,6 +93,7 @@ New-Item -ItemType Directory -Path $privateRoot | Out-Null
 try {
     $localManifest = Join-Path $privateRoot 'release.json'
     if ($ReleaseManifestPath) {
+        if ((Get-Item -LiteralPath $ReleaseManifestPath).Length -gt 4MB) { throw 'Release manifest is too large.' }
         Copy-Item -LiteralPath $ReleaseManifestPath -Destination $localManifest
     } elseif ($PackagePath) {
         throw '-ReleaseManifestPath is required with -PackagePath.'
@@ -95,7 +109,7 @@ try {
         Save-HeadroomFile ([uri]$releaseAsset[0].browser_download_url) $localManifest 4MB
     }
     $manifest = Read-ReleaseManifest $localManifest
-    if ($manifest.schema -ne 1 -or $manifest.product -cne 'Headroom' -or $manifest.version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$') { throw 'Unrecognized release manifest.' }
+    if ($manifest.schema -ne 1 -or $manifest.product -cne 'Headroom' -or !(Test-HeadroomVersion ([string]$manifest.version))) { throw 'Unrecognized release manifest.' }
     if ($releaseVersion -and $manifest.version -cne $releaseVersion) { throw 'Release tag and release manifest versions do not match.' }
     $assetName = "Headroom-v$($manifest.version)-windows-$assetArchitecture.zip"
     $localArchive = Join-Path $privateRoot $assetName
@@ -105,6 +119,7 @@ try {
     if ($package.size -isnot [int64] -and $package.size -isnot [int32]) { throw 'Package size must be an integer.' }
     if ([int64]$package.size -le 0 -or [int64]$package.size -gt 2GB) { throw 'Package size exceeds the installer limit.' }
     if ($PackagePath) {
+        if ((Get-Item -LiteralPath $PackagePath).Length -ne [int64]$package.size) { throw 'Package size does not match the release manifest.' }
         Copy-Item -LiteralPath $PackagePath -Destination $localArchive
     } else {
         $releaseAsset = @($release.assets | Where-Object { $_.name -ceq $assetName })
@@ -126,7 +141,16 @@ try {
         $managerPath = Join-Path $privateRoot 'headroom-package.exe'
         $input = $managerEntries[0].Open()
         $output = [System.IO.File]::Open($managerPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        try { $input.CopyTo($output) } finally { $output.Dispose(); $input.Dispose() }
+        try {
+            $buffer = New-Object byte[] 81920
+            $written = 0L
+            while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $written += $read
+                if ($written -gt 64MB -or $written -gt [int64]$managerEntries[0].Length) { throw 'Package bootstrap entry exceeded its declared size.' }
+                $output.Write($buffer, 0, $read)
+            }
+            if ($written -ne [int64]$managerEntries[0].Length) { throw 'Package bootstrap entry was truncated.' }
+        } finally { $output.Dispose(); $input.Dispose() }
     } finally { $zip.Dispose() }
 
     if ($null -eq $PSCmdlet -or $PSCmdlet.ShouldProcess($InstallRoot, 'Install verified Headroom package')) {

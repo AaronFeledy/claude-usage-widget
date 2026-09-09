@@ -64,6 +64,16 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 	if expected.Architecture != "" && expected.Architecture != architecture {
 		return StageResult{}, fmt.Errorf("cannot stage %s package on %s", expected.Architecture, architecture)
 	}
+	inspected, _, err := InspectArchive(archive)
+	if err != nil {
+		return StageResult{}, err
+	}
+	if err = CheckExpectations(inspected, expected); err != nil {
+		return StageResult{}, err
+	}
+	if inspected.Platform != platform || inspected.Architecture != architecture {
+		return StageResult{}, fmt.Errorf("cannot stage %s/%s package on %s/%s", inspected.Platform, inspected.Architecture, platform, architecture)
+	}
 	expected.Platform = platform
 	expected.Architecture = architecture
 	stagingRoot := filepath.Join(installRoot, "staging")

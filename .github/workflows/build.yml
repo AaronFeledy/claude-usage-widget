@@ -207,7 +207,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r ${{ matrix.rid }} -p:Version=$env:HEADROOM_PACKAGE_VERSION -o "$env:RUNNER_TEMP/helper"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./packaging/package-windows.ps1 -Version $env:HEADROOM_PACKAGE_VERSION -Architecture ${{ matrix.architecture }} -BuildDir "$env:RUNNER_TEMP/desktop-package" -WorkDir "$env:RUNNER_TEMP/package-work" -OutputDir "$env:RUNNER_TEMP/package-output" -Server "$env:RUNNER_TEMP/usage-server.exe" -CredentialHelper "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe" -Launcher "$env:RUNNER_TEMP/headroom.exe" -Manager "$env:RUNNER_TEMP/headroom-package.exe" -QtRoot $env:QT_ROOT_DIR
+          ./packaging/package-windows.ps1 -Version $env:HEADROOM_PACKAGE_VERSION -Architecture ${{ matrix.architecture }} -BuildDir "$env:RUNNER_TEMP/desktop-package" -WorkDir "$env:RUNNER_TEMP/package-work" -OutputDir "$env:RUNNER_TEMP/package-output" -Server "$env:RUNNER_TEMP/usage-server.exe" -CredentialHelper "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe" -Launcher "$env:RUNNER_TEMP/headroom.exe" -Manager "$env:RUNNER_TEMP/headroom-package.exe" -QtRoot $env:QT_ROOT_DIR -ProjectAssets "clients/windows/Headroom.CredentialHelper/obj/project.assets.json"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -234,13 +234,16 @@ jobs:
             timeout 30s xvfb-run -a env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-clean-linux-xcb.png"
           env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
             timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-clean-linux-offscreen.png"
-          test -s "$RUNNER_TEMP/headroom-clean-linux-xcb.png" && test -s "$RUNNER_TEMP/headroom-clean-linux-offscreen.png"
+          HEADROOM_INSTALL_ROOT="$RUNNER_TEMP/obsolete install" HEADROOM_LAUNCHER_PATH="$RUNNER_TEMP/obsolete launcher" HEADROOM_PACKAGE_VERSION=9.9.9 \
+            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
+          test -s "$RUNNER_TEMP/headroom-clean-linux-xcb.png" && test -s "$RUNNER_TEMP/headroom-clean-linux-offscreen.png" && test -s "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
           find "$RUNNER_TEMP/install with spaces/versions/$HEADROOM_PACKAGE_VERSION" -type f -printf '%P\n' | sort > "$RUNNER_TEMP/linux-package-inventory.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: headroom-linux-x64-smoke-evidence
           path: |
             ${{ runner.temp }}/headroom-clean-linux-*.png
+            ${{ runner.temp }}/headroom-dirty-environment-linux.png
             ${{ runner.temp }}/linux-package-inventory.txt
 
   smoke-windows-package:
@@ -302,12 +305,17 @@ jobs:
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-clean-windows-native.png" ''
           $env:QT_QUICK_BACKEND = 'software'
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-clean-windows-offscreen.png" 'offscreen'
+          $env:HEADROOM_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP 'obsolete install'
+          $env:HEADROOM_LAUNCHER_PATH = Join-Path $env:RUNNER_TEMP 'obsolete launcher.exe'
+          $env:HEADROOM_PACKAGE_VERSION = '9.9.9'
+          Invoke-Smoke "$env:RUNNER_TEMP/headroom-dirty-environment-windows.png" 'offscreen'
           Get-ChildItem "$install/versions/$version" -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length + 1) } | Sort-Object | Set-Content "$env:RUNNER_TEMP/windows-package-inventory.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: headroom-windows-${{ matrix.arch }}-smoke-evidence
           path: |
             ${{ runner.temp }}/headroom-clean-windows-*.png
+            ${{ runner.temp }}/headroom-dirty-environment-windows.png
             ${{ runner.temp }}/windows-package-inventory.txt
 
   package-release-manifest:
@@ -360,6 +368,15 @@ jobs:
         run: |
           XDG_DATA_HOME="$RUNNER_TEMP/user data" HOME="$RUNNER_TEMP/home with spaces" ./install.sh --package "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}" --release-manifest "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-release.json" --install-root "$RUNNER_TEMP/installed with spaces" --entry-path "$RUNNER_TEMP/entries with spaces/headroom" --no-launch
           test -x "$RUNNER_TEMP/entries with spaces/headroom" && test -f "$RUNNER_TEMP/entries with spaces/headroom.root"
+          grep -F 'Exec="' "$RUNNER_TEMP/user data/applications/headroom.desktop"
+          python3 - "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-release.json" "$RUNNER_TEMP/oversized-release.json" <<'PY'
+          import json, sys
+          value=json.load(open(sys.argv[1], encoding='utf-8'))
+          for package in value['packages']: package['size']=2147483649
+          json.dump(value, open(sys.argv[2], 'w', encoding='utf-8'))
+          PY
+          if XDG_DATA_HOME="$RUNNER_TEMP/invalid user data" HOME="$RUNNER_TEMP/invalid home" ./install.sh --package "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}" --release-manifest "$RUNNER_TEMP/oversized-release.json" --install-root "$RUNNER_TEMP/invalid install" --entry-path "$RUNNER_TEMP/invalid entry/headroom" --no-launch; then exit 1; fi
+          test ! -e "$RUNNER_TEMP/invalid install"
           ./install.sh --dry-run --install-root "$RUNNER_TEMP/dry run" --entry-path "$RUNNER_TEMP/dry entry/headroom"
           test ! -e "$RUNNER_TEMP/dry run"
       - name: Exercise PowerShell installer in isolated roots
@@ -372,5 +389,30 @@ jobs:
           $asset = "Headroom-v$env:HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}"
           ./install.ps1 -PackagePath "$env:RUNNER_TEMP/fixture/$asset" -ReleaseManifestPath "$env:RUNNER_TEMP/fixture/Headroom-v$env:HEADROOM_PACKAGE_VERSION-release.json" -InstallRoot "$env:RUNNER_TEMP/installed with spaces" -EntryPath "$env:RUNNER_TEMP/entries with spaces/headroom.exe" -NoLaunch
           if (!(Test-Path "$env:RUNNER_TEMP/entries with spaces/headroom.exe") -or !(Test-Path "$env:RUNNER_TEMP/entries with spaces/headroom.exe.root")) { exit 1 }
+          $badManifest = Get-Content -LiteralPath "$env:RUNNER_TEMP/fixture/Headroom-v$env:HEADROOM_PACKAGE_VERSION-release.json" -Raw | ConvertFrom-Json
+          $badManifest.packages | ForEach-Object { $_.size = [int64]2147483649 }
+          $badManifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath "$env:RUNNER_TEMP/oversized-release.json" -Encoding UTF8
+          try {
+            ./install.ps1 -PackagePath "$env:RUNNER_TEMP/fixture/$asset" -ReleaseManifestPath "$env:RUNNER_TEMP/oversized-release.json" -InstallRoot "$env:RUNNER_TEMP/invalid install" -EntryPath "$env:RUNNER_TEMP/invalid entry/headroom.exe" -NoLaunch
+            throw 'Malformed release manifest was accepted.'
+          } catch {
+            if ($_.Exception.Message -eq 'Malformed release manifest was accepted.') { throw }
+          }
+          if (Test-Path "$env:RUNNER_TEMP/invalid install") { exit 1 }
           ./install.ps1 -WhatIf -InstallRoot "$env:RUNNER_TEMP/dry run" -EntryPath "$env:RUNNER_TEMP/dry entry/headroom.exe"
           if (Test-Path "$env:RUNNER_TEMP/dry run") { exit 1 }
+      - name: Exercise Windows PowerShell 5.1 and piped WhatIf invocation
+        if: matrix.runner == 'windows-2022'
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP/ps51 local app data"
+          $env:APPDATA = "$env:RUNNER_TEMP/ps51 roaming app data"
+          $asset = "Headroom-v$env:HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}"
+          & .\install.ps1 -PackagePath "$env:RUNNER_TEMP/fixture/$asset" -ReleaseManifestPath "$env:RUNNER_TEMP/fixture/Headroom-v$env:HEADROOM_PACKAGE_VERSION-release.json" -InstallRoot "$env:RUNNER_TEMP/ps51 installed" -EntryPath "$env:RUNNER_TEMP/ps51 entries/headroom.exe" -NoLaunch
+          if (!(Test-Path "$env:RUNNER_TEMP/ps51 entries/headroom.exe.root")) { exit 1 }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP/piped local app data"
+          $env:APPDATA = "$env:RUNNER_TEMP/piped roaming app data"
+          $WhatIfPreference = $true
+          Get-Content -LiteralPath .\install.ps1 -Raw | Invoke-Expression
+          if (Test-Path "$env:LOCALAPPDATA/Headroom") { exit 1 }

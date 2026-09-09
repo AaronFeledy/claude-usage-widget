@@ -9,7 +9,8 @@ param(
     [Parameter(Mandatory)][string]$CredentialHelper,
     [Parameter(Mandatory)][string]$Launcher,
     [Parameter(Mandatory)][string]$Manager,
-    [Parameter(Mandatory)][string]$QtRoot
+    [Parameter(Mandatory)][string]$QtRoot,
+    [Parameter(Mandatory)][string]$ProjectAssets
 )
 $ErrorActionPreference = 'Stop'
 $assetArch = if ($Architecture -eq 'x86_64') { 'x64' } elseif ($Architecture -eq 'arm64') { 'arm64' } else { throw "Unsupported architecture: $Architecture" }
@@ -34,17 +35,65 @@ Copy-Item $Launcher (Join-Path $packageRoot 'bootstrap/headroom.exe')
 Copy-Item $Manager (Join-Path $packageRoot 'bootstrap/headroom-package.exe')
 Copy-Item $Manager (Join-Path $packageRoot 'bundle/bin/headroom-package.exe')
 Copy-Item packaging/THIRD_PARTY_NOTICES.txt (Join-Path $packageRoot 'bundle/share/headroom/THIRD_PARTY_NOTICES.txt')
-New-Item -ItemType Directory -Force (Join-Path $packageRoot 'bundle/share/licenses/headroom'), (Join-Path $packageRoot 'bundle/share/licenses/qt'), (Join-Path $packageRoot 'bundle/share/licenses/dotnet'), (Join-Path $packageRoot 'bundle/share/licenses/sqlite'), (Join-Path $packageRoot 'bundle/share/licenses/msvc'), (Join-Path $packageRoot 'bundle/share/licenses/go') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $packageRoot 'bundle/share/licenses/headroom'), (Join-Path $packageRoot 'bundle/share/licenses/qt'), (Join-Path $packageRoot 'bundle/share/licenses/nuget'), (Join-Path $packageRoot 'bundle/share/licenses/msvc'), (Join-Path $packageRoot 'bundle/share/licenses/go/runtime'), (Join-Path $packageRoot 'bundle/share/licenses/go/protobuf'), (Join-Path $packageRoot 'bundle/share/licenses/go/yaml') | Out-Null
 Copy-Item LICENSE (Join-Path $packageRoot 'bundle/share/licenses/headroom/LICENSE')
+$trackedQtLicenses = @(Get-ChildItem -LiteralPath 'packaging/licenses/qt' -File)
+if ($trackedQtLicenses.Count -lt 5) { throw 'Required Qt license texts are missing.' }
+$trackedQtLicenses | Copy-Item -Destination (Join-Path $packageRoot 'bundle/share/licenses/qt')
 $qtLicenses = @(Get-ChildItem $QtRoot -Recurse -Depth 3 -File -Include 'LICENSE*','*NOTICE*')
-if ($qtLicenses.Count -eq 0) { throw "Qt license inventory not found under $QtRoot" }
-$qtLicenses | Copy-Item -Destination (Join-Path $packageRoot 'bundle/share/licenses/qt')
-$dotnetRoot = Split-Path (Get-Command dotnet).Source
-$dotnetLicenses = @(Get-ChildItem $dotnetRoot -Recurse -Depth 3 -File -Include 'LICENSE*','*NOTICE*')
-if ($dotnetLicenses.Count -eq 0) { throw "dotnet license inventory not found under $dotnetRoot" }
-$dotnetLicenses | Copy-Item -Destination (Join-Path $packageRoot 'bundle/share/licenses/dotnet')
-Copy-Item (Join-Path (go env GOROOT) 'LICENSE') (Join-Path $packageRoot 'bundle/share/licenses/go/LICENSE')
-'SQLite is in the public domain. https://sqlite.org/copyright.html' | Set-Content -Encoding UTF8 (Join-Path $packageRoot 'bundle/share/licenses/sqlite/NOTICE.txt')
+foreach ($license in $qtLicenses) {
+    $relative = $license.FullName.Substring($QtRoot.TrimEnd('\','/').Length).TrimStart('\','/')
+    $destination = Join-Path $packageRoot "bundle/share/licenses/qt/$relative"
+    New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
+    Copy-Item -LiteralPath $license.FullName -Destination $destination
+}
+
+if (!(Test-Path -LiteralPath $ProjectAssets -PathType Leaf)) { throw "Credential helper project.assets.json not found: $ProjectAssets" }
+$assets = Get-Content -LiteralPath $ProjectAssets -Raw | ConvertFrom-Json
+$packageRoots = @($assets.packageFolders.PSObject.Properties.Name)
+if ($packageRoots.Count -ne 1 -or !(Test-Path -LiteralPath $packageRoots[0] -PathType Container)) { throw 'Expected one resolved NuGet package root.' }
+$packageCache = $packageRoots[0]
+$resolvedPackages = @($assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -ceq 'package' } | ForEach-Object { $_.Name })
+$framework = @($assets.project.frameworks.PSObject.Properties.Value)
+if ($framework.Count -ne 1) { throw 'Expected one credential-helper target framework.' }
+$rid = if ($Architecture -eq 'arm64') { 'win-arm64' } else { 'win-x64' }
+$runtimePackages = @($framework[0].downloadDependencies | Where-Object { $_.name -in @("Microsoft.NETCore.App.Host.$rid", "Microsoft.NETCore.App.Runtime.$rid") } | ForEach-Object {
+    $resolvedVersion = ([string]$_.version).Trim('[',']').Split(',')[0].Trim()
+    "$($_.name)/$resolvedVersion"
+})
+$inventoryPackages = @($resolvedPackages + $runtimePackages | Sort-Object -Unique)
+if ($inventoryPackages.Count -lt 9 -or $inventoryPackages -notcontains 'SourceGear.sqlite3/3.50.4.5') { throw 'Credential-helper NuGet dependency inventory is incomplete.' }
+foreach ($package in $inventoryPackages) {
+    $separator = $package.LastIndexOf('/')
+    if ($separator -le 0) { throw "Invalid resolved NuGet package key: $package" }
+    $packageName = $package.Substring(0, $separator).ToLowerInvariant()
+    $packageVersion = $package.Substring($separator + 1).ToLowerInvariant()
+    $sourceRoot = Join-Path $packageCache "$packageName/$packageVersion"
+    if (!(Test-Path -LiteralPath $sourceRoot -PathType Container)) { throw "Resolved NuGet package is missing: $package" }
+    $destinationRoot = Join-Path $packageRoot "bundle/share/licenses/nuget/$packageName/$packageVersion"
+    New-Item -ItemType Directory -Force $destinationRoot | Out-Null
+    $nuspecs = @(Get-ChildItem -LiteralPath $sourceRoot -File -Filter '*.nuspec')
+    if ($nuspecs.Count -ne 1) { throw "Expected one nuspec for $package" }
+    Copy-Item -LiteralPath $nuspecs[0].FullName -Destination (Join-Path $destinationRoot $nuspecs[0].Name)
+    $licenseFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object { $_.Name -like 'LICENSE*' -or $_.Name -like '*NOTICE*' })
+    foreach ($license in $licenseFiles) {
+        $relative = $license.FullName.Substring($sourceRoot.TrimEnd('\','/').Length).TrimStart('\','/')
+        $destination = Join-Path $destinationRoot $relative
+        New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
+        Copy-Item -LiteralPath $license.FullName -Destination $destination
+    }
+    if ($licenseFiles.Count -eq 0) {
+        [xml]$nuspec = Get-Content -LiteralPath $nuspecs[0].FullName -Raw
+        $expression = [string]$nuspec.package.metadata.license.InnerText
+        $expressionSource = if ($expression -ceq 'Apache-2.0') { 'packaging/licenses/Apache-2.0.txt' } elseif ($expression -ceq 'MIT') { 'packaging/licenses/DotNet-MIT.txt' } else { throw "No license text is available for $package ($expression)." }
+        Copy-Item -LiteralPath $expressionSource -Destination (Join-Path $destinationRoot "LICENSE-$expression.txt")
+    }
+}
+Copy-Item (Join-Path (go env GOROOT) 'LICENSE') (Join-Path $packageRoot 'bundle/share/licenses/go/runtime/LICENSE')
+$moduleCache = go env GOMODCACHE
+Copy-Item (Join-Path $moduleCache 'google.golang.org/protobuf@v1.36.11/LICENSE') (Join-Path $packageRoot 'bundle/share/licenses/go/protobuf/LICENSE')
+Copy-Item (Join-Path $moduleCache 'gopkg.in/yaml.v3@v3.0.1/LICENSE') (Join-Path $packageRoot 'bundle/share/licenses/go/yaml/LICENSE')
+Copy-Item (Join-Path $moduleCache 'gopkg.in/yaml.v3@v3.0.1/NOTICE') (Join-Path $packageRoot 'bundle/share/licenses/go/yaml/NOTICE')
 'Microsoft Visual C++ runtime files are redistributed under the Visual Studio license.' | Set-Content -Encoding UTF8 (Join-Path $packageRoot 'bundle/share/licenses/msvc/NOTICE.txt')
 & $Manager create-package --root $packageRoot --output (Join-Path $OutputDir $asset) --version $Version --platform windows --arch $Architecture --qt-version 6.8.3 --baseline $(if ($Architecture -eq 'arm64') { 'windows-11-arm64-msvc2022' } else { 'windows-10-1809-x64-msvc2022' })
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

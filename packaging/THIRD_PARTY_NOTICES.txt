@@ -15,14 +15,16 @@ https://www.qt.io/licensing/ for the corresponding terms and source offer.
 .NET 8 credential helper (Windows packages)
 -------------------------------------------
 The self-contained Windows credential helper includes the .NET runtime,
-Microsoft.Data.Sqlite, SQLitePCLRaw and SQLite. Their notices and license texts
-are included under share/licenses/dotnet and share/licenses/sqlite.
+Microsoft.Data.Sqlite, SQLitePCLRaw and the SourceGear.sqlite3 native SQLite
+distribution. The package preserves the resolved NuGet names and versions,
+nuspec metadata, shipped license/notice files, and applicable MIT or Apache 2.0
+license text under share/licenses/nuget.
 
 Go runtime and server dependencies
 ----------------------------------
 The stable launcher, package validator and usage-server include the Go runtime.
-The Go license and notices for the server's protobuf and YAML dependencies are
-included under share/licenses/go.
+The Go runtime license and the exact protobuf v1.36.11 and YAML v3.0.1 license
+and notice files are included under share/licenses/go.
 
 Microsoft Visual C++ runtime (Windows packages)
 -----------------------------------------------
@@ -32,5 +34,6 @@ Studio licensing terms. See share/licenses/msvc.
 OpenSSL (Linux packages)
 ------------------------
 Headroom's Qt TLS backend uses the OpenSSL 3 runtime supplied by the documented
-Ubuntu 22.04-compatible desktop baseline. OpenSSL itself is not copied into the
-bundle. See share/licenses/openssl for the applicable notice.
+Ubuntu 22.04-compatible desktop baseline. The official package recipe excludes
+that system library from the bundle and includes the baseline distribution's
+OpenSSL copyright and license inventory under share/licenses/openssl.

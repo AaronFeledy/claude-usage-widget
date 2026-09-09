@@ -30,9 +30,15 @@ type archiveEntry struct {
 }
 
 func InspectArchive(filename string) (PackageManifest, string, error) {
+	info, err := os.Stat(filename)
+	if err != nil {
+		return PackageManifest{}, "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > MaxArchiveBytes {
+		return PackageManifest{}, "", fmt.Errorf("package archive size is outside the supported range")
+	}
 	var manifest PackageManifest
 	var root string
-	var err error
 	if strings.HasSuffix(filename, ".zip") {
 		manifest, root, err = inspectZip(filename)
 	} else if strings.HasSuffix(filename, ".tar.gz") {
