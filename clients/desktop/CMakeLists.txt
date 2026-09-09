@@ -40,10 +40,23 @@ set(headroom_platform_sources)
 if(WIN32)
     set(HEADROOM_WINDOWS_ICON "${CMAKE_CURRENT_SOURCE_DIR}/windows/headroom.ico")
     set(HEADROOM_WINDOWS_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/windows/headroom.manifest")
+    if(MSVC)
+        # MSVC creates manifest resource ID 1 itself. Supply our settings as a
+        # linker merge input instead of compiling a second ID 1 into the RC.
+        set(HEADROOM_MANIFEST_RESOURCE "")
+    else()
+        set(HEADROOM_MANIFEST_RESOURCE
+            "CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST \"${HEADROOM_WINDOWS_MANIFEST}\"")
+    endif()
     configure_file(windows/headroom.rc.in "${CMAKE_CURRENT_BINARY_DIR}/headroom.rc" @ONLY)
     list(APPEND headroom_platform_sources "${CMAKE_CURRENT_BINARY_DIR}/headroom.rc")
 endif()
 qt_add_executable(headroom WIN32 main.cpp ${headroom_platform_sources})
+if(MSVC)
+    target_link_options(headroom PRIVATE
+        "/MANIFEST:EMBED"
+        "/MANIFESTINPUT:${HEADROOM_WINDOWS_MANIFEST}")
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND HEADROOM_WITH_KDE_TRAY AND KF6StatusNotifierItem_FOUND)
     target_link_libraries(headroom PRIVATE KF6::StatusNotifierItem)
     target_compile_definitions(headroom PRIVATE HEADROOM_KDE_TRAY)

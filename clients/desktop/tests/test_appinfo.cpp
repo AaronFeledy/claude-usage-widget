@@ -1,4 +1,5 @@
 #include "appinfo.h"
+#include "http_assertions.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -46,7 +47,8 @@ private slots:
         QTRY_VERIFY(!info.checkingServer());
         QCOMPARE(info.serverVersion(), QString("1.7.1")); QCOMPARE(info.serverStatus(), QString("Server healthy"));
         QVERIFY(fixture.requests.last().startsWith("GET /prefix/api/v1/health "));
-        QVERIFY(fixture.requests.last().contains("Authorization: Bearer private-fixture-token\r\n"));
+        QVERIFY(HttpAssertions::hasHeader(fixture.requests.last(), "Authorization",
+                                          "Bearer private-fixture-token"));
         fixture.body = R"({"status":"degraded","version":"dev-test"})";
         info.refreshServer(); QTRY_VERIFY(!info.checkingServer());
         QCOMPARE(info.serverVersion(), QString("dev-test")); QVERIFY(info.serverStatus().contains("need attention"));
@@ -83,7 +85,8 @@ private slots:
         info.refreshServer(); QTRY_VERIFY(slow.requests.size() >= 2);
         info.setBackend(next.url(), "new-token"); info.refreshServer();
         QTRY_VERIFY(!info.checkingServer()); QCOMPARE(info.serverVersion(), QString("1.7.1"));
-        QVERIFY(next.requests.last().contains("Bearer new-token")); QVERIFY(!next.requests.last().contains("old-token"));
+        QVERIFY(HttpAssertions::hasHeader(next.requests.last(), "Authorization", "Bearer new-token"));
+        QVERIFY(!next.requests.last().contains("old-token"));
         info.checkForUpdates(); QTRY_VERIFY(!info.checkingRelease()); QVERIFY(info.releaseStatus().contains("Could not check"));
     }
     void rejectsOversizedResponses() {
@@ -104,7 +107,8 @@ private slots:
         fixture.body = QJsonDocument(release).toJson(); info.checkForUpdates();
         QTRY_VERIFY(!info.checkingRelease()); QCOMPARE(info.latestVersion(), QString("v9.1.0"));
         QVERIFY(!info.linuxDownloadAvailable()); QVERIFY(info.releaseStatus().contains("No Linux installer"));
-        QVERIFY(!fixture.requests.last().contains("Authorization")); QVERIFY(!fixture.requests.last().contains("backend-secret"));
+        QVERIFY(!HttpAssertions::hasHeader(fixture.requests.last(), "Authorization"));
+        QVERIFY(!fixture.requests.last().contains("backend-secret"));
         auto cpu = QSysInfo::currentCpuArchitecture(); if (cpu == "arm64") cpu = "aarch64";
         const QString name = "headroom-linux-" + cpu + ".tar.gz";
         assets.append(QJsonObject{{"name", name}, {"browser_download_url", "https://github.com/AaronFeledy/claude-usage-widget/releases/download/v9.1.0/" + name}});

@@ -1,5 +1,6 @@
 #include "usage.h"
 #include "controller.h"
+#include "http_assertions.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -312,7 +313,8 @@ private slots:
         Controller controller(false, path);
         QVERIFY(controller.saveSettings(QString("http://127.0.0.1:%1/base/").arg(server.serverPort()), "test-secret", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
-        QVERIFY(received.contains("GET /base/api/v1/usage")); QVERIFY(received.contains("Authorization: Bearer test-secret"));
+        QVERIFY(received.startsWith("GET /base/api/v1/usage "));
+        QVERIFY(HttpAssertions::hasHeader(received, "Authorization", "Bearer test-secret"));
         controller.moveProvider("Grok", "Claude", false);
         QCOMPARE(controller.primary(), QString("Grok"));
         QCOMPARE(controller.providers()[1].toMap()["provider_name"].toString(), QString("Claude"));
