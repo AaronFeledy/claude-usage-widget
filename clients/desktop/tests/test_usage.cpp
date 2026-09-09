@@ -12,10 +12,15 @@
 #include <cmath>
 class UsageTest : public QObject {
     Q_OBJECT
+    static CredentialServiceOptions disabledCredentials() {
+        CredentialServiceOptions options; options.enabled = false; return options;
+    }
 private slots:
     void cleanup() {
         qunsetenv("HEADROOM_FIXTURE_MODE");
         qunsetenv("HEADROOM_FIXTURE_RECORD");
+        qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_MODE");
+        qunsetenv("HEADROOM_CREDENTIAL_FIXTURE_RECORD");
     }
     void parseContract() {
         QVariantList providers; QVERIFY(Usage::parse(Usage::demo(), providers)); QCOMPARE(providers.size(), 4);
@@ -263,7 +268,7 @@ private slots:
                 socket->disconnectFromHost();
             });
         });
-        Controller controller(false, dir.filePath("settings.json"));
+        Controller controller(false, dir.filePath("settings.json"), nullptr, true, {}, disabledCredentials());
         QSignalSpy alerts(&controller, &Controller::usageAlert);
         const QString url = QString("http://127.0.0.1:%1").arg(server.serverPort());
         QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
@@ -314,7 +319,7 @@ private slots:
                 socket->disconnectFromHost();
             });
         });
-        Controller controller(false, path);
+        Controller controller(false, path, nullptr, true, {}, disabledCredentials());
         QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1/base/").arg(server.serverPort()), "test-secret", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
         QVERIFY(received.startsWith("GET /base/api/v1/usage "));
@@ -324,7 +329,7 @@ private slots:
         QCOMPARE(controller.providers()[1].toMap()["provider_name"].toString(), QString("Claude"));
         controller.moveProvider("Claude", "Cursor", true);
         QCOMPARE(controller.providers()[3].toMap()["provider_name"].toString(), QString("Claude"));
-        Controller orderReload(true, path);
+        Controller orderReload(true, path, nullptr, true, {}, disabledCredentials());
         QTRY_COMPARE(orderReload.providers().size(), 4);
         QCOMPARE(orderReload.primary(), QString("Grok"));
         QCOMPARE(orderReload.providers()[3].toMap()["provider_name"].toString(), QString("Claude"));
@@ -350,7 +355,7 @@ private slots:
         // POSIX mode bits do not describe the Windows ACL used by QSaveFile.
         QVERIFY(!(QFile::permissions(path) & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
 #endif
-        Controller restored(false, path); QCOMPARE(restored.settings()["hasToken"].toBool(), true);
+        Controller restored(false, path, nullptr, true, {}, disabledCredentials()); QCOMPARE(restored.settings()["hasToken"].toBool(), true);
         QVERIFY(!restored.settings().contains("token"));
         received.clear(); status = 200; body = "[{}]"; controller.refresh();
         QTRY_COMPARE(controller.state()["status"].toString(), "offline"); QTRY_VERIFY(!controller.state()["loading"].toBool());
@@ -392,7 +397,7 @@ private slots:
         });
         ManagedServerOptions options; options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(server.serverPort()));
         options.executablePath = dir.filePath("must-not-spawn"); options.probeTimeoutMs = 1000;
-        Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, options, disabledCredentials());
         QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(usageRequests >= 1 && usageRequests <= 2); // Qt may transparently retry one idempotent GET.
@@ -413,7 +418,7 @@ private slots:
         SettingsService service(path, false); auto saved = service.value();
         saved.connectionMode = "remote"; saved.url = "https://example.test/base";
         QVERIFY(service.save(saved, true).isEmpty());
-        Controller controller(false, path, nullptr, false, options);
+        Controller controller(false, path, nullptr, false, options, disabledCredentials());
         QVERIFY(controller.saveSettings("local", "not a valid hidden URL", "", 60, false, "Claude", false).isEmpty());
         QCOMPARE(controller.settings()["mode"].toString(), QString("local"));
         QCOMPARE(controller.settings()["url"].toString(), QString("https://example.test/base"));
@@ -429,7 +434,7 @@ private slots:
         options.executablePath = QStringLiteral(MANAGED_FIXTURE_PATH);
         options.probeTimeoutMs = 8000; options.readinessProbeTimeoutMs = 750;
         options.readinessIntervalMs = 50; options.readinessAttempts = 30; options.restartLimit = 2;
-        Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, options, disabledCredentials());
         QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE_WITH_TIMEOUT(controller.state()["errorKind"].toString(), QString("restart"), 30000);
         QCOMPARE(controller.state()["status"].toString(), QString("offline"));
@@ -441,6 +446,99 @@ private slots:
         QVERIFY(!controller.state()["loading"].toBool());
         file.seek(0); QCOMPARE(file.readAll().count("start\n"), 3);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
+    }
+    void controllerRefusesUsageRedirectWithBearer() {
+        QTemporaryDir dir; QTcpServer origin, destination;
+        QVERIFY(origin.listen(QHostAddress::LocalHost)); QVERIFY(destination.listen(QHostAddress::LocalHost));
+        int destinationRequests = 0;
+        connect(&destination, &QTcpServer::newConnection, this, [&] {
+            while (auto socket = destination.nextPendingConnection()) {
+                ++destinationRequests; socket->disconnectFromHost(); socket->deleteLater();
+            }
+        });
+        connect(&origin, &QTcpServer::newConnection, this, [&] {
+            while (auto socket = origin.nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                    const auto request = socket->readAll();
+                    if (!request.contains("\r\n\r\n")) return;
+                    const QByteArray location = "http://127.0.0.1:" + QByteArray::number(destination.serverPort()) + "/target";
+                    socket->write("HTTP/1.1 302 Found\r\nLocation: " + location + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    socket->disconnectFromHost();
+                });
+            }
+        });
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
+        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(origin.serverPort()),
+            "synthetic-bearer", 60, false, "Claude", false).isEmpty());
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
+        QVERIFY(controller.state()["message"].toString().contains("redirected"));
+        QCOMPARE(destinationRequests, 0);
+    }
+    void controllerReplacesOnlyRecoveredProvider() {
+        QTemporaryDir dir; QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+        int usageRequests = 0, credentialRequests = 0;
+        const auto unaffected = QJsonDocument::fromJson(Usage::demo()).array().first();
+        QVariantList expectedUnaffected;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{unaffected}).toJson(), expectedUnaffected));
+        auto failedCursor = [] {
+            return QJsonObject{{"provider_name", "Cursor"}, {"primary_label", "Current"}, {"secondary_label", "Weekly"},
+                {"show_secondary", true}, {"subtitle", QJsonValue::Null}, {"primary_status_text", QJsonValue::Null},
+                {"secondary_status_text", QJsonValue::Null}, {"reauth_command", QJsonValue::Null},
+                {"current", QJsonObject{{"utilization", 0}, {"resets_at", QJsonValue::Null}}},
+                {"weekly", QJsonObject{{"utilization", 0}, {"resets_at", QJsonValue::Null}}}, {"buckets", QJsonArray{}},
+                {"error", "Cursor session expired. Log in to cursor.com again."}, {"needs_reauth", true}, {"is_success", false}};
+        };
+        const auto recoveredCursor = [] {
+            return QJsonObject{{"provider_name", "Cursor"}, {"primary_label", "Current"}, {"secondary_label", "Weekly"},
+                {"show_secondary", true}, {"subtitle", QJsonValue::Null}, {"primary_status_text", QJsonValue::Null},
+                {"secondary_status_text", QJsonValue::Null}, {"reauth_command", QJsonValue::Null},
+                {"current", QJsonObject{{"utilization", 11}, {"resets_at", QJsonValue::Null}}},
+                {"weekly", QJsonObject{{"utilization", 22}, {"resets_at", QJsonValue::Null}}},
+                {"buckets", QJsonArray{QJsonObject{{"id", "weekly"}, {"label", "Weekly"}, {"utilization", 22},
+                    {"resets_at", QJsonValue::Null}, {"status_text", QJsonValue::Null}}}},
+                {"error", QJsonValue::Null}, {"needs_reauth", false}, {"is_success", true}};
+        }();
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            while (auto socket = server.nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                    QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    const qsizetype end = request.indexOf("\r\n\r\n"); if (end < 0 || socket->property("done").toBool()) return;
+                    qsizetype length = 0;
+                    for (const auto &line : request.first(end).split('\n')) if (line.trimmed().toLower().startsWith("content-length:"))
+                        length = line.mid(line.indexOf(':') + 1).trimmed().toLongLong();
+                    if (request.size() < end + 4 + length) return;
+                    socket->setProperty("done", true); QByteArray body;
+                    if (request.startsWith("GET /api/v1/usage ")) { ++usageRequests; body = QJsonDocument(QJsonArray{unaffected, failedCursor()}).toJson(); }
+                    else {
+                        ++credentialRequests;
+                        QVERIFY(request.startsWith("PUT /api/v1/providers/cursor/credentials "));
+                        QVERIFY(request.contains("synthetic-cursor"));
+                        body = QJsonDocument(QJsonObject{{"provider", "Cursor"}, {"refetched", true}, {"usage", recoveredCursor}}).toJson();
+                    }
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                        + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+                    socket->disconnectFromHost();
+                });
+            }
+        });
+        qputenv("HEADROOM_CREDENTIAL_FIXTURE_MODE", "valid");
+        CredentialServiceOptions credentials; credentials.enabled = true;
+        credentials.helperPath = QStringLiteral(CREDENTIAL_FIXTURE_PATH); credentials.retryCooldownMs = 1000;
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, {}, credentials);
+        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(server.serverPort()),
+            "", 60, false, "Cursor", false).isEmpty());
+        const auto providerNamed = [&](const QString &name) {
+            for (const auto &provider : controller.providers())
+                if (provider.toMap()["provider_name"].toString() == name) return provider.toMap();
+            return QVariantMap{};
+        };
+        QTRY_COMPARE(controller.providers().size(), 2);
+        QTRY_VERIFY(providerNamed("Cursor")["is_success"].toBool());
+        QCOMPARE(providerNamed("Claude"), expectedUnaffected.first().toMap());
+        QCOMPARE(providerNamed("Cursor")["buckets"].toList().first().toMap()["utilization"].toDouble(), 22.0);
+        QCOMPARE(usageRequests, 1); QCOMPARE(credentialRequests, 1);
+        QVERIFY(!controller.diagnosticText().contains("synthetic-cursor"));
     }
 };
 QTEST_GUILESS_MAIN(UsageTest)

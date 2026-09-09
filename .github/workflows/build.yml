@@ -19,11 +19,27 @@ jobs:
           dotnet-version: 8.0.x
       - name: Build legacy client
         run: dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release
+      - name: Run retained Windows lifecycle and browser fixtures
+        run: dotnet run --project tests/windows/ServerProcessManagerTests.csproj -c Release
+      - name: Publish Headroom credential helpers
+        shell: pwsh
+        run: |
+          dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r win-x64 -o "$env:RUNNER_TEMP/helper-x64"
+          dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r win-arm64 -o "$env:RUNNER_TEMP/helper-arm64"
+          if (!(Test-Path "$env:RUNNER_TEMP/helper-x64/headroom-credential-helper.exe")) { exit 1 }
+          if (!(Test-Path "$env:RUNNER_TEMP/helper-arm64/headroom-credential-helper.exe")) { exit 1 }
+          & "$env:RUNNER_TEMP/helper-x64/headroom-credential-helper.exe" unknown
+          if ($LASTEXITCODE -ne 2) { exit 1 }
+          $global:LASTEXITCODE = 0
+      - name: Run native credential crypto fixtures
+        run: dotnet run --project tests/windows/HeadroomCredentialHelperNativeTests.csproj -c Release
 
   desktop-linux:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Test WSL request safety with isolated HTTP fixtures
+        run: python3 -m unittest discover -s server/deploy/wsl -p 'test_*.py'
       - name: Install Qt runtime build dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-x11-0
       - uses: jurplel/install-qt-action@v4.3.0

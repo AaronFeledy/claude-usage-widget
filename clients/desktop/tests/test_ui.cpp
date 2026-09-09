@@ -25,7 +25,8 @@ private slots:
         const auto capture = [&](const QString &name) {
             return dir.filePath(name);
         };
-        Controller controller(true, dir.filePath("settings.json"));
+        CredentialServiceOptions credentialOptions; credentialOptions.enabled = false;
+        Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentialOptions);
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo;
         QQmlApplicationEngine engine;

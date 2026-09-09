@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="HeadroomCredentialHelperNativeTests.cs" />
     <Compile Include="../../clients/windows/Models/UsageData.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Models/BucketPresentation.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/ApiClient*.cs" Link="Services/%(Filename)%(Extension)" />
@@ -15,8 +16,11 @@
     <Compile Include="../../clients/windows/Services/UpdateServiceBundle*.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/TrayApiClientSettingsAdapter.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/TrayUsagePoller.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../../clients/windows/Services/IProviderCookieReader.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../../clients/windows/Services/WindowsBrowserCookieReader.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/TrayVisualState.cs" Link="Services/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/BrowserCookieDatabaseSnapshot.cs" Link="Services/%(Filename)%(Extension)" />
+    <Compile Include="../../clients/windows/Headroom.CredentialHelper/CredentialHelperProtocol.cs" Link="CredentialHelper/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/TrayIcon/NativeIconLease.cs" Link="TrayIcon/%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>

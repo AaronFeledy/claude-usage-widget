@@ -7,9 +7,9 @@
 #include <utility>
 
 Controller::Controller(bool demo, const QString &configPath, QObject *parent, bool allowAutomaticMigration,
-                       ManagedServerOptions serverOptions)
+                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions)
     : QObject(parent), m_settingsService(configPath, allowAutomaticMigration && !demo),
-      m_demo(demo), m_server(std::move(serverOptions), this) {
+      m_demo(demo), m_server(std::move(serverOptions), this), m_credentials(std::move(credentialOptions), this) {
     const auto &loaded = m_settingsService.value();
     m_mode = loaded.connectionMode; m_url = loaded.url; m_token = loaded.token;
     m_interval = loaded.interval; m_notifications = loaded.notifications;
@@ -23,6 +23,25 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
     connect(&m_clock, &QTimer::timeout, this, [this] { updateMeterStates(); emit changed(); });
     m_clock.start(30000);
     m_server.configure(m_mode, m_token);
+    m_credentials.configure(m_demo ? QStringLiteral("remote") : m_mode, backendUrl(), m_demo ? QString() : m_token);
+    connect(&m_credentials, &CredentialService::event, this, [this](const QString &message) {
+        log(QStringLiteral("Credentials"), message);
+    });
+    connect(&m_credentials, &CredentialService::providerRecovered, this, [this](const QVariantMap &replacement) {
+        const QString name = replacement.value(QStringLiteral("provider_name")).toString();
+        bool replaced = false;
+        for (auto &provider : m_providers) {
+            if (provider.toMap().value(QStringLiteral("provider_name")).toString() != name) continue;
+            provider = replacement;
+            replaced = true;
+            break;
+        }
+        if (!replaced) return;
+        updateMeterStates();
+        emit providersChanged();
+        emit changed();
+        m_credentials.consider(m_providers);
+    });
     connect(&m_server, &ManagedServer::available, this, [this] {
         if (!m_demo && m_mode == "local" && !m_loading && !m_waitingForUsageRetry) requestUsage();
     });
@@ -117,7 +136,7 @@ void Controller::requestUsage() {
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("User-Agent", "Headroom/0.1");
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::SameOriginRedirectPolicy);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(10000);
     if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
     m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
@@ -127,8 +146,10 @@ void Controller::requestUsage() {
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 1024 * 1024) reply->abort(); });
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
         const auto error = reply->error(); const auto body = reply->readAll();
         reply->deleteLater(); m_reply.clear(); m_loading = false;
+        if (redirected) { fail("The backend redirected the request. Enter its final address in settings.", "api"); return; }
         if (status == 401 || status == 403) { fail("Your backend rejected the token. Update it in connection settings.", "auth"); return; }
         if (status && status != 200) { fail(QString("Backend returned HTTP %1. Check the address and try again.").arg(status), "api"); return; }
         if (error != QNetworkReply::NoError) {
@@ -148,6 +169,7 @@ void Controller::requestUsage() {
         log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
         m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
         updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
+        m_credentials.consider(m_providers);
     });
 }
 QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken) {
@@ -165,6 +187,7 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (m_mode != mode || m_url != url || m_token != savedToken || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_server.configure(m_mode, m_token);
+    m_credentials.configure(m_mode, backendUrl(), m_token);
     m_demo = false; m_status = "connecting"; m_message.clear(); resetRetry();
     log("Settings", "Connection settings saved.");
     emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
@@ -207,6 +230,7 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
 void Controller::preview(bool enabled) {
     cancel(); resetRetry(); m_waitingForUsageRetry = false; m_demo = enabled;
     m_server.configure(enabled ? QStringLiteral("remote") : m_mode, enabled ? QString() : m_token);
+    m_credentials.configure(enabled ? QStringLiteral("remote") : m_mode, enabled ? QString() : backendUrl(), enabled ? QString() : m_token);
     log("App", enabled ? "Sample preview enabled." : "Live connection enabled."); m_providers.clear(); m_warningStates.clear(); m_concerns.clear(); m_lastGood = 0; m_message.clear(); m_status = "setup"; emit providersChanged(); emit changed(); refresh();
 }
 QVariantMap Controller::concern(const QString &provider, const QVariantMap &bucket) const {

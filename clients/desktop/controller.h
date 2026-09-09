@@ -10,6 +10,7 @@
 #include <QSet>
 #include "settings.h"
 #include "managedserver.h"
+#include "credentialservice.h"
 
 class Controller : public QObject {
     Q_OBJECT
@@ -19,7 +20,8 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
 public:
     explicit Controller(bool demo = false, const QString &configPath = {}, QObject *parent = nullptr,
-                        bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {});
+                        bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
+                        CredentialServiceOptions credentialOptions = {});
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -80,6 +82,7 @@ private:
     QHash<MeterKey, QVariantMap> m_concerns;
     QNetworkAccessManager m_network;
     ManagedServer m_server;
+    CredentialService m_credentials;
     QPointer<QNetworkReply> m_reply;
     QTimer m_poll, m_clock;
 };
