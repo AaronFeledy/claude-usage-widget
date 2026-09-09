@@ -51,6 +51,11 @@ type Inspection struct {
 }
 
 func StageArchive(archive, installRoot string, expected Expectations) (StageResult, error) {
+	var err error
+	installRoot, err = NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return StageResult{}, err
+	}
 	if err := validateInstallTargets(installRoot, ""); err != nil {
 		return StageResult{}, err
 	}
@@ -108,6 +113,17 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 }
 
 func InstallArchive(archive, installRoot, entryPath string, expected Expectations) (InstallState, error) {
+	var err error
+	installRoot, err = NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return InstallState{}, err
+	}
+	if entryPath != "" {
+		entryPath, err = normalizeAbsolutePath(entryPath, "entry path")
+		if err != nil {
+			return InstallState{}, err
+		}
+	}
 	if err := validateInstallTargets(installRoot, entryPath); err != nil {
 		return InstallState{}, err
 	}
@@ -205,6 +221,10 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 
 func InspectInstall(installRoot string) Inspection {
 	result := Inspection{}
+	installRoot, err := NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return result
+	}
 	data, err := os.ReadFile(filepath.Join(installRoot, StateName))
 	if err != nil {
 		return result
@@ -267,6 +287,11 @@ func InspectInstall(installRoot string) Inspection {
 }
 
 func ActiveExecutable(installRoot string) (string, Inspection, error) {
+	canonicalRoot, err := NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return "", Inspection{}, err
+	}
+	installRoot = canonicalRoot
 	inspection := InspectInstall(installRoot)
 	if !inspection.TrustedIdentity {
 		return "", inspection, errors.New("Headroom installation identity is not valid")
@@ -287,6 +312,23 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 		return "", inspection, fmt.Errorf("Headroom %s application is missing; reinstall %s", inspection.Version, inspection.PackageAsset)
 	}
 	return executable, inspection, nil
+}
+
+// NormalizeInstallRoot accepts native absolute paths with either separator and
+// returns the single path representation persisted in launcher associations.
+func NormalizeInstallRoot(installRoot string) (string, error) {
+	return normalizeAbsolutePath(installRoot, "install root")
+}
+
+func normalizeAbsolutePath(value, label string) (string, error) {
+	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
+		return "", fmt.Errorf("%s must be an absolute clean path", label)
+	}
+	clean := filepath.Clean(value)
+	if !filepath.IsAbs(clean) {
+		return "", fmt.Errorf("%s must be an absolute clean path", label)
+	}
+	return clean, nil
 }
 
 func validateInstallTargets(installRoot, entryPath string) error {

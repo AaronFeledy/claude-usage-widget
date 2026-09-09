@@ -129,11 +129,17 @@ existing roaming/XDG locations and are never part of an application bundle.
 The portable Linux x86_64 archive is built on Ubuntu 22.04. It bundles Qt but
 uses the baseline desktop's glibc, libstdc++, graphics, font, X11/XCB, Wayland,
 D-Bus and OpenSSL 3 ABI libraries. The generic bundle supports native X11 and
-Wayland rendering. On Ubuntu 22.04, install the runtime packages `libgl1`,
-`libopengl0`, `libfontconfig1`, `libdbus-1-3`, `libssl3`, `libxkbcommon0`,
-`libxkbcommon-x11-0`, `libwayland-client0`, `libwayland-cursor0`,
-`libwayland-egl1`, `libxcb1`, `libxcb-cursor0`, `libxcb-icccm4`,
-`libxcb-image0`, `libxcb-keysyms1`, and `libxcb-render-util0`. Precise KDE
+Wayland rendering. On Ubuntu 22.04, install the runtime packages `libegl1`,
+`libgl1`, `libglx0`, `libopengl0`, `libdrm2`, `libgbm1`, `libfontconfig1`,
+`libfreetype6`, `libglib2.0-0`, `libgssapi-krb5-2`, `libssl3`,
+`libwayland-client0`, `libwayland-cursor0`, `libwayland-egl1`, `libx11-6`,
+`libx11-xcb1`, `libxkbcommon0`, `libxkbcommon-x11-0`, `libxcb1`,
+`libxcb-cursor0`, `libxcb-glx0`, `libxcb-icccm4`, `libxcb-image0`,
+`libxcb-keysyms1`, `libxcb-randr0`, `libxcb-render-util0`, `libxcb-render0`,
+`libxcb-shape0`, `libxcb-shm0`, `libxcb-sync1`, `libxcb-xfixes0`,
+`libxcb-xkb1`, `zlib1g`, and `libzstd1`. `libc6`, `libgcc-s1`, `libstdc++6`,
+and `libdbus-1-3` are also part of the baseline and normally already installed
+on an Ubuntu desktop. Precise KDE
 Wayland tray attachment requires a distro/source
 build with `HEADROOM_WITH_KDE_TRAY` and `HEADROOM_WITH_LAYER_SHELL`; those source
 options remain enabled by default. Package smoke tests do not count as an

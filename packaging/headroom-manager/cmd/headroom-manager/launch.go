@@ -61,10 +61,11 @@ func associatedInstallRoot() (string, error) {
 }
 
 func validatedAssociation(root string) (string, error) {
-	if !filepath.IsAbs(root) || filepath.Clean(root) != root || strings.ContainsAny(root, "\r\n\x00") {
+	canonical, err := contract.NormalizeInstallRoot(root)
+	if err != nil {
 		return "", fmt.Errorf("Headroom launcher association is invalid")
 	}
-	return root, nil
+	return canonical, nil
 }
 
 func authoritativeEnvironment(base []string, values map[string]string) []string {
