@@ -65,6 +65,15 @@ text.
   and replaces the stable launcher only after validation. Installing the
   active version again is the repair operation for a missing or corrupt
   component.
+- `check-update --install-root <path>` checks the public GitHub release metadata
+  for a newer stable version of the exact native package. `stage-update` performs
+  the same check, downloads the complete archive into a private directory,
+  verifies its release size and SHA-256 plus the inner package contract, and
+  writes a verified stage without changing the active version. `stage-repair`
+  uses the installed version's exact release tag and is accepted only for a
+  trusted installation with a missing server or credential helper. These
+  commands accept `--cancel-stdin`; closing their input cancels the bounded
+  operation and removes its incomplete private download or stage.
 - `asset-name`, `create-package`, `create-release`, and `materialize-links`
   are build-recipe commands. `create-package` verifies its resulting archive;
   `create-release` fully verifies all three input archives before writing the
@@ -147,4 +156,8 @@ interactive tray-placement test.
 
 Source and system-managed CMake installs remain direct installs and use their
 own update method. They do not create package state or redirect startup through
-the per-user launcher.
+the per-user launcher. Only a native, trusted per-user installation may use the
+public acquisition commands. The desktop performs one delayed startup check,
+automatically downloads and verifies a newer bundle, and advertises restart only
+after the package tool returns a matching `verified-stage.json`. Preview, demo,
+capture, and explicit-config sessions do not make public update requests.

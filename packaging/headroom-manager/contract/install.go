@@ -85,6 +85,9 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 	if err = os.MkdirAll(stagingRoot, 0o700); err != nil {
 		return StageResult{}, err
 	}
+	if err = validateInstallTargets(stagingRoot, ""); err != nil {
+		return StageResult{}, err
+	}
 	token := make([]byte, 8)
 	if _, err = rand.Read(token); err != nil {
 		return StageResult{}, err
@@ -131,7 +134,7 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 	if err != nil {
 		return InstallState{}, err
 	}
-	stageContainer := filepath.Dir(stage.PackageRoot)
+	stageContainer := filepath.Dir(filepath.Dir(stage.PackageRoot))
 	defer os.RemoveAll(stageContainer)
 	manifestFile, err := os.Open(filepath.Join(stage.PackageRoot, PackageManifestName))
 	if err != nil {

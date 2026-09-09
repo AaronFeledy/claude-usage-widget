@@ -3,6 +3,7 @@
 #include "trayvisual.h"
 #include "startup.h"
 #include "appinfo.h"
+#include "updateservice.h"
 #include "popup.h"
 #include "instance.h"
 #include <QCursor>
@@ -68,8 +69,10 @@ int main(int argc, char **argv) {
     Controller controller(demo, parser.value("config"), nullptr, !demo && !capture && !isolated);
     StartupService startup({}, {}, !demo && !capture && !isolated);
     AppInfo appInfo;
+    UpdateService updateService(!demo && !capture && !isolated);
     const auto syncServices = [&] {
         startup.setAllowChanges(!controller.isDemo() && !capture && !isolated);
+        updateService.setPublicTrafficAllowed(!controller.isDemo());
         appInfo.setBackend(controller.isDemo() ? QString() : controller.backendUrl(),
                            controller.isDemo() ? QString() : controller.backendToken());
     };
@@ -81,6 +84,7 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("backend", &controller);
     engine.rootContext()->setContextProperty("startupService", &startup);
     engine.rootContext()->setContextProperty("appInfo", &appInfo);
+    engine.rootContext()->setContextProperty("updateService", &updateService);
     const bool hasTray = !capture && QSystemTrayIcon::isSystemTrayAvailable();
     engine.rootContext()->setContextProperty("trayAvailable", hasTray);
     engine.rootContext()->setContextProperty("startHidden", true);
@@ -156,6 +160,7 @@ int main(int argc, char **argv) {
 #endif
     }
     if (!parser.isSet("background") || !hasTray) show();
+    if (!demo && !capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
     if (capture) QTimer::singleShot(900, &app, [&] { app.exit(window->grabWindow().save(parser.value("screenshot")) ? 0 : 2); });
     return app.exec();
 }

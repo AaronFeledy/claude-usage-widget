@@ -2,6 +2,7 @@
 #include "usage.h"
 #include "startup.h"
 #include "appinfo.h"
+#include "updateservice.h"
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -29,10 +30,12 @@ private slots:
         Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentialOptions);
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo;
+        UpdateService updateService(false);
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &controller);
         engine.rootContext()->setContextProperty("startupService", &startup);
         engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
         engine.rootContext()->setContextProperty("trayAvailable", false);
         engine.rootContext()->setContextProperty("startHidden", false);
         engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));

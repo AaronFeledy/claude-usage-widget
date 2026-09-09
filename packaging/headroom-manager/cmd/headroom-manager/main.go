@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -46,6 +47,12 @@ func run(args []string) int {
 		result, err = stage(args[2:])
 	case "install":
 		result, err = install(args[2:])
+	case "check-update":
+		result, err = checkUpdate(args[2:])
+	case "stage-update":
+		result, err = stageUpdate(args[2:], false)
+	case "stage-repair":
+		result, err = stageUpdate(args[2:], true)
 	case "create-package":
 		result, err = createPackage(args[2:])
 	case "create-release":
@@ -56,6 +63,45 @@ func run(args []string) int {
 		err = fmt.Errorf("unknown command %q", command)
 	}
 	return emit(command, result, err)
+}
+
+func checkUpdate(args []string) (any, error) {
+	set := flag.NewFlagSet("check-update", flag.ContinueOnError)
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	cancelStdin := set.Bool("cancel-stdin", false, "cancel when standard input closes")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	ctx, cancel := cancellableContext(*cancelStdin)
+	defer cancel()
+	return contract.DefaultUpdateClient().Check(ctx, *root)
+}
+
+func stageUpdate(args []string, repair bool) (any, error) {
+	command := "stage-update"
+	if repair {
+		command = "stage-repair"
+	}
+	set := flag.NewFlagSet(command, flag.ContinueOnError)
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	cancelStdin := set.Bool("cancel-stdin", false, "cancel when standard input closes")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	ctx, cancel := cancellableContext(*cancelStdin)
+	defer cancel()
+	if repair {
+		return contract.DefaultUpdateClient().StageRepair(ctx, *root)
+	}
+	return contract.DefaultUpdateClient().StageLatest(ctx, *root)
+}
+
+func cancellableContext(enabled bool) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if enabled {
+		go func() { var input [1]byte; _, _ = os.Stdin.Read(input[:]); cancel() }()
+	}
+	return ctx, cancel
 }
 func assetName(args []string) (any, error) {
 	set := flag.NewFlagSet("asset-name", flag.ContinueOnError)

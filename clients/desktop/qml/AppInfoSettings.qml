@@ -18,11 +18,14 @@ ColumnLayout {
         }
         ActionButton { text: appInfo.checkingServer ? "Checking…" : "Check server"; enabled: !appInfo.checkingServer; quiet: true; onClicked: appInfo.refreshServer() }
     }
-    Text { text: appInfo.releaseStatus; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 12; textFormat: Text.PlainText }
+    Text { text: updateService.statusText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: updateService.state === "failed" ? Theme.red : Theme.muted; font.pixelSize: 12; textFormat: Text.PlainText }
     Flow {
         Layout.fillWidth: true; spacing: 8
-        ActionButton { text: appInfo.checkingRelease ? "Checking…" : "Check for updates"; enabled: !appInfo.checkingRelease; onClicked: appInfo.checkForUpdates() }
-        ActionButton { text: appInfo.linuxDownloadAvailable ? "View Linux release" : "Release notes"; quiet: true; onClicked: appInfo.openReleasePage() }
-        ActionButton { text: "Source update guide"; quiet: true; onClicked: appInfo.openInstallGuide() }
+        ActionButton { visible: updateService.canCheck || updateService.busy; text: updateService.busy ? (updateService.state === "downloading" ? "Working…" : "Checking…") : "Check for updates"; enabled: updateService.canCheck; onClicked: updateService.checkForUpdates() }
+        ActionButton { visible: updateService.canStage; text: "Download update"; onClicked: updateService.stageUpdate() }
+        ActionButton { visible: updateService.canRepair; text: "Repair installation"; onClicked: updateService.repairInstallation() }
+        ActionButton { visible: updateService.busy; text: "Cancel"; quiet: true; onClicked: updateService.cancel() }
+        ActionButton { visible: updateService.restartAvailable; text: "Restart to apply"; enabled: false; quiet: true }
+        ActionButton { visible: updateService.updateMethod !== "automatic"; text: updateService.updateMethod === "system" ? "System update instructions" : "Source update guide"; quiet: true; onClicked: updateService.openUpdateMethod() }
     }
 }

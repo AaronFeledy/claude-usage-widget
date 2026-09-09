@@ -5,8 +5,6 @@
 #include <QTcpSocket>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QSysInfo>
 
 class HttpFixture : public QTcpServer {
 public:
@@ -79,7 +77,7 @@ private slots:
     void timeoutsAndBackendSwitch() {
         HttpFixture slow, next; QVERIFY(slow.listen(QHostAddress::LocalHost)); QVERIFY(next.listen(QHostAddress::LocalHost));
         slow.respond = false;
-        AppInfo info(nullptr, QUrl(slow.url()), 100);
+        AppInfo info(nullptr, 100);
         info.setBackend(slow.url(), "old-token"); info.refreshServer();
         QTRY_VERIFY(!info.checkingServer()); QVERIFY(info.serverStatus().contains("unavailable"));
         info.refreshServer(); QTRY_VERIFY(slow.requests.size() >= 2);
@@ -87,41 +85,13 @@ private slots:
         QTRY_VERIFY(!info.checkingServer()); QCOMPARE(info.serverVersion(), QString("1.7.1"));
         QVERIFY(HttpAssertions::hasHeader(next.requests.last(), "Authorization", "Bearer new-token"));
         QVERIFY(!next.requests.last().contains("old-token"));
-        info.checkForUpdates(); QTRY_VERIFY(!info.checkingRelease()); QVERIFY(info.releaseStatus().contains("Could not check"));
     }
     void rejectsOversizedResponses() {
         HttpFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
         fixture.body = QByteArray(1024 * 1024 + 100, 'x');
-        AppInfo info(nullptr, QUrl(fixture.url()), 2000);
+        AppInfo info(nullptr, 2000);
         info.setBackend(fixture.url(), "test-token"); info.refreshServer();
         QTRY_VERIFY(!info.checkingServer()); QVERIFY(info.serverVersion().isEmpty());
-        info.checkForUpdates(); QTRY_VERIFY(!info.checkingRelease());
-        QVERIFY(info.latestVersion().isEmpty()); QVERIFY(!info.linuxDownloadAvailable());
-    }
-    void releaseAvailabilityAndCredentialIsolation() {
-        HttpFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
-        AppInfo info(nullptr, QUrl(fixture.url() + "/releases/latest"));
-        info.setBackend(fixture.url(), "backend-secret");
-        QJsonArray assets {QJsonObject{{"name", "ClaudeUsageWidget-win-x64.exe"}}};
-        auto release = QJsonObject{{"tag_name", "v9.1.0"}, {"assets", assets}};
-        fixture.body = QJsonDocument(release).toJson(); info.checkForUpdates();
-        QTRY_VERIFY(!info.checkingRelease()); QCOMPARE(info.latestVersion(), QString("v9.1.0"));
-        QVERIFY(!info.linuxDownloadAvailable()); QVERIFY(info.releaseStatus().contains("No Linux installer"));
-        QVERIFY(!HttpAssertions::hasHeader(fixture.requests.last(), "Authorization"));
-        QVERIFY(!fixture.requests.last().contains("backend-secret"));
-        auto cpu = QSysInfo::currentCpuArchitecture(); if (cpu == "arm64") cpu = "aarch64";
-        const QString name = "headroom-linux-" + cpu + ".tar.gz";
-        assets.append(QJsonObject{{"name", name}, {"browser_download_url", "https://github.com/AaronFeledy/claude-usage-widget/releases/download/v9.1.0/" + name}});
-        release["assets"] = assets; fixture.body = QJsonDocument(release).toJson(); info.checkForUpdates();
-        QTRY_VERIFY(!info.checkingRelease()); QVERIFY(info.linuxDownloadAvailable());
-        QVERIFY(info.releaseStatus().contains("Review it before installing"));
-        release["assets"] = QJsonArray{QJsonObject{{"name", name}, {"browser_download_url", "https://unrelated.example/" + name}}};
-        fixture.body = QJsonDocument(release).toJson(); info.checkForUpdates();
-        QTRY_VERIFY(!info.checkingRelease()); QVERIFY(!info.linuxDownloadAvailable());
-        fixture.body = "not json"; info.checkForUpdates(); QTRY_VERIFY(!info.checkingRelease());
-        QVERIFY(info.latestVersion().isEmpty()); QVERIFY(info.releaseStatus().contains("not recognized"));
-        fixture.status = 404; info.checkForUpdates(); QTRY_VERIFY(!info.checkingRelease());
-        QVERIFY(info.releaseStatus().contains("No published release"));
     }
 };
 QTEST_GUILESS_MAIN(AppInfoTest)

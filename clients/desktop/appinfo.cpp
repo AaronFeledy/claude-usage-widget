@@ -1,20 +1,12 @@
 #include "appinfo.h"
 #include "usage.h"
 #include <QCoreApplication>
-#include <QDesktopServices>
-#include <QDir>
-#include <QFileInfo>
-#include <QStandardPaths>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
-#include <QSysInfo>
 #include <QTimer>
-#include <QVersionNumber>
 
 namespace {
-constexpr auto releasesPage = "https://github.com/AaronFeledy/claude-usage-widget/releases/latest";
 QString safeVersion(const QJsonValue &value) {
     const QString version = value.toString();
     static const QRegularExpression valid("^[A-Za-z0-9][A-Za-z0-9.+_-]{0,79}$");
@@ -25,8 +17,8 @@ bool success(QNetworkReply *reply) {
         && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
 }
 }
-AppInfo::AppInfo(QObject *parent, const QUrl &releaseApi, int timeoutMs)
-    : QObject(parent), m_releaseApi(releaseApi), m_timeoutMs(timeoutMs) {}
+AppInfo::AppInfo(QObject *parent, int timeoutMs)
+    : QObject(parent), m_timeoutMs(timeoutMs) {}
 QString AppInfo::applicationVersion() const {
     return QCoreApplication::applicationVersion();
 }
@@ -81,64 +73,4 @@ void AppInfo::refreshServer() {
         else m_serverStatus = "Server version unavailable. Try again when connected.";
         reply->deleteLater(); emit changed();
     });
-}
-void AppInfo::checkForUpdates() {
-    if (m_releaseReply) return;
-    auto reply = request(m_releaseApi); m_releaseReply = reply;
-    m_releaseStatus = "Checking releases…"; m_linuxAvailable = false; m_latestVersion.clear(); emit changed();
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
-        m_releaseReply = nullptr;
-        if (!success(reply)) {
-            m_releaseStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 404
-                ? "No published release is available. This installation is built from source."
-                : "Could not check releases. Try again later.";
-        } else {
-            const auto release = QJsonDocument::fromJson(reply->readAll()).object();
-            m_latestVersion = safeVersion(release["tag_name"]);
-            if (m_latestVersion.isEmpty() || !release["assets"].isArray()
-                || release["draft"].toBool() || release["prerelease"].toBool()) {
-                m_latestVersion.clear(); m_releaseStatus = "Release information was not recognized.";
-            } else {
-                // Linux packages must explicitly identify Headroom and this CPU;
-                // usage-server or Windows assets are never application updates.
-                const auto cpu = QSysInfo::currentCpuArchitecture();
-                const QString architecture = cpu == "x86_64" ? "(?:x86_64|amd64|x64)"
-                    : cpu == "arm64" || cpu == "aarch64" ? "(?:aarch64|arm64)" : QRegularExpression::escape(cpu);
-                const QRegularExpression assetName("^headroom-linux-" + architecture + "(?:-v?[0-9][0-9A-Za-z.+_-]*)?\\.(?:tar\\.gz|AppImage|deb|rpm)$", QRegularExpression::CaseInsensitiveOption);
-                for (const auto &asset : release["assets"].toArray()) {
-                    const auto obj = asset.toObject(); const QUrl download(obj["browser_download_url"].toString());
-                    if (assetName.match(obj["name"].toString()).hasMatch()
-                        && download.scheme() == "https" && download.host() == "github.com"
-                        && download.path().startsWith("/AaronFeledy/claude-usage-widget/releases/download/")) m_linuxAvailable = true;
-                }
-                if (!m_linuxAvailable) m_releaseStatus = "Latest project release: " + m_latestVersion
-                    + ". No Linux installer for this computer is published. Update Headroom from source.";
-                else {
-                    QString version = m_latestVersion; if (version.startsWith('v')) version.remove(0, 1);
-                    const auto latest = QVersionNumber::fromString(version), current = QVersionNumber::fromString(applicationVersion());
-                    m_releaseStatus = !latest.isNull() && !current.isNull() && latest <= current
-                        ? "This version is current. Linux packages are available on the release page."
-                        : "A Linux package is available on the release page. Review it before installing.";
-                }
-            }
-        }
-        reply->deleteLater(); emit changed();
-    });
-}
-void AppInfo::openReleasePage() { QDesktopServices::openUrl(QUrl(releasesPage)); }
-void AppInfo::openInstallGuide() {
-    const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList candidates {
-        QDir(appDir).filePath("../share/headroom/update-guide.html"),
-        QStandardPaths::locate(QStandardPaths::GenericDataLocation, "headroom/update-guide.html"),
-        QDir(appDir).filePath("../update-guide.html")
-    };
-    for (const auto &candidate : candidates) {
-        if (!candidate.isEmpty() && QFileInfo::exists(candidate)) {
-            if (QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(candidate).absoluteFilePath()))) return;
-            break;
-        }
-    }
-    m_releaseStatus = "Could not open the local update guide. Reinstall Headroom's shared files or open clients/desktop/update-guide.html in the source checkout.";
-    emit changed();
 }

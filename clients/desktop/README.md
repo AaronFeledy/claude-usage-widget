@@ -117,11 +117,13 @@ or starts an adjacent bundled `usage-server` executable with bounded readiness a
 restart handling. Headroom stops only a server process that it started.
 
 Settings shows the app version and checks the configured server's authenticated
-health/version endpoint. **Check for updates** reads the public project release
-metadata without sending your bearer token. Only a Headroom Linux package for
-the current CPU can be offered. The current release workflow publishes Windows
-executables, so **Source update guide** opens installed instructions for this
-source-built client. Automatic download/install is not implemented.
+health/version endpoint. Official per-user packages perform one delayed startup
+check and automatically download, verify, and stage a newer matching Headroom
+bundle without sending the backend bearer token. The settings panel also supports
+manual checks and staging. A staged bundle is applied after restart; transactional
+switching and recovery are handled by the next updater phase. Source builds use
+the installed source update guide, while system-managed builds defer to their
+package manager and never write into a per-user package installation.
 
 **Open diagnostics** shows the last 500 events in this session, with UTC times,
 categories, Copy log, and Clear. It records controlled connection/settings/tier
@@ -177,10 +179,11 @@ meter counts, status text, and authentication errors. Preview data uses syntheti
 values with representative three/two/four/one-meter layouts; live accounts may
 return different buckets. Both clients retain pacing and provider ordering.
 
-Headroom is a remote client. Windows-only local server management, browser-cookie
-extraction, application auto-updates, and its debug console have not been ported.
-The WSL service deployment is documented in
-[the server deployment notes](../../server/deploy/wsl/README.md).
+Headroom supports both remote connections and an owned local usage server on
+Windows and Linux. Windows can forward supported browser credentials through the
+bundled helper. Official per-user packages share the verified update staging
+flow described above. The WSL service remains a separately managed deployment
+documented in [the server deployment notes](../../server/deploy/wsl/README.md).
 
 ## Appearance and provider names
 
