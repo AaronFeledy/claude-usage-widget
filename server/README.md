@@ -1,6 +1,9 @@
-# Usage Server
+# Headroom usage server
 
-Go HTTP API server for Claude Usage Widget. It polls enabled providers and serves cached usage data to the Windows tray app, Home Assistant, or other local clients.
+The Go server polls enabled providers and serves cached usage to Headroom, Home
+Assistant REST sensors, and compatible API clients. The `usage-server` binary,
+configuration keys, environment variables, default paths, and API wire names
+remain compatible with Claude Usage Widget deployments.
 
 ## Build
 
@@ -13,7 +16,7 @@ go build ./...
 go build -trimpath -ldflags='-s -w -buildid=' -o usage-server ./cmd/usage-server
 ```
 
-Cross-build the Windows sidecar from `server/`:
+Cross-build the Windows local server from `server/`:
 
 ```bash
 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o usage-server-win-x64.exe ./cmd/usage-server
@@ -99,7 +102,20 @@ providers:
     credentials_path: ~/.grok/auth.json
 ```
 
-All four providers are enabled by default; Claude defaults to `~/.claude/.credentials.json`, and the others discover credentials automatically when no path is set. Disable unwanted providers with `enabled: false` or `USAGE_PROVIDER_<NAME>_ENABLED=false`. Codex can also discover `CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode auth. Cursor local discovery is intended for local browser sessions; remote deployments should prefer tray-pushed in-memory Cursor credentials over HTTPS because the tray never sends browser credentials to remote plain-HTTP URLs. Grok weekly usage primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json` or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback when CLI weekly data is unavailable.
+All four providers are enabled by default; Claude defaults to
+`~/.claude/.credentials.json`, and the others discover credentials automatically
+when no path is set. Disable unwanted providers with `enabled: false` or
+`USAGE_PROVIDER_<NAME>_ENABLED=false`. The API name `Codex` is intentionally
+retained while Headroom displays it as ChatGPT. Codex can also discover
+`CODEX_HOME/auth.json`, `~/.codex/auth.json`, Windows WSL auth, and OpenCode
+auth. Cursor local discovery is intended for local browser sessions; remote
+deployments should prefer an in-memory credential push over HTTPS because
+Headroom never sends browser credentials to remote plain HTTP. Grok weekly usage
+primarily uses the authenticated CLI billing endpoint with `~/.grok/auth.json`
+or Windows WSL auth; the memory-only browser `sso` cookie is an optional fallback
+when CLI weekly data is unavailable. Browser discovery is available in official
+Windows Headroom packages only; Linux deployments use server-side files or the
+documented WSL sync.
 
 ## Authentication Safety
 
@@ -114,7 +130,11 @@ Do not place real provider credentials or bearer tokens in committed files. Pref
 
 ## Raspberry Pi Systemd Sample
 
-This sample assumes the binary is installed at `/opt/claude-usage-widget/usage-server`, config lives at `/etc/claude-usage-widget/config.yaml`, provider credential copies are owned by the dedicated `usagewidget` user, and secrets are in `/etc/claude-usage-widget/usage-server.env`.
+This compatible sample keeps its existing paths: the binary is installed at
+`/opt/claude-usage-widget/usage-server`, config lives at
+`/etc/claude-usage-widget/config.yaml`, provider credential copies are owned by
+the dedicated `usagewidget` user, and secrets are in
+`/etc/claude-usage-widget/usage-server.env`.
 
 `/etc/claude-usage-widget/config.yaml`:
 
@@ -145,7 +165,7 @@ USAGE_AUTH_TOKEN=replace-with-a-long-random-token
 
 ```ini
 [Unit]
-Description=Claude Usage Widget API server
+Description=Headroom usage API server
 After=network-online.target
 Wants=network-online.target
 
@@ -186,11 +206,11 @@ Copy provider credential files with owner `usagewidget` and mode `600`.
 The image default still binds to loopback inside the container, which is not useful for published ports. Override the bind and provide auth:
 
 ```bash
-docker build -t claude-usage-server ./server
+docker build -t headroom-usage-server ./server
 docker run --rm -p 7823:7823 \
   -e USAGE_AUTH_TOKEN='replace-with-a-long-random-token' \
   -v "$HOME/.claude/.credentials.json:/home/nonroot/.claude/.credentials.json:ro" \
-  claude-usage-server --listen-addr 0.0.0.0:7823
+  headroom-usage-server --listen-addr 0.0.0.0:7823
 ```
 
 Add read-only credential mounts as needed. All providers, including Grok, are enabled by default, so Grok only needs its credential file made available—for example, mount `~/.grok/auth.json` to the path configured for the container user (override it with `-e USAGE_PROVIDER_GROK_CREDENTIALS_PATH=...` when the mount path differs).

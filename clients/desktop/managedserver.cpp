@@ -240,10 +240,10 @@ void ManagedServer::handleProbe(ProbePurpose purpose, ProbeResult result)
         setFailure(QStringLiteral("Port 7823 is occupied by an incompatible local service."), QStringLiteral("local-service")); break;
     case ProbeResult::TimedOut:
         setFailure(purpose == ProbePurpose::Initial
-            ? QStringLiteral("The local server health check timed out. No sidecar was started.")
+            ? QStringLiteral("The local server health check timed out. No local server was started.")
             : QStringLiteral("The bundled local server did not answer its health check in time."), QStringLiteral("timeout")); break;
     case ProbeResult::NetworkFailure:
-        setFailure(QStringLiteral("The local endpoint could not be verified. No sidecar was started."), QStringLiteral("network")); break;
+        setFailure(QStringLiteral("The local endpoint could not be verified. No local server was started."), QStringLiteral("network")); break;
     case ProbeResult::Refused:
         setFailure(QStringLiteral("The bundled local server did not become ready in time."), QStringLiteral("readiness")); break;
     case ProbeResult::Compatible: break;

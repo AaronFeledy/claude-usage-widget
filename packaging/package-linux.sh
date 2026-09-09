@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 8 ]]; then
-  echo "usage: package-linux.sh VERSION BUILD_DIR WORK_DIR OUTPUT_DIR SERVER LAUNCHER MANAGER QT_ROOT" >&2
+if [[ $# -ne 9 ]]; then
+  echo "usage: package-linux.sh VERSION BUILD_DIR WORK_DIR OUTPUT_DIR SERVER LAUNCHER MANAGER QT_ROOT QT_SOURCE_CACHE" >&2
   exit 2
 fi
 
@@ -14,6 +14,7 @@ server=$5
 launcher=$6
 manager=$7
 qt_root=$8
+qt_source_cache=$9
 "$manager" asset-name --version "$version" --platform linux --arch x86_64 >/dev/null
 asset="Headroom-v${version}-linux-x86_64.tar.gz"
 package_root="${work_dir}/Headroom-v${version}-linux-x86_64"
@@ -22,6 +23,17 @@ package_root="${work_dir}/Headroom-v${version}-linux-x86_64"
 rm -rf -- "$package_root"
 mkdir -p -- "$package_root/bundle" "$package_root/bootstrap" "$output_dir"
 cmake --install "$build_dir" --prefix "$package_root/bundle"
+build_metadata=$build_dir/headroom-build-metadata.json
+readarray -t build_values < <(python3 - "$build_metadata" "$version" <<'PY'
+import json, re, sys
+d=json.load(open(sys.argv[1], encoding='utf-8'))
+if d.get('product') != 'Headroom' or d.get('version') != sys.argv[2]: raise SystemExit('desktop build version does not match package version')
+q=str(d.get('qt_version',''))
+if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', q): raise SystemExit('desktop Qt version is invalid')
+print(q)
+PY
+)
+qt_version=${build_values[0]}
 for directory in plugins qml; do
   if [[ ! -d "$package_root/bundle/$directory" && -d "$package_root/bundle/lib/qt6/$directory" ]]; then
     mv -- "$package_root/bundle/lib/qt6/$directory" "$package_root/bundle/$directory"
@@ -62,6 +74,14 @@ find packaging/licenses/qt -maxdepth 1 -type f -exec install -Dm0644 '{}' "$pack
 mapfile -d '' qt_licenses < <(find "$qt_root/LICENSES" "$qt_root/licenses" -type f \( -name 'LICENSE*' -o -name '*NOTICE*' -o -name '*.txt' \) -print0 2>/dev/null || true)
 for license in "${qt_licenses[@]}"; do relative=${license#"$qt_root"/}; install -Dm0644 "$license" "$package_root/bundle/share/licenses/qt/$relative"; done
 [[ -s "$package_root/bundle/share/licenses/qt/LGPL-3.0-only.txt" && -s "$package_root/bundle/share/licenses/qt/Qt-GPL-exception-1.0.txt" ]] || { echo 'required Qt license texts are missing' >&2; exit 1; }
+python3 packaging/qt_attributions.py package --source-cache "$qt_source_cache" --qt-root "$qt_root" \
+  --payload-root "$package_root/bundle" --output "$package_root/bundle/share/licenses/qt/attributions" \
+  --modules qtbase qtdeclarative qtshadertools qtsvg qtwayland
+python3 - "$package_root/bundle/share/licenses/qt/attributions/index.json" "$qt_version" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1], encoding='utf-8'))
+if d.get('qt_version') != sys.argv[2]: raise SystemExit('Qt attribution version does not match deployed Qt')
+PY
 install -m 0644 "$(go env GOROOT)/LICENSE" "$package_root/bundle/share/licenses/go/runtime/LICENSE"
 module_cache=$(go env GOMODCACHE)
 install -m 0644 "$module_cache/google.golang.org/protobuf@v1.36.11/LICENSE" "$package_root/bundle/share/licenses/go/protobuf/LICENSE"
@@ -80,7 +100,7 @@ while IFS= read -r -d '' library; do
 done < <(find "$package_root/bundle/plugins" "$package_root/bundle/qml" -type f -name '*.so*' -print0)
 env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
   "$manager" create-package --root "$package_root" --output "$output_dir/$asset" \
-    --version "$version" --platform linux --arch x86_64 --qt-version 6.8.3 \
+    --version "$version" --platform linux --arch x86_64 --qt-version "$qt_version" \
     --baseline ubuntu-22.04-glibc-2.35
 "$manager" verify --archive "$output_dir/$asset" --version "$version" --platform linux --arch x86_64 --asset "$asset"
 env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \

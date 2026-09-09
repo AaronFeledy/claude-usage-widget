@@ -1,5 +1,5 @@
 [Unit]
-Description=Claude Usage Widget API (WSL)
+Description=Headroom usage API (WSL)
 Wants=network-online.target
 After=network-online.target
 StartLimitIntervalSec=0

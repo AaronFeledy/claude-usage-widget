@@ -1,60 +1,132 @@
-# Claude Usage Widget - Agent Guidelines
+# Headroom agent guidelines
 
-## Project Overview
+## Project overview
 
-Monorepo for a Windows tray usage client and a Go usage API server. The app monitors Claude, Codex, Cursor, and Grok usage.
+Headroom is a shared Qt Quick tray app for Windows and Linux plus a Go usage API
+server. It monitors Claude, ChatGPT, Cursor, and Grok usage. The compatible API
+and configuration name for ChatGPT remains `Codex`.
 
 ## Layout
 
-- `clients/windows/` - .NET 8 WinForms tray client targeting `net8.0-windows`.
-- `server/` - Go 1.25 usage API server, provider integrations, config loader, Dockerfile.
-- `tests/windows/` - C# harness tests for Windows client/server lifecycle seams that run on Linux.
-- `docs/` - user docs, including Home Assistant REST sensor guidance.
-- `.github/workflows/` - Windows client, server, Docker, and release automation.
+- `clients/desktop/` — primary Qt 6.6+ Windows/Linux UI, local-server manager,
+  Windows credential-helper client, startup, diagnostics, and package updater.
+- `packaging/headroom-manager/` — Go archive validator, stable launcher,
+  installer, staged acquisition, transactional apply, rollback, and recovery.
+- `packaging/` — per-platform assembly, public installers, pinned attribution
+  sources, package contract, and fixtures.
+- `clients/windows/` — retained .NET 8 WinForms reference/rollback client and the
+  Windows credential-helper sources used by Headroom packages.
+- `server/` — Go 1.25 usage API, provider integrations, configuration, and
+  Dockerfile.
+- `tests/windows/` — Linux-runnable C# lifecycle and browser fixtures.
+- `.github/workflows/headroom-packages.yml` — reusable three-target package and
+  release gate used by PR and release entry workflows.
+- `docs/` — migration plan, desktop parity audit, and Home Assistant REST sensor
+  guidance.
 
-## Architecture
+## Architecture and compatibility
 
-- Windows local mode: empty `ApiUrl` in `%APPDATA%/ClaudeUsageWidget/settings.json` makes the tray use `http://127.0.0.1:7823/`, attach to a healthy local server if present, or spawn bundled `usage-server.exe` with `--listen-addr 127.0.0.1:7823`.
-- Windows remote mode: nonempty absolute HTTP(S) `ApiUrl` points the tray at an external server and disables local spawn. Nonempty `ApiToken` is sent as `Authorization: Bearer <token>`.
-- Server default bind is `127.0.0.1:7823`; off-loopback binds require `auth_token`, `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
-- API contract is frozen in `server/internal/usage`: snake_case fields, explicit `null` optional strings/reset timestamps, and `is_success` derived from `error == null`. `buckets[]` is an additive field after `weekly`: always present, empty `[]` on error, never omitted. Each bucket is `{id,label,utilization,resets_at,status_text}` (`status_text` may be null). Providers exit via `usage.FromBuckets` / `WithBuckets` (normalizes order, dedupes, caps at 12). Shared IDs: `session`/`plan`/`auto`/`api`/`credits`, `weekly`, `weekly_<slug>`, `extra`/`on_demand`. Cursor Grok Bot is `weekly_grok_bot`, fetched from `POST /api/dashboard/get-sand-usage-status` and shown only when that payload has an included Bot pool or non-zero usage. Credit/billable meters (`extra`, `on_demand`) are included only when enabled on the account or non-zero usage is present. All other fields are unchanged.
+Windows defaults to Local mode. Headroom probes `127.0.0.1:7823`, attaches to a
+compatible server, or starts the adjacent `usage-server.exe`. Linux defaults to
+Remote mode but can select Local when an adjacent server exists. Headroom owns,
+stops, or hands off only a server process it started. Remote mode accepts a
+normalized HTTP(S) base URL; nonempty bearer tokens are sent as
+`Authorization: Bearer <token>`.
 
-## Key Files
+The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
+`USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
 
-- `clients/windows/Program.cs` - tray entrypoint, settings, local/remote server manager wiring, API client wiring.
-- `clients/windows/Services/SettingsService.cs` - persisted settings and schema migration.
-- `clients/windows/Services/ServerProcessManager*.cs` - bundled server acquisition, local spawn, health probe, restart, and Job Object ownership.
-- `clients/windows/Services/ApiClient*.cs` - tray REST client and wire DTO validation.
-- `server/cmd/usage-server/main.go` - config load, startup safety validation, provider construction, poller/server lifecycle.
-- `server/internal/config/` - CLI/env/YAML config loading.
-- `server/internal/api/` - REST routes, bearer auth middleware, startup bind validation.
-- `server/internal/usage/` - provider-independent API response structs.
-- `server/internal/providers/` - Claude, Codex, Cursor, and Grok integrations.
+Keep these compatibility contracts unless the task explicitly changes them:
+repository URL and checkout name, Go modules/imports, `usage-server` binary,
+legacy server config/service paths, API provider key `Codex`, and snake_case API
+fields. Headroom displays that provider as ChatGPT. On first normal Windows
+launch it may import `%APPDATA%\ClaudeUsageWidget\settings.json`; the retained
+WinForms project is not the default packaged UI.
 
-## Verification Commands
+The API contract is frozen in `server/internal/usage`: optional strings and
+reset timestamps are explicit `null`; `is_success` is derived from
+`error == null`; `buckets` is always present and empty on error. Providers exit
+through `usage.FromBuckets` / `WithBuckets`, which normalize order, remove
+duplicates, and cap at 12. Shared IDs include `session`, `plan`, `auto`, `api`,
+`credits`, `weekly`, `weekly_<slug>`, `extra`, and `on_demand`. Cursor Grok Bot
+is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
 
-From repository root:
+Official packages use strict schema 1 manifests and immutable generations under
+the current-user Headroom root. Public acquisition is available only to a
+trusted native per-user install. Demo, preview, capture, explicit-config,
+source, and system-managed sessions make no public update requests. Restart
+apply uses a two-way acknowledgement/commit, exact process identity, readiness,
+rollback, and durable recovery. Do not add a second archive validator outside
+the Go manager.
+
+## Release and version rules
+
+One stable SemVer without a leading `v` flows through the desktop, launcher,
+manager, server, helper, package filenames, manifests, and release tag. Build
+metadata is preserved. Numeric components are separately derived for PE and
+.NET assembly versions and may not exceed 65534.
+
+The reusable package workflow builds Windows x64, Windows ARM64, and Linux
+x86_64 with Qt 6.8.3. It verifies the exact packages on native runners, runs the
+legacy harness and server Go/race/vet/build/Docker gates, and assembles three
+desktop packages, one release manifest, four standalone servers, both installers,
+and `SHA256SUMS`. PR workflows have read-only contents permission and never
+publish. The release resolver is read-only; only the final gated job may create
+or verify the tag at the initiating commit and publish. Never publish a tag or
+release during local validation.
+
+Qt notices come from the hash-pinned official 6.8.3 source archives recorded in
+`packaging/qt-sources-6.8.3.json`. Preserve referenced notices and license texts,
+label the module-source inventory as a conservative superset rather than an
+exact binary SBOM, and record optional installed-kit SPDX SBOMs when present.
+
+## Verification
+
+From the repository root:
 
 ```bash
-dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release -r win-x64
-dotnet run --project tests/windows/ServerProcessManagerTests.csproj -c Release
-```
+cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build clients/desktop/build --parallel
+ctest --test-dir clients/desktop/build --output-on-failure
 
-From `server/`:
+python3 -m unittest discover -s packaging/tests -p 'test_*.py'
+bash packaging/tests/test-install-download.sh
 
-```bash
+cd packaging/headroom-manager
 go test ./...
 go vet ./...
 go build ./...
 go test -race -shuffle=on -count=1 ./...
-GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/usage-server-win-x64.exe ./cmd/usage-server
+
+cd ../../server
+go test ./...
+go vet ./...
+go build ./...
+go test -race -shuffle=on -count=1 ./...
+
+cd ..
+dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release -r win-x64
+dotnet run --project tests/windows/ServerProcessManagerTests.csproj -c Release
 ```
 
-Docker validation is configured in CI with Buildx cache-only output. Local Docker may be unavailable in this environment; do not claim local Docker runtime validation unless it was actually run.
+Cross-check the manager on both Windows targets:
 
-## Documentation Rules
+```bash
+cd packaging/headroom-manager
+GOOS=windows GOARCH=amd64 go test -c ./contract
+GOOS=windows GOARCH=arm64 go test -c ./contract
+```
 
-- Derive server flags, env vars, YAML keys, provider defaults, and response fields from source, not memory.
-- Do not claim a Home Assistant add-on exists; only `docs/home-assistant.md` REST sensor configuration exists.
-- Keep bearer tokens, provider credentials, browser cookies, and live output redacted.
-- Do not stage `.omo/**`; evidence and notepads are task-local artifacts only.
+Native UI, installer, package and transaction behavior requires the matching CI
+runner. Docker validation is cache-only in CI; do not claim local Docker runtime
+validation unless it actually ran.
+
+## Documentation and data safety
+
+Derive flags, environment variables, YAML keys, provider defaults, paths,
+release names, and API fields from source. Do not claim a Home Assistant add-on
+exists; only `docs/home-assistant.md` REST sensor configuration exists. State
+that an external reinstall requires quitting and reopening an already-running
+Qt app until that lifecycle is changed. Keep bearer tokens, provider credentials,
+browser cookies, URLs containing secrets, and live account output redacted.
+Never stage `.omo/**`; it contains task-local caches and evidence only.

@@ -4,8 +4,8 @@ IDI_ICON1 ICON "@HEADROOM_WINDOWS_ICON@"
 @HEADROOM_MANIFEST_RESOURCE@
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 0,1,0,0
- PRODUCTVERSION 0,1,0,0
+ FILEVERSION @HEADROOM_VERSION_MAJOR@,@HEADROOM_VERSION_MINOR@,@HEADROOM_VERSION_PATCH@,0
+ PRODUCTVERSION @HEADROOM_VERSION_MAJOR@,@HEADROOM_VERSION_MINOR@,@HEADROOM_VERSION_PATCH@,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS VS_FF_DEBUG
@@ -22,11 +22,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Headroom contributors\0"
       VALUE "FileDescription", "Headroom AI usage monitor\0"
-      VALUE "FileVersion", "0.1.0\0"
+      VALUE "FileVersion", "@HEADROOM_VERSION@\0"
       VALUE "InternalName", "headroom\0"
       VALUE "OriginalFilename", "headroom.exe\0"
       VALUE "ProductName", "Headroom\0"
-      VALUE "ProductVersion", "0.1.0\0"
+      VALUE "ProductVersion", "@HEADROOM_VERSION@\0"
     END
   END
   BLOCK "VarFileInfo"

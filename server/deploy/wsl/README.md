@@ -1,6 +1,6 @@
 # WSL service deployment
 
-These sample systemd units run the Go usage server directly in a WSL distribution
+These sample systemd units run the Headroom Go usage server directly in a WSL distribution
 with systemd enabled. Replace `USER` in the service files with your Linux account
 and adjust the paths before installing them into `/etc/systemd/system`.
 
@@ -37,13 +37,14 @@ systemctl status usage-server.service usage-server-cursor-auth.timer
 The units start when the WSL distribution starts. They do not themselves launch
 WSL at Windows boot. The server retries when its adapter is unavailable.
 
-Back up Windows client settings privately, then set a nonempty remote `ApiUrl`
-and its `ApiToken`. Remote mode disables bundled server acquisition/spawning.
-Stop the old Windows server and disable any independent Windows service or
-scheduled task that launches it. Verify authenticated access and a WSL service
-restart before relying on the new service. Remote plain HTTP disables browser
-credential forwarding from the Windows tray; use WSL credential files and the
-helper instead.
+Back up the Headroom settings file privately, select Remote mode, then set a
+nonempty server URL and its bearer token. Remote mode disables bundled server
+startup. Stop the old Windows server and disable any independent Windows service
+or scheduled task that launches it. Verify authenticated access and a WSL
+service restart before relying on the new service. Remote plain HTTP disables
+browser credential forwarding from Headroom; use WSL credential files and this
+sync helper instead. The retained Qt setting names differ from the legacy
+WinForms JSON keys, but the server API and bearer-token behavior are unchanged.
 
 To roll back, repoint clients to the prior server and restore the appropriate
 private settings backup before disabling these units:

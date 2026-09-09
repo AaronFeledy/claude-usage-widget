@@ -351,7 +351,7 @@ func ValidateManifest(m PackageManifest) error {
 	} else if m.Components.CredentialHelper != nil {
 		return errors.New("Linux package must not declare a credential helper")
 	}
-	required := map[string]bool{exe: false, server: false, launcher: false, manager: false, "bundle/share/headroom/THIRD_PARTY_NOTICES.txt": false, "bundle/share/licenses/headroom/LICENSE": false}
+	required := map[string]bool{exe: false, server: false, launcher: false, manager: false, "bundle/share/headroom/THIRD_PARTY_NOTICES.txt": false, "bundle/share/licenses/headroom/LICENSE": false, "bundle/share/licenses/qt/attributions/index.json": false}
 	if helper != "" {
 		required[helper] = false
 	}

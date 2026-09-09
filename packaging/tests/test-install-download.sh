@@ -48,6 +48,19 @@ download 'https://github.com/synthetic-within-limit' "$fixture/within-limit" 102
 [[ $(wc -l < "$HEADROOM_FAKE_CURL_CALLS") -eq 1 ]]
 
 : > "$HEADROOM_FAKE_CURL_CALLS"
+download 'https://github-releases.githubusercontent.com/synthetic-asset' "$fixture/release-host" 1024 30
+[[ $(wc -c < "$fixture/release-host") -eq 512 ]]
+[[ $(wc -l < "$HEADROOM_FAKE_CURL_CALLS") -eq 1 ]]
+
+: > "$HEADROOM_FAKE_CURL_CALLS"
+if download 'https://github-releases.githubusercontent.com:444/synthetic-asset' "$fixture/untrusted-port" 1024 30; then
+  echo 'untrusted release redirect port was accepted' >&2
+  exit 1
+fi
+[[ ! -e "$fixture/untrusted-port" ]]
+[[ ! -s "$HEADROOM_FAKE_CURL_CALLS" ]]
+
+: > "$HEADROOM_FAKE_CURL_CALLS"
 if download 'https://github.com/synthetic-deadline' "$fixture/deadline" 1024 0; then
   echo 'expired aggregate deadline was accepted' >&2
   exit 1

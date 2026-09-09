@@ -1,9 +1,10 @@
 # Headroom desktop client
 
-A shared Windows and Linux Qt Quick client for the existing usage API. Designed for KDE / Wayland,
-with a frameless tray popup, system-tray meter, official provider icons, reset
-countdowns, and usage notifications. It connects directly to a remote backend;
-it never starts a usage server or reads browser credentials.
+A shared Windows and Linux Qt Quick client for the Headroom usage API. It has a
+frameless tray popup, system-tray meter, official provider icons, reset
+countdowns, pacing warnings, notifications, local-server lifecycle management,
+diagnostics, and verified package updates. Windows packages can read supported
+Cursor and Grok browser cookies through a separate current-user helper.
 
 ## Build and run
 
@@ -12,8 +13,9 @@ Widgets, Network, SVG image support, and Test. On Arch / EndeavourOS these come
 from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
 `qt6-wayland` for a Wayland session). KDE tray anchoring uses the optional
 `kstatusnotifieritem` and `layer-shell-qt` (6.6+) libraries detected by CMake.
-These are installed on the target KDE machine. Without them, the client uses
-Qt tray activation and the window positioning supported by the desktop.
+Building with those optional packages enables KDE tray attachment. Without
+them, the client uses Qt tray activation and the positioning available from the
+desktop.
 
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -21,7 +23,24 @@ cmake --build clients/desktop/build
 clients/desktop/build/headroom
 ```
 
-Install the executable, application-menu entry, and icon for your user:
+On Windows, run the same configure/build/test flow from a Visual Studio
+developer shell whose target architecture matches the installed Qt kit:
+
+```powershell
+cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DHEADROOM_WITH_KDE_TRAY=OFF -DHEADROOM_WITH_LAYER_SHELL=OFF
+cmake --build clients/desktop/build --parallel
+ctest --test-dir clients/desktop/build --output-on-failure
+clients/desktop/build/headroom.exe
+```
+
+Use an x64 Qt kit with an x64 developer shell, or the Qt MSVC ARM64 kit with an
+ARM64 shell. Set `CMAKE_PREFIX_PATH` or `Qt6_DIR` to that kit if Qt is not
+already discoverable in the shell, and add the kit's `bin` directory to `PATH`
+when running the source-built app and tests. The exact Qt 6.8.3 native package recipe is in
+[headroom-packages.yml](../../.github/workflows/headroom-packages.yml).
+
+On Linux, install the executable, application-menu entry, and icon for your
+user:
 
 ```bash
 cmake --install clients/desktop/build --prefix "$HOME/.local"
@@ -31,13 +50,19 @@ Ensure `$HOME/.local/bin` is on your desktop session's PATH. Open **Headroom**
 from the application menu. For a custom installation prefix, add its `bin`
 directory to PATH as well.
 
+This CMake install is a source installation. Official release packages use the
+verified per-user installer and stable launcher described in the repository
+[installation guide](../../README.md#install).
+
 ## Connect
 
-Open **Connection settings**, enter the server's base HTTP(S) address and bearer
-token, then choose **Save & connect**. Reverse-proxy path prefixes are supported.
+Windows starts in **Local** mode. Linux starts in **Remote** mode; choose Local
+to use an adjacent packaged or installed server. In Remote mode, enter the
+server's base HTTP(S) address and bearer token, then choose **Save & connect**.
+Reverse-proxy path prefixes are supported.
 The client polls `GET /api/v1/usage`; Refresh reads the server's current cache,
 not a forced provider refresh. Polling defaults to 60 seconds and can be adjusted
-in settings. Requests time out, reject cross-origin redirects, and retain last
+in settings. Requests time out, refuse redirects, and retain last
 readings on failure with a visible offline banner. Empty and malformed responses,
 expired provider authentication, and rejected bearer tokens have separate states.
 Failures back off exponentially up to five minutes (or the configured interval
@@ -120,10 +145,19 @@ Settings shows the app version and checks the configured server's authenticated
 health/version endpoint. Official per-user packages perform one delayed startup
 check and automatically download, verify, and stage a newer matching Headroom
 bundle without sending the backend bearer token. The settings panel also supports
-manual checks and staging. A staged bundle is applied after restart; transactional
-switching and recovery are handled by the next updater phase. Source builds use
-the installed source update guide, while system-managed builds defer to their
-package manager and never write into a per-user package installation.
+manual checks, staging, and exact-version repair when a trusted install is
+missing its server or Windows credential helper. **Restart to apply** revalidates
+the stage, switches to a new immutable generation, accepts readiness only from
+the expected process, and rolls back if startup fails. An interrupted switch is
+recovered on the next launch. Source builds use the installed source update
+guide, while system-managed builds defer to their package manager and never
+write into a per-user package installation. Entering preview cancels a pending
+public operation; demo, capture, preview, and explicit-config sessions cannot
+check or download public releases.
+
+Rerunning an external installer replaces the verified on-disk generation. If a
+Headroom window is already open, quit and reopen it afterward; a new launcher
+invocation may activate the existing primary process until that process exits.
 
 **Open diagnostics** shows the last 500 events in this session, with UTC times,
 categories, Copy log, and Clear. It records controlled connection/settings/tier
@@ -180,10 +214,14 @@ values with representative three/two/four/one-meter layouts; live accounts may
 return different buckets. Both clients retain pacing and provider ordering.
 
 Headroom supports both remote connections and an owned local usage server on
-Windows and Linux. Windows can forward supported browser credentials through the
-bundled helper. Official per-user packages share the verified update staging
-flow described above. The WSL service remains a separately managed deployment
-documented in [the server deployment notes](../../server/deploy/wsl/README.md).
+Windows and Linux. Windows can forward supported Cursor and Grok browser cookies
+from Chrome, Edge, Brave, and Firefox through the bundled helper, but only to
+loopback HTTP or remote HTTPS. The helper uses the current Windows user's browser
+encryption context; it cannot read other users' profiles or bypass unsupported
+newer encrypted values, and Linux has no browser helper. Official per-user packages
+share the verified update flow described above. The WSL service remains a
+separately managed deployment documented in
+[the server deployment notes](../../server/deploy/wsl/README.md).
 
 ## Appearance and provider names
 
@@ -205,7 +243,7 @@ The notches and pacing marker use the same period calculation. Cursor uses a
 30-day billing estimate; Grok monthly meters use a calendar-month estimate.
 Unknown periods have no time notches.
 
-See the [Windows parity audit](../../docs/linux-parity.md) for restored features,
+See the [desktop parity audit](../../docs/desktop-parity.md) for restored features,
 remaining omissions, and intentional differences.
 
 ## Pacing-aware warning colors

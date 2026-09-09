@@ -475,6 +475,8 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 	}
 	os.WriteFile(filepath.Join(root, "bundle", "share", "headroom", "THIRD_PARTY_NOTICES.txt"), []byte("synthetic notice\n"), 0644)
 	os.WriteFile(filepath.Join(root, "bundle", "share", "licenses", "headroom", "LICENSE"), []byte("synthetic license\n"), 0644)
+	os.MkdirAll(filepath.Join(root, "bundle", "share", "licenses", "qt", "attributions"), 0755)
+	os.WriteFile(filepath.Join(root, "bundle", "share", "licenses", "qt", "attributions", "index.json"), []byte("{}\n"), 0644)
 	manifest, err := BuildManifest(root, version, platform, arch, "6.8.3", "fixture")
 	if err != nil {
 		t.Fatal(err)

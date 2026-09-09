@@ -5,156 +5,100 @@ on:
     branches: [main]
     tags: ['v*']
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ startsWith(github.ref, 'refs/heads/') && 'main' || github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  version:
-    if: startsWith(github.ref, 'refs/heads/')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  resolve:
+    runs-on: ubuntu-22.04
     outputs:
-      new_tag: ${{ steps.bump.outputs.new_tag }}
-      new_version: ${{ steps.bump.outputs.new_version }}
-      changelog: ${{ steps.bump.outputs.changelog }}
-      skipped: ${{ steps.bump.outputs.skipped }}
+      version: ${{ steps.reuse.outputs.version || steps.branch.outputs.version || steps.tag.outputs.version }}
+      tag: ${{ steps.reuse.outputs.tag || steps.branch.outputs.tag || steps.tag.outputs.tag }}
+      changelog: ${{ steps.reuse.outputs.changelog || steps.tag.outputs.changelog || steps.bump.outputs.changelog }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-
-      - name: Bump version and push tag
+      - name: Reuse a release tag already created for this main commit
+        id: reuse
+        if: startsWith(github.ref, 'refs/heads/')
+        run: python3 packaging/release_tag.py --commit "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
+      - name: Resolve the next main-branch tag
         id: bump
+        if: startsWith(github.ref, 'refs/heads/') && steps.reuse.outputs.reused != 'true'
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
           release_branches: main
-
-  build-branch:
-    needs: version
-    if: needs.version.outputs.skipped != 'true'
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - runtime: win-x64
-            goarch: amd64
-          - runtime: win-arm64
-            goarch: arm64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
-      - name: Update version in csproj
-        shell: pwsh
+          dry_run: true
+      - name: Validate generated tag and version
+        id: branch
+        if: startsWith(github.ref, 'refs/heads/') && steps.reuse.outputs.reused != 'true'
         env:
-          RAW_VERSION: ${{ needs.version.outputs.new_version }}
-          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
+          NEW_TAG: ${{ steps.bump.outputs.new_tag }}
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
         run: |
-          $version = ("$env:RAW_VERSION").TrimStart("v")
-          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
-          (Get-Content clients/windows/ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content clients/windows/ClaudeUsageWidget.csproj
-      - name: Publish
-        run: dotnet publish clients/windows/ClaudeUsageWidget.csproj -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
-      - run: mv clients/windows/bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
-      - name: Build usage server
-        shell: pwsh
-        working-directory: server
+          test -n "$NEW_TAG" && test "$NEW_TAG" = "v$NEW_VERSION"
+          python3 packaging/validate_version.py "$NEW_VERSION" --github-output "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$NEW_TAG" >> "$GITHUB_OUTPUT"
+      - name: Validate explicitly pushed tag
+        id: tag
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          GOOS: windows
-          GOARCH: ${{ matrix.goarch }}
-          RAW_VERSION: ${{ needs.version.outputs.new_version }}
-          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
-        run: |
-          $version = ("$env:RAW_VERSION").TrimStart("v")
-          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
-          go build -trimpath -ldflags "-s -w -X main.version=$version" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ClaudeUsageWidget-${{ matrix.runtime }}
-          path: |
-            ClaudeUsageWidget-${{ matrix.runtime }}.exe
-            usage-server-${{ matrix.runtime }}.exe
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 packaging/release_tag.py --commit "$GITHUB_SHA" --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
 
-  release-branch:
-    needs: [version, build-branch]
-    runs-on: ubuntu-latest
+  packages:
+    needs: resolve
+    if: needs.resolve.outputs.version != ''
+    uses: ./.github/workflows/headroom-packages.yml
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+
+  publish:
+    needs: [resolve, packages]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
         with:
-          path: artifacts
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.new_tag }}
-          name: ${{ needs.version.outputs.new_tag }}
-          body: ${{ needs.version.outputs.changelog }}
-          files: artifacts/**/*.exe
-
-  build-tag:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - runtime: win-x64
-            goarch: amd64
-          - runtime: win-arm64
-            goarch: arm64
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.x'
-      - name: Update version in csproj
-        shell: pwsh
+          fetch-depth: 0
+      - name: Create or verify the release tag at this commit
         env:
-          RAW_VERSION: ${{ github.ref_name }}
-          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          EXPECTED_SHA: ${{ github.sha }}
+          RELEASE_CHANGELOG: ${{ needs.resolve.outputs.changelog }}
         run: |
-          $version = ("$env:RAW_VERSION").TrimStart("v")
-          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
-          (Get-Content clients/windows/ClaudeUsageWidget.csproj) -replace '<Version>.*</Version>', "<Version>$version</Version>" | Set-Content clients/windows/ClaudeUsageWidget.csproj
-      - name: Publish
-        run: dotnet publish clients/windows/ClaudeUsageWidget.csproj -c Release -r ${{ matrix.runtime }} -p:PublishSingleFile=true -p:SelfContained=true -p:EnableCompressionInSingleFile=true
-      - run: mv clients/windows/bin/Release/net8.0-windows/${{ matrix.runtime }}/publish/ClaudeUsageWidget.exe ClaudeUsageWidget-${{ matrix.runtime }}.exe
-      - name: Build usage server
-        shell: pwsh
-        working-directory: server
-        env:
-          GOOS: windows
-          GOARCH: ${{ matrix.goarch }}
-          RAW_VERSION: ${{ github.ref_name }}
-          SEMVER: '^[0-9]+\.[0-9]+\.[0-9]+([-+.][0-9A-Za-z-]+)*\z'
-        run: |
-          $version = ("$env:RAW_VERSION").TrimStart("v")
-          if ($version -notmatch $env:SEMVER) { throw "Invalid version: $version" }
-          go build -trimpath -ldflags "-s -w -X main.version=$version" -o ../usage-server-${{ matrix.runtime }}.exe ./cmd/usage-server
-      - uses: actions/upload-artifact@v4
+          expected=$(git rev-parse "$EXPECTED_SHA^{commit}")
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG" || true
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$expected"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            printf '%s\n' "${RELEASE_CHANGELOG:-Headroom $RELEASE_TAG}" > "$RUNNER_TEMP/headroom-tag-message"
+            git tag -a "$RELEASE_TAG" "$expected" -F "$RUNNER_TEMP/headroom-tag-message"
+            if ! git push origin "refs/tags/$RELEASE_TAG"; then
+              git tag -d "$RELEASE_TAG"
+              git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+              test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$expected"
+            fi
+          fi
+      - uses: actions/download-artifact@v8
         with:
-          name: ClaudeUsageWidget-${{ matrix.runtime }}
-          path: |
-            ClaudeUsageWidget-${{ matrix.runtime }}.exe
-            usage-server-${{ matrix.runtime }}.exe
-
-  release-tag:
-    needs: build-tag
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
+          name: headroom-release-assets
           path: artifacts
-      - uses: softprops/action-gh-release@v2
+      - name: Publish one verified Headroom release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          files: artifacts/**/*.exe
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.tag }}
+          body: ${{ needs.resolve.outputs.changelog }}
+          files: artifacts/*
+          fail_on_unmatched_files: true

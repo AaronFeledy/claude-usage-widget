@@ -7,7 +7,11 @@ Official desktop packages use manifest schema 1 and exact versioned names:
 - `Headroom-v<VERSION>-linux-x86_64.tar.gz`
 - `Headroom-v<VERSION>-release.json`
 
-`VERSION` is strict SemVer without a leading `v` in JSON. The release manifest
+Official release `VERSION` is stable SemVer without a leading `v`; build
+metadata such as `1.2.3+build.7` is preserved in the package, component and app
+versions. Its three numeric components must each be at most 65534 so the same
+derived `MAJOR.MINOR.PATCH.0` fits .NET assembly and Windows resource versions.
+The release manifest
 contains exactly the three desktop packages, their byte sizes and SHA-256
 digests. Standalone `usage-server-*` and legacy `ClaudeUsageWidget-*` assets are
 never desktop-package candidates.
@@ -25,6 +29,13 @@ plugins and QML imports live under `bundle/lib`, `bundle/plugins`, and
 across Qt deployment-tool versions.
 `QtQuick.Controls.Basic` is an explicit deployed dependency. Notices and exact
 license texts are under `bundle/share` and are part of the hash inventory.
+Official packages also include
+`bundle/share/licenses/qt/attributions/index.json`, generated from the five
+hash-pinned Qt 6.8.3 source archives in `qt-sources-6.8.3.json`. The index is a
+conservative module-source attribution inventory, records payload matches and
+optional kit SPDX SBOMs, and does not present source or build-only records as
+an exact binary SBOM. Missing archives, digest mismatches, malformed records or
+missing referenced notices fail package assembly.
 
 The bootstrap directory contains the shared Go package tool and the stable
 launcher. Windows builds compile the launcher as a GUI-subsystem executable.
@@ -162,6 +173,16 @@ stable launcher, package tool, atomic state and versions under
 `$HOME/.local/bin/headroom` remains the stable entry. Settings stay in their
 existing roaming/XDG locations and are never part of an application bundle.
 
+`install.sh` accepts `--install-root`, `--entry-path`, `--no-launch`, and
+`--dry-run`. `install.ps1` accepts `-InstallRoot`, `-EntryPath`, `-NoLaunch`, and
+PowerShell `-WhatIf`. Offline and CI installation supplies both an exact local
+package and its exact release manifest with `--package` plus
+`--release-manifest`, or `-PackagePath` plus `-ReleaseManifestPath`; neither file
+is accepted alone. Online installation follows at most five HTTPS redirects and
+allows only GitHub API, repository, and documented release-asset hosts on port
+443. Every response is streamed into private bounded storage, and the release
+manifest's exact size and digest are checked before the Go validator runs.
+
 The portable Linux x86_64 archive is built on Ubuntu 22.04. It bundles Qt but
 uses the baseline desktop's glibc, libstdc++, graphics, font, X11/XCB, Wayland,
 D-Bus and OpenSSL 3 ABI libraries. The generic bundle supports native X11 and
@@ -188,3 +209,23 @@ public acquisition commands. The desktop performs one delayed startup check,
 automatically downloads and verifies a newer bundle, and advertises restart only
 after the package tool returns a matching `verified-stage.json`. Preview, demo,
 capture, and explicit-config sessions do not make public update requests.
+
+## Reusable release recipe
+
+`.github/workflows/headroom-packages.yml` accepts one validated version and
+builds the same three desktop packages for pull requests, main-branch releases
+and explicit `v*` tags. It runs the native desktop, package, installer and
+transaction gates before assembling a reviewable `headroom-release-assets`
+artifact. That artifact contains the three packages, release manifest,
+`install.sh`, `install.ps1`, four standalone server binaries and `SHA256SUMS`.
+The PR caller uses a version with build metadata so that path is exercised
+without publishing. The release caller resolves a main-branch version in
+dry-run mode, and the resolver and package jobs remain read-only. Only after the
+native, server, Docker and installer gates pass does its write-scoped
+publication job create or verify the tag at the initiating commit and publish
+the aggregate artifact. The main run does not rely on the `GITHUB_TOKEN` tag
+event to start another run. A separately pushed `v*` tag uses the identical
+package and publication recipe. The publication tag is annotated with the
+resolved changelog. A rerun detects one validated stable tag already pointing
+to the exact initiating commit, reuses its version and message, and rejects an
+ambiguous or differently targeted tag instead of incrementing again.

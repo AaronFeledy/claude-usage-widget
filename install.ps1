@@ -16,7 +16,7 @@ if (-not $EntryPath) { $EntryPath = Join-Path $InstallRoot 'headroom.exe' }
 $osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
 $contractArchitecture = if ($osArchitecture -eq 'arm64') { 'arm64' } elseif ($osArchitecture -eq 'x64') { 'x86_64' } else { throw "Headroom does not support Windows $osArchitecture." }
 $assetArchitecture = if ($contractArchitecture -eq 'arm64') { 'arm64' } else { 'x64' }
-$allowedDownloadHosts = @('api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
+$allowedDownloadHosts = @('api.github.com', 'github.com', 'github-releases.githubusercontent.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com')
 
 function Save-HeadroomFile {
     param([Parameter(Mandatory)][uri]$Uri, [Parameter(Mandatory)][string]$Destination, [long]$MaxBytes = 8MB, [int]$TimeoutSeconds = 120)

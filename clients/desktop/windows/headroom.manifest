@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity name="Headroom.Desktop" version="0.1.0.0" type="win32"/>
+  <assemblyIdentity name="Headroom.Desktop" version="@HEADROOM_NUMERIC_VERSION@.0" type="win32"/>
   <description>Headroom AI usage monitor</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
@@ -21,4 +21,3 @@
     </windowsSettings>
   </application>
 </assembly>
-

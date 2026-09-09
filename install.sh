@@ -47,13 +47,16 @@ download() {
   deadline=$(( $(date +%s) + timeout_seconds ))
   redirects=0
   while [ "$redirects" -le 5 ]; do
-    python3 - "$current" <<'PY'
+    if ! python3 - "$current" <<'PY'
 import sys, urllib.parse
 u = urllib.parse.urlparse(sys.argv[1])
-allowed = {'api.github.com', 'github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'}
+allowed = {'api.github.com', 'github.com', 'github-releases.githubusercontent.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com'}
 if u.scheme != 'https' or u.username or u.password or u.port not in (None,443) or (u.hostname or '').lower() not in allowed:
     raise SystemExit('refusing untrusted download URL: ' + sys.argv[1])
 PY
+    then
+      return 1
+    fi
     now=$(date +%s)
     remaining=$((deadline - now))
     [ "$remaining" -gt 0 ] || { echo 'download deadline exceeded' >&2; return 1; }

@@ -1,6 +1,10 @@
-# Windows Client
+# Retained Windows client
 
-.NET 8 WinForms tray client for Claude Usage Widget.
+This .NET 8 WinForms client is the legacy Claude Usage Widget implementation.
+It remains available as reference code, a lifecycle-test harness, and a rollback
+option. New Windows release packages use the shared Qt
+[Headroom desktop](../desktop/README.md); this project is not the default
+downloadable UI.
 
 ## Build
 
@@ -24,6 +28,8 @@ clients/windows/bin/Release/net8.0-windows/<runtime>/publish/ClaudeUsageWidget.e
 Publish the tray app and place the matching `usage-server.exe` beside it. Running `ClaudeUsageWidget.exe` starts the tray application. Only one instance is allowed.
 
 Settings are stored in `%APPDATA%\ClaudeUsageWidget\settings.json`.
+Headroom imports a supported legacy settings file only on its first normal
+Windows launch when no Headroom settings exist, and leaves this file untouched.
 
 ## ApiUrl And ApiToken
 
