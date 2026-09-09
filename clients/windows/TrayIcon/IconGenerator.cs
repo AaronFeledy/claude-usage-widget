@@ -65,7 +65,7 @@ public static partial class IconGenerator
     private static readonly Color ClaudeLight = ColorTranslator.FromHtml("#F2B69E");
 
     /// <summary>
-    /// Generates the app icon (sparkle + usage bar) for idle/no-usage state.
+    /// Generates the app icon (provider mark + usage bar) for idle/no-usage state.
     /// </summary>
     public static Icon GenerateAppIcon(string providerName = "Claude", bool includeBadge = true)
     {
@@ -75,38 +75,12 @@ public static partial class IconGenerator
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
         graphics.Clear(Color.Transparent);
 
-        // Draw 4-pointed sparkle in the upper portion
-        var cx = IconSize / 2f;
-        var cy = 6f;  // shifted up to leave room for bar
-        var outerR = 5.5f;
-        var innerR = 1.8f;
-
-        var points = new PointF[8];
-        for (int i = 0; i < 8; i++)
+        var providerIcon = ProviderIcons.Get(providerName);
+        if (providerIcon != null)
         {
-            var angle = i * 45.0 - 90.0;
-            var r = i % 2 == 0 ? outerR : innerR;
-            points[i] = new PointF(
-                cx + (float)(r * Math.Cos(angle * Math.PI / 180)),
-                cy + (float)(r * Math.Sin(angle * Math.PI / 180)));
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.DrawImage(providerIcon, new Rectangle(2, 0, 12, 12));
         }
-
-        using var sparkleBrush = new SolidBrush(ClaudeTerracotta);
-        graphics.FillPolygon(sparkleBrush, points);
-
-        // Small inner highlight
-        var innerPoints = new PointF[8];
-        for (int i = 0; i < 8; i++)
-        {
-            var angle = i * 45.0 - 90.0;
-            var r = i % 2 == 0 ? 2.5f : 0.8f;
-            innerPoints[i] = new PointF(
-                cx + (float)(r * Math.Cos(angle * Math.PI / 180)),
-                cy + (float)(r * Math.Sin(angle * Math.PI / 180)));
-        }
-
-        using var highlightBrush = new SolidBrush(ClaudeLight);
-        graphics.FillPolygon(highlightBrush, innerPoints);
 
         // Usage bar at bottom
         graphics.SmoothingMode = SmoothingMode.None;

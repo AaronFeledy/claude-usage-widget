@@ -1,0 +1,145 @@
+#include "trayvisual.h"
+#include "usage.h"
+#include <QPainter>
+#include <cmath>
+
+namespace {
+QString resetDescription(const QVariantMap &bucket, const QDateTime &now) {
+    const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
+    if (!reset.isValid()) return "reset time unavailable";
+    const qint64 seconds = now.secsTo(reset);
+    if (seconds <= 0) return "awaiting reset update";
+    const qint64 minutes = (seconds + 59) / 60;
+    QString remaining;
+    if (minutes >= 1440) remaining = QString("%1d %2h").arg(minutes / 1440).arg(minutes % 1440 / 60);
+    else if (minutes >= 60) remaining = QString("%1h %2m").arg(minutes / 60).arg(minutes % 60);
+    else remaining = QString("%1m").arg(minutes);
+    return "Resets in " + remaining;
+}
+Usage::WarningLevel level(const QVariantMap &assessment) {
+    return Usage::WarningLevel(qBound(0, assessment["severity"].toInt(), 3));
+}
+bool isMeter(TrayVisual::Kind kind) {
+    return kind == TrayVisual::Kind::Usage || kind == TrayVisual::Kind::Exhausted;
+}
+QString statusText(TrayVisual::Kind kind) {
+    using K = TrayVisual::Kind;
+    switch (kind) {
+    case K::Setup: return "Connect a backend in Settings";
+    case K::Connecting: return "Connecting to backend";
+    case K::Idle: return "No usage meter available for the selected provider";
+    case K::Offline: return "Backend offline";
+    case K::AuthError: return "Update the backend token in Settings";
+    case K::ApiError: return "Backend HTTP error";
+    case K::Malformed: return "Unexpected backend response";
+    case K::ProviderError: return "Provider unavailable · open for details";
+    case K::Exhausted: return "Selected meter exhausted";
+    case K::Usage: return {};
+    }
+    return {};
+}
+}
+
+TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList &providers,
+                                  const QString &primary, const Assessment &assessment, const QDateTime &now) {
+    Model result;
+    result.provider = primary;
+    result.kind = Kind::Idle;
+    QString resetText;
+    for (const auto &entry : providers) {
+        const auto provider = entry.toMap();
+        if (provider["provider_name"].toString() != primary) continue;
+        if (!provider["is_success"].toBool()) { result.kind = Kind::ProviderError; break; }
+        const auto buckets = provider["buckets"].toList();
+        for (int i = 0; i < buckets.size(); ++i) {
+            const auto bucket = buckets[i].toMap();
+            const double used = bucket["utilization"].toDouble();
+            const QString status = bucket["status_text"].toString();
+            const bool statusOnly = bucket["id"] == "on_demand" && used <= 0 && !status.isEmpty() && !status.contains(" / ");
+            if (statusOnly) continue;
+            const auto severity = level(assessment(primary, bucket));
+            if (i == 0) {
+                result.used = used; result.level = severity;
+                const auto pace = Usage::pacing(primary, bucket, now);
+                result.expected = pace["available"].toBool() ? pace["expected"].toDouble() : -1;
+                result.kind = used >= 100 ? Kind::Exhausted : Kind::Usage;
+                resetText = resetDescription(bucket, now);
+            } else if (int(severity) > int(result.secondary)) result.secondary = severity;
+        }
+        break;
+    }
+    const auto status = state["status"].toString();
+    if (status == "offline") {
+        const auto error = state["errorKind"].toString();
+        result.kind = error == "auth" ? Kind::AuthError : error == "malformed" ? Kind::Malformed
+            : error == "api" ? Kind::ApiError : Kind::Offline;
+    } else if (status == "connecting" || (state["loading"].toBool() && !state["lastGood"].toLongLong())) result.kind = Kind::Connecting;
+    else if (status == "setup") result.kind = Kind::Setup;
+    const QString name = primary.isEmpty() ? "Headroom" : Usage::displayName(primary);
+    if (isMeter(result.kind)) {
+        result.tooltip = QString("%1 · %2% used\n%3").arg(name).arg(qRound(result.used)).arg(resetText);
+        const auto highest = Usage::WarningLevel(qMax(int(result.level), int(result.secondary)));
+        if (highest != Usage::WarningLevel::Normal) result.tooltip += " · " + Usage::warningName(highest);
+    } else result.tooltip = name + "\n" + statusText(result.kind);
+    if (state["demo"].toBool()) result.tooltip.prepend("Preview · ");
+    return result;
+}
+
+QIcon TrayVisual::icon(const Model &model) {
+    QPixmap pixmap(64, 64); pixmap.fill(Qt::transparent);
+    QPainter p(&pixmap); p.setRenderHint(QPainter::Antialiasing);
+    const bool meter = isMeter(model.kind);
+    const QColor foreground("#f8f8f2"), track("#44475a"), background("#282a36");
+    p.setPen(QPen(track, 7, Qt::SolidLine, Qt::RoundCap));
+    p.drawEllipse(QRectF(7, 7, 50, 50));
+    if (meter) {
+        p.setPen(QPen(QColor(Usage::warningColor(model.level)), 7, Qt::SolidLine, Qt::RoundCap));
+        // Zero means an empty meter; don't invent visible usage for an empty allowance.
+        if (model.used > 0) p.drawArc(QRectF(7, 7, 50, 50), 90 * 16, -qRound(qBound(0.0, model.used, 100.0) / 100 * 5760));
+        if (model.expected >= 0) {
+            const double angle = (model.expected / 100 * 360 - 90) * 3.14159265358979323846 / 180;
+            const QPointF unit(std::cos(angle), std::sin(angle));
+            const QPointF center(32, 32);
+            p.setPen(QPen(background, 6)); p.drawLine(center + unit * 19, center + unit * 31);
+            p.setPen(QPen(QColor("#8be9fd"), 3)); p.drawLine(center + unit * 20, center + unit * 30);
+        }
+    }
+    const QString asset = QString(":/provider-icons/%1.svg").arg(model.provider.toLower());
+    const QIcon providerIcon(asset);
+    if (!providerIcon.isNull()) providerIcon.paint(&p, QRect(18, 18, 28, 28));
+    else { p.setPen(foreground); p.setFont(QFont("sans-serif", 15, QFont::DemiBold)); p.drawText(QRect(18, 18, 28, 28), Qt::AlignCenter, "H"); }
+    p.setPen(foreground); p.setFont(QFont("sans-serif", 10, QFont::DemiBold));
+    if (!meter) {
+        QString glyph; QColor color("#6272a4");
+        switch (model.kind) {
+        case Kind::Setup: glyph = "+"; color = QColor("#bd93f9"); break;
+        case Kind::Connecting: glyph = "…"; color = QColor("#8be9fd"); break;
+        case Kind::Idle: glyph = "–"; break;
+        case Kind::Offline: glyph = "×"; break;
+        case Kind::AuthError: color = QColor("#ff5555"); break;
+        case Kind::ApiError: glyph = "!"; color = QColor("#ff5555"); break;
+        case Kind::Malformed: glyph = "?"; color = QColor("#ff5555"); break;
+        case Kind::ProviderError: glyph = "!"; color = QColor("#ffb86c"); break;
+        default: break;
+        }
+        p.setPen(QPen(background, 3)); p.setBrush(color); p.drawEllipse(QPointF(53, 52), 9, 9);
+        p.setPen(QPen(background, 2)); p.setBrush(Qt::NoBrush);
+        if (model.kind == Kind::AuthError) {
+            p.drawRoundedRect(QRectF(49.5, 51, 7, 6), 1, 1);
+            p.drawArc(QRectF(50.5, 46.5, 5, 8), 0, 180 * 16);
+        } else {
+            p.setFont(QFont("sans-serif", 12, QFont::Bold));
+            p.drawText(QRect(44, 43, 18, 18), Qt::AlignCenter, glyph);
+        }
+    }
+    if (meter && model.secondary != Usage::WarningLevel::Normal) {
+        p.setPen(QPen(background, 3)); p.setBrush(QColor(Usage::warningColor(model.secondary)));
+        p.drawEllipse(QPointF(53, 52), 8, 8);
+    }
+    if (model.kind == Kind::Exhausted) {
+        p.setPen(QPen(background, 3)); p.setBrush(QColor(Usage::warningColor(model.level)));
+        p.drawEllipse(QPointF(11, 12), 8, 8);
+        p.setPen(foreground); p.drawLine(QPointF(7, 12), QPointF(15, 12));
+    }
+    return QIcon(pixmap);
+}

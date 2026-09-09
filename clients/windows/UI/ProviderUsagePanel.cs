@@ -1,5 +1,6 @@
 using System.Drawing;
 using ClaudeUsageWidget.Models;
+using ClaudeUsageWidget.TrayIcon;
 
 namespace ClaudeUsageWidget.UI;
 
@@ -36,6 +37,25 @@ public class ProviderUsagePanel : Panel
     private readonly Label _subtitleLabel;
     private readonly List<BarRow> _rows = new();
     private bool _isProminent;
+    public event EventHandler? ReorderRequested;
+    private Point? _dragOrigin;
+
+    private void WireDragHandle(Control handle)
+    {
+        handle.Cursor = Cursors.SizeAll;
+        handle.AccessibleDescription = "Drag to reorder providers. The top provider supplies the tray meter.";
+        handle.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) _dragOrigin = Cursor.Position; };
+        handle.MouseUp += (_, _) => _dragOrigin = null;
+        handle.MouseMove += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Left || _dragOrigin is not Point origin) return;
+            var threshold = new Rectangle(origin.X - SystemInformation.DragSize.Width / 2,
+                origin.Y - SystemInformation.DragSize.Height / 2, SystemInformation.DragSize.Width, SystemInformation.DragSize.Height);
+            if (threshold.Contains(Cursor.Position)) return;
+            _dragOrigin = null;
+            ReorderRequested?.Invoke(this, EventArgs.Empty);
+        };
+    }
 
     public string ProviderName { get; }
 
@@ -53,17 +73,34 @@ public class ProviderUsagePanel : Panel
             Text = providerName,
             Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
             ForeColor = TextColor,
-            Location = new Point(10, 10),
+            Location = new Point(37, 10),
             AutoSize = true
         };
         Controls.Add(_titleLabel);
+        WireDragHandle(_titleLabel);
+        var providerIcon = new PictureBox
+        {
+            Image = ProviderIcons.Get(providerName), SizeMode = PictureBoxSizeMode.Zoom,
+            Location = new Point(10, 8), Size = new Size(22, 22),
+            AccessibleName = providerName + " icon"
+        };
+        Controls.Add(providerIcon);
+        WireDragHandle(providerIcon);
+        var dragHandle = new Label
+        {
+            Text = "⠿", ForeColor = SecondaryTextColor, Font = new Font("Segoe UI", 11),
+            Location = new Point(PanelWidth - 25, 7), Size = new Size(20, 22),
+            AccessibleName = "Drag " + providerName + " to reorder"
+        };
+        Controls.Add(dragHandle);
+        WireDragHandle(dragHandle);
 
         _subtitleLabel = new Label
         {
             Font = new Font("Segoe UI", 7.5f, FontStyle.Regular),
             ForeColor = PlanPillTextColor,
             BackColor = Color.Transparent,
-            Location = new Point(ContentLeft + ContentWidth - 64, 12),
+            Location = new Point(ContentLeft + ContentWidth - 86, 12),
             Size = new Size(64, 14),
             TextAlign = ContentAlignment.TopRight,
             Visible = false
@@ -75,7 +112,7 @@ public class ProviderUsagePanel : Panel
     {
         if (data == null)
         {
-            _titleLabel.Text = "Unavailable";
+            _titleLabel.Text = ProviderName;
             _subtitleLabel.Visible = false;
             RenderStatusOnly("Status", "No data", SecondaryTextColor);
             return;

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Update Headroom</title>
+<style>body{max-width:760px;margin:60px auto;padding:0 24px;background:#282a36;color:#f8f8f2;font:17px/1.7 system-ui}h1,h2{color:#bd93f9}a{color:#8be9fd}pre{padding:20px;background:#21222c;border-radius:12px;overflow:auto;font-size:14px}code{color:#f1fa8c}</style>
+<h1>Update Headroom</h1>
+<p>Headroom currently runs from a local source build. The project's existing release automation publishes Windows executables; those cannot update the Linux client. The app's release checker reports whether a compatible Linux package has been published.</p>
+<h2>Rebuild your local checkout</h2>
+<p>Use the checkout that contains <code>clients/linux</code>. First save or commit any local changes. Review incoming changes before updating your checkout; the app does not fetch or run downloaded code. If a desired revision does not contain <code>clients/linux</code>, it cannot build Headroom.</p>
+<p>These commands build the source already in your checkout. They do not fetch an update from the network. Run them from the repository root:</p>
+<pre><code>cmake -S clients/linux -B clients/linux/build -DCMAKE_BUILD_TYPE=Release
+cmake --build clients/linux/build --parallel
+ctest --test-dir clients/linux/build --output-on-failure</code></pre>
+<p>After the build and tests succeed, choose <strong>Quit Headroom</strong> in the tray menu, then install and reopen:</p>
+<pre><code>cmake --install clients/linux/build --prefix "$HOME/.local"
+"$HOME/.local/bin/headroom"</code></pre>
+<p>The install updates the executable and shared app files. Your connection settings, saved provider order, and bearer token stay in their existing configuration file. A custom installation prefix should use the same prefix for subsequent installs.</p>
+<h2>Requirements</h2>
+<p>CMake 3.21+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2, Widgets, Network, SVG image support, and Test. Tests use a loopback HTTP server and a software-rendered Qt window.</p>
+<p><a href="https://github.com/AaronFeledy/claude-usage-widget/releases">Project releases</a> · <a href="https://github.com/AaronFeledy/claude-usage-widget">Source repository</a></p>
+</html>

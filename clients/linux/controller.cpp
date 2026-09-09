@@ -1,0 +1,242 @@
+#include "controller.h"
+#include "usage.h"
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QSaveFile>
+#include <QStandardPaths>
+
+Controller::Controller(bool demo, const QString &configPath, QObject *parent) : QObject(parent), m_demo(demo) {
+    m_path = configPath.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/settings.json" : configPath;
+    QFile file(m_path);
+    if (file.open(QIODevice::ReadOnly)) {
+        const auto doc = QJsonDocument::fromJson(file.readAll());
+        if (!doc.isObject()) m_message = "Settings could not be read. Reconnect to save a new configuration.";
+        const auto o = doc.object();
+        m_url = o["url"].toString(); m_token = o["token"].toString();
+        m_interval = qBound(15, o["interval"].toInt(60), 900);
+        m_notifications = o["notifications"].toBool(true);
+        m_primary = o["primary"].toString("Claude");
+        for (const auto &name : o["order"].toArray()) if (name.isString() && !m_order.contains(name.toString())) m_order.append(name.toString());
+        if (m_order.isEmpty()) m_order.append(m_primary);
+    }
+    log("App", "Usage monitor started.");
+    m_poll.setSingleShot(true);
+    m_poll.setTimerType(Qt::PreciseTimer);
+    connect(&m_poll, &QTimer::timeout, this, &Controller::refresh);
+    m_poll.start(m_interval * 1000);
+    connect(&m_clock, &QTimer::timeout, this, [this] { updateMeterStates(); emit changed(); });
+    m_clock.start(30000);
+    QTimer::singleShot(0, this, &Controller::refresh);
+}
+
+QVariantMap Controller::settings() const {
+    return {{"url", m_url}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
+        {"notifications", m_notifications}, {"primary", primary()}};
+}
+QVariantMap Controller::state() const {
+    const auto elapsed = m_lastGood ? QDateTime::currentSecsSinceEpoch() - m_lastGood : 0;
+    return {{"status", m_status}, {"message", m_message}, {"loading", m_loading}, {"demo", m_demo},
+        {"errorKind", m_errorKind}, {"retryAttempt", m_retryAttempt},
+        {"retrySeconds", m_poll.isActive() ? (m_poll.remainingTime() + 999) / 1000 : 0}, {"lastGood", m_lastGood}, {"age", elapsed}, {"host", QUrl(m_url).host()},
+        {"updated", m_lastGood ? (elapsed < 60 ? "Just updated" : QString("Updated %1m ago").arg(elapsed / 60)) : "Awaiting connection"}};
+}
+QString Controller::displayName(const QString &provider) const { return Usage::displayName(provider); }
+
+void Controller::cancel() {
+    if (m_reply) { disconnect(m_reply, nullptr, this, nullptr); m_reply->abort(); m_reply->deleteLater(); m_reply.clear(); }
+    m_loading = false;
+}
+void Controller::log(const QString &category, const QString &message) {
+    // Only developer-authored event summaries belong here. Never pass URLs,
+    // headers, response bodies, provider errors, account labels, or credentials.
+    m_diagnostics.append(QVariantMap{{"time", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
+        {"category", category}, {"message", message}});
+    while (m_diagnostics.size() > 500) m_diagnostics.removeFirst();
+    emit diagnosticsChanged();
+}
+void Controller::clearDiagnostics() { m_diagnostics.clear(); emit diagnosticsChanged(); }
+QString Controller::diagnosticText() const {
+    QStringList lines;
+    for (const auto &item : m_diagnostics) {
+        const auto row = item.toMap();
+        lines.append(row["time"].toString() + " [" + row["category"].toString() + "] " + row["message"].toString());
+    }
+    return lines.join('\n');
+}
+void Controller::resetRetry() {
+    m_retryAttempt = 0; m_errorKind.clear(); m_poll.start(m_interval * 1000);
+}
+void Controller::fail(const QString &message, const QString &kind) {
+    m_status = "offline"; m_message = message; m_loading = false; m_errorKind = kind;
+    m_retryAttempt = qMin(m_retryAttempt + 1, 8);
+    const int seconds = qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval));
+    m_poll.start(seconds * 1000);
+    log("Connection", message + QString(" Retry in %1 seconds.").arg(seconds));
+    emit changed();
+}
+void Controller::refresh() {
+    if (m_loading) return;
+    m_poll.stop();
+    if (m_demo) {
+        resetRetry();
+        Usage::parse(Usage::demo(), m_providers); m_status = "demo"; m_message.clear();
+        m_lastGood = QDateTime::currentSecsSinceEpoch(); updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed(); return;
+    }
+    if (m_url.isEmpty()) { m_status = "setup"; m_errorKind.clear(); emit changed(); return; }
+    const auto url = Usage::endpoint(m_url);
+    if (url.isEmpty()) { fail("Enter a valid HTTP or HTTPS backend address in settings."); return; }
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+    request.setRawHeader("User-Agent", "Headroom/0.1");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::SameOriginRedirectPolicy);
+    request.setTransferTimeout(10000);
+    if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+    m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
+    auto reply = m_network.get(request); m_reply = reply;
+    auto deadline = new QTimer(reply); deadline->setSingleShot(true);
+    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(12000);
+    connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 1024 * 1024) reply->abort(); });
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const auto error = reply->error(); const auto body = reply->readAll();
+        reply->deleteLater(); m_reply.clear(); m_loading = false;
+        if (status == 401 || status == 403) { fail("Your backend rejected the token. Update it in connection settings.", "auth"); return; }
+        if (status && status != 200) { fail(QString("Backend returned HTTP %1. Check the address and try again.").arg(status), "api"); return; }
+        if (error != QNetworkReply::NoError) { fail("Cannot reach your backend. Check your network and connection settings."); return; }
+        QVariantList providers;
+        if (body.size() > 1024 * 1024 || !Usage::parse(body, providers)) { fail("The backend returned an unexpected usage response.", "malformed"); return; }
+        resetRetry();
+        int failed = 0;
+        for (const auto &provider : providers) if (!provider.toMap()["is_success"].toBool()) ++failed;
+        log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
+        m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
+        updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
+    });
+}
+QString Controller::saveSettings(QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken) {
+    url = url.trimmed(); token = token.trimmed();
+    if (Usage::endpoint(url).isEmpty()) return "Use an HTTP or HTTPS address without credentials, a query, or a fragment.";
+    if (token.contains('\n') || token.contains('\r')) return "The bearer token must be a single line.";
+    if (interval < 15 || interval > 900) return "Choose a refresh interval between 15 and 900 seconds.";
+    const QString savedToken = forgetToken ? QString() : (token.isEmpty() && url == m_url ? m_token : token);
+    const QString error = writeSettings(url, savedToken, interval, notifications, primary);
+    if (!error.isEmpty()) return error;
+    cancel();
+    if (m_url != url || m_token != savedToken || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
+    m_url = url; m_token = savedToken; m_interval = interval; m_notifications = notifications; m_primary = primary;
+    m_demo = false; m_status = "connecting"; m_message.clear(); resetRetry();
+    log("Settings", "Connection settings saved.");
+    emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
+}
+QString Controller::writeSettings(const QString &url, const QString &token, int interval, bool notifications, const QString &primary) {
+    if (!QDir().mkpath(QFileInfo(m_path).absolutePath())) return "Could not create the settings directory.";
+    QSaveFile file(m_path);
+    if (!file.open(QIODevice::WriteOnly)) return "Could not save settings. Check directory permissions.";
+    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) return "Could not secure the settings file.";
+    const QByteArray data = QJsonDocument(QJsonObject{{"url", url}, {"token", token}, {"interval", interval},
+        {"notifications", notifications}, {"primary", primary}, {"order", QJsonArray::fromStringList(m_order)}}).toJson();
+    if (file.write(data) != data.size() || !file.commit()) return "Could not save settings. Your previous configuration is unchanged.";
+    return {};
+}
+QVariantList Controller::providers() const {
+    auto result = m_providers;
+    std::stable_sort(result.begin(), result.end(), [&](const QVariant &a, const QVariant &b) {
+        auto rank = [&](const QVariant &v) { const auto i = m_order.indexOf(v.toMap()["provider_name"].toString()); return i < 0 ? 999 : i; };
+        return rank(a) < rank(b);
+    });
+    return result;
+}
+QString Controller::primary() const {
+    const auto ordered = providers();
+    return ordered.isEmpty() ? (m_order.isEmpty() ? m_primary : m_order.first()) : ordered.first().toMap()["provider_name"].toString();
+}
+void Controller::moveProvider(const QString &source, const QString &target, bool after) {
+    if (source == target) return;
+    QStringList order;
+    for (const auto &p : providers()) order.append(p.toMap()["provider_name"].toString());
+    if (!order.contains(source) || !order.contains(target)) return;
+    order.removeAll(source); order.insert(order.indexOf(target) + (after ? 1 : 0), source);
+    for (const auto &name : m_order) if (!order.contains(name)) order.append(name);
+    const auto previous = m_order; m_order = order;
+    if (!m_demo) {
+        const QString error = writeSettings(m_url, m_token, m_interval, m_notifications, order.first());
+        if (!error.isEmpty()) { m_order = previous; emit notify("Order could not be saved", error); return; }
+    }
+    log("Settings", "Provider order changed.");
+    m_primary = order.first(); emit settingsChanged(); emit providersChanged(); emit changed();
+}
+
+void Controller::preview(bool enabled) {
+    cancel(); resetRetry(); m_demo = enabled;
+    log("App", enabled ? "Sample preview enabled." : "Live connection enabled."); m_providers.clear(); m_warningStates.clear(); m_concerns.clear(); m_lastGood = 0; m_message.clear(); m_status = "setup"; emit providersChanged(); emit changed(); refresh();
+}
+QVariantMap Controller::concern(const QString &provider, const QVariantMap &bucket) const {
+    return m_concerns.value(qMakePair(provider, bucket["id"].toString()));
+}
+QString Controller::warningColor(int severity) const { return Usage::warningColor(Usage::WarningLevel(qBound(0, severity, 3))); }
+void Controller::updateMeterStates() {
+    // Don't infer recovery from old usage readings during a connection outage.
+    if (m_status != "ready" && m_status != "demo") return;
+    const auto now = QDateTime::currentDateTimeUtc();
+    QSet<MeterKey> present;
+    QSet<QString> failedProviders;
+    for (const auto &value : m_providers) {
+        const auto provider = value.toMap();
+        const auto name = provider["provider_name"].toString();
+        if (!provider["is_success"].toBool()) { failedProviders.insert(name); continue; }
+        for (const auto &item : provider["buckets"].toList()) {
+            const auto bucket = item.toMap();
+            const MeterKey key(name, bucket["id"].toString());
+            present.insert(key);
+            auto assessment = Usage::concern(name, bucket, now);
+            const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs);
+            const auto window = reset.isValid() ? QString::number(reset.toMSecsSinceEpoch()) : QString();
+            // Once a known window expires, wait for its replacement. Reusing
+            // cached usage with percentage-only fallback would create false alerts.
+            const auto prior = m_warningStates.constFind(key);
+            if (reset.isValid() && reset <= now && prior != m_warningStates.cend()
+                && prior->initialized && prior->window == window) {
+                auto retained = m_concerns.value(key);
+                retained["available"] = false;
+                retained["detail"] = "The reset time has passed. Waiting for the backend's replacement window.\nState: "
+                    + Usage::warningName(prior->level) + ". The previous warning state is retained until fresh window data arrives.";
+                m_concerns.insert(key, retained);
+                continue;
+            }
+            auto transition = Usage::advanceWarning(m_warningStates[key], bucket["utilization"].toDouble(),
+                assessment["available"].toBool(), assessment["pressure"].toDouble(), window);
+            assessment["severity"] = int(transition.to);
+            assessment["level"] = Usage::warningName(transition.to);
+            assessment["color"] = Usage::warningColor(transition.to);
+            assessment["detail"] = assessment["detail"].toString() + "\nState: " + Usage::warningName(transition.to)
+                + ". Lower recovery thresholds prevent repeated alerts near a boundary.";
+            m_concerns.insert(key, assessment);
+            if (transition.changed)
+                log("Warning", "Meter transitioned from " + Usage::warningName(transition.from) + " to " + Usage::warningName(transition.to) + ".");
+            if (transition.notify && m_notifications && !m_demo)
+                emit usageAlert(Usage::displayName(name) + " · " + Usage::warningName(transition.to),
+                    QString("%1: %2% used, %3% remaining. %4")
+                        .arg(bucket["label"].toString()).arg(bucket["utilization"].toDouble(), 0, 'f', 1)
+                        .arg(assessment["remaining"].toDouble(), 0, 'f', 1)
+                        .arg(assessment["available"].toBool() ? QString("%1% of the remaining allowance was spent ahead of pace.").arg(assessment["pressure"].toDouble() * 100, 0, 'f', 0) : QString("Pacing unavailable.")), int(transition.to));
+        }
+    }
+    for (const auto &key : m_warningStates.keys()) {
+        if (!present.contains(key) && !failedProviders.contains(key.first)) {
+            m_warningStates.remove(key); m_concerns.remove(key);
+        }
+    }
+}
+QVariantList Controller::notches(const QString &provider, const QVariantMap &bucket) const { return Usage::notches(provider, bucket); }
+QVariantMap Controller::pacing(const QString &provider, const QVariantMap &bucket) const { return Usage::pacing(provider, bucket); }
+QString Controller::countdown(const QString &timestamp) const { return Usage::countdown(timestamp); }
+void Controller::setPrimary(const QString &name) {
+    moveProvider(name, primary(), false);
+}
+void Controller::copyText(const QString &text) { QGuiApplication::clipboard()->setText(text); }

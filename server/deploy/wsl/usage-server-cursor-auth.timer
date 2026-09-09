@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep Cursor usage authenticated using the WSL CLI login
+
+[Timer]
+OnBootSec=20
+OnUnitActiveSec=60
+AccuracySec=5
+Unit=usage-server-cursor-auth.service
+
+[Install]
+WantedBy=timers.target

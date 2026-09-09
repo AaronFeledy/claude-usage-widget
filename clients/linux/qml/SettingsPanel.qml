@@ -1,0 +1,107 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+Popup {
+    id: panel
+    signal diagnosticsRequested()
+    parent: Overlay.overlay
+    anchors.centerIn: parent
+    width: Math.min(480, parent.width - 32)
+    height: Math.min(650, parent.height - 32)
+    modal: true; focus: true; padding: 28
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
+    Overlay.modal: Rectangle { color: Theme.overlay }
+    onOpened: {
+        startupService.refresh(); appInfo.refreshServer()
+        url.text = backend.settings.url; token.text = ""; forget.checked = false
+        interval.currentIndex = [15, 30, 60, 120, 300].indexOf(backend.settings.interval)
+        if (interval.currentIndex < 0) interval.currentIndex = 2
+        notifications.checked = backend.settings.notifications; error.text = ""
+        url.forceActiveFocus()
+    }
+    component Caption: Text { color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium }
+    component Check: CheckBox {
+        id: check
+        implicitHeight: 32; font.pixelSize: 12
+        indicator: Rectangle {
+            x: 0; y: (check.height - height) / 2; width: 20; height: 20; radius: 5
+            color: check.checked ? Theme.purple : Theme.background
+            border.color: check.activeFocus ? Theme.purple : Theme.selection
+            Text { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: Theme.background; font.pixelSize: 13 }
+        }
+        contentItem: Text { text: check.text; font: check.font; color: Theme.foreground; leftPadding: 30; verticalAlignment: Text.AlignVCenter }
+    }
+    component Entry: TextField {
+        Layout.fillWidth: true; implicitHeight: 44; color: Theme.foreground; font.pixelSize: 13; selectByMouse: true
+        placeholderTextColor: Theme.muted; leftPadding: 12; rightPadding: 12
+        background: Rectangle { radius: 8; color: Theme.inset; border.color: parent.activeFocus ? Theme.purple : Theme.selection }
+    }
+    ColumnLayout {
+        anchors.fill: parent; spacing: 12
+    ScrollView {
+        id: settingsScroll; objectName: "settingsScroll"
+        Layout.fillWidth: true; Layout.fillHeight: true; contentWidth: availableWidth; clip: true
+        ScrollBar.vertical.policy: contentHeight > availableHeight ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+        ColumnLayout {
+            width: settingsScroll.availableWidth - 12; spacing: 17
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "Make yourself at home"; color: Theme.foreground; font.pixelSize: 22; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                ActionButton { text: "×"; quiet: true; implicitWidth: 32; onClicked: panel.close(); Accessible.name: "Close settings" }
+            }
+            Text { text: "Connect Headroom to your usage server."; color: Theme.muted; font.pixelSize: 13 }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.selection; Layout.topMargin: 4; Layout.bottomMargin: 4 }
+            ColumnLayout { Layout.fillWidth: true; spacing: 8
+                Caption { text: "BACKEND ADDRESS" }
+                Entry { id: url; objectName: "backendUrl"; placeholderText: "http://arrowone:7823"; Accessible.name: "Backend address" }
+                Text { text: "The base address of your existing usage API."; color: Theme.muted; font.pixelSize: 11 }
+            }
+            ColumnLayout { Layout.fillWidth: true; spacing: 8
+                Caption { text: "BEARER TOKEN" }
+                Entry { id: token; objectName: "bearerToken"; echoMode: TextInput.Password; placeholderText: backend.settings.hasToken && url.text.trim() === backend.settings.url ? "Saved token · leave empty to keep" : "Enter token, if your server requires one"; Accessible.name: "Bearer token" }
+                Text { text: "Stored locally in an owner-only settings file."; color: Theme.muted; font.pixelSize: 11 }
+                Check { id: forget; visible: backend.settings.hasToken; text: "Remove saved token"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ColumnLayout { Layout.fillWidth: true; spacing: 6
+                    Caption { text: "Refresh interval" }
+                    Text { text: "Fetch the latest backend readings"; color: Theme.muted; font.pixelSize: 11 }
+                }
+                ComboBox {
+                    id: interval; model: ["15 seconds", "30 seconds", "1 minute", "2 minutes", "5 minutes"]
+                    implicitWidth: 140; implicitHeight: 40; Accessible.name: "Refresh interval"
+                    background: Rectangle { radius: 8; color: Theme.surface; border.color: interval.activeFocus ? Theme.purple : Theme.selection }
+                    contentItem: Text { text: interval.displayText; color: Theme.foreground; font.pixelSize: 12; leftPadding: 12; verticalAlignment: Text.AlignVCenter }
+                    indicator: Text { x: parent.width - 23; y: 12; text: "⌄"; color: Theme.muted }
+                    delegate: ItemDelegate {
+                        required property string modelData; required property int index
+                        width: interval.width; text: modelData
+                        contentItem: Text { text: modelData; color: Theme.foreground; font.pixelSize: 12 }
+                        background: Rectangle { color: parent.highlighted ? Theme.selection : Theme.inset }
+                        highlighted: interval.highlightedIndex === index
+                    }
+                    popup.background: Rectangle { color: Theme.inset; radius: 8; border.color: Theme.selection }
+                }
+            }
+            Check { id: notifications; text: "Notify when meters enter Warning or Critical"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
+            Text { text: "Closing the window keeps Headroom in your system tray.\nUse the tray menu to quit."; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.4; visible: trayAvailable }
+            StartupSettings { Layout.fillWidth: true }
+            AppInfoSettings { Layout.fillWidth: true }
+            ActionButton { text: "Open diagnostics"; quiet: true; onClicked: { panel.close(); panel.diagnosticsRequested() } }
+        }
+    }
+            Text { id: error; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.red; font.pixelSize: 12 }
+            RowLayout {
+                Layout.fillWidth: true; Layout.topMargin: 6
+                ActionButton { text: "Cancel"; quiet: true; onClicked: panel.close() }
+                Item { Layout.fillWidth: true }
+                ActionButton { objectName: "saveConnection"; text: "Save & connect  →"; accent: true; onClicked: {
+                    error.text = backend.saveSettings(url.text, token.text, [15, 30, 60, 120, 300][interval.currentIndex], notifications.checked, backend.settings.primary, forget.checked)
+                    if (!error.text) { token.text = ""; panel.close() }
+                } }
+            }
+    }
+}

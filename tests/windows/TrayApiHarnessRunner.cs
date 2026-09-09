@@ -3,6 +3,7 @@ internal static class TrayApiHarnessRunner
     public static async Task RunAsync()
     {
         var trayTests = new TrayApiHarnessTests();
+        await trayTests.Test_ProviderOrderMigrationAndPersistence();
         await trayTests.Test_SettingsMigration_preservesValuesAndBackup();
         await trayTests.Test_SettingsWhitespaceApiUrlRemainsInvalidRemote();
         await trayTests.Test_SettingsEmptyApiUrlRemainsLocalSentinel();

@@ -1,0 +1,22 @@
+[Unit]
+Description=Claude Usage Widget API (WSL)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=USER
+Group=USER
+Environment=HOME=/home/USER
+EnvironmentFile=/home/USER/.config/claude-usage-widget/server.env
+ExecStart=/home/USER/.local/bin/usage-server --config /home/USER/.config/claude-usage-widget/config.yaml
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

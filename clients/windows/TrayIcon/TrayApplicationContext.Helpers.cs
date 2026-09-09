@@ -21,8 +21,7 @@ public partial class TrayApplicationContext
 
     private IReadOnlyList<string> GetProviderPreferenceOrder()
     {
-        var primary = SettingsService.NormalizeProviderName(_settingsService.Settings.PrimaryProvider);
-        return DefaultProviderOrder.OrderByDescending(name => name == primary).ThenBy(name => Array.IndexOf(DefaultProviderOrder, name)).ToList();
+        return _settingsService.Settings.ProviderOrder;
     }
 
     private IReadOnlyList<UsageData> GetOrderedUsageData() => GetProviderPreferenceOrder()

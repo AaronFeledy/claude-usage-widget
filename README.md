@@ -1,6 +1,6 @@
 # Claude Usage Widget
 
-Windows tray client plus a local/remote usage API server for Claude, Codex, Cursor, and Grok usage.
+Windows and Linux tray clients plus a local/remote usage API server for Claude, Codex, Cursor, and Grok usage.
 
 [![Build](https://github.com/AaronFeledy/claude-usage-widget/actions/workflows/build.yml/badge.svg)](https://github.com/AaronFeledy/claude-usage-widget/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/AaronFeledy/claude-usage-widget)](https://github.com/AaronFeledy/claude-usage-widget/releases/latest)
@@ -9,6 +9,7 @@ Windows tray client plus a local/remote usage API server for Claude, Codex, Curs
 ## Layout
 
 - `clients/windows/` - .NET 8 WinForms tray client.
+- `clients/linux/` - native Qt Quick remote client for Linux.
 - `server/` - Go usage API server, provider integrations, and Dockerfile.
 - `tests/windows/` - Linux-runnable C# harness tests for tray/server lifecycle seams.
 - `docs/home-assistant.md` - Home Assistant REST sensor example for the usage API.
@@ -67,6 +68,7 @@ The installer downloads the latest matching Windows tray and server assets for y
 
 - [Windows client](clients/windows/README.md)
 - [Usage server](server/README.md)
+- [WSL service deployment](server/deploy/wsl/README.md)
 - [Home Assistant REST sensor](docs/home-assistant.md)
 
 ## Provider Credentials
@@ -133,3 +135,14 @@ cd server && GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ..
 ## License
 
 MIT
+
+## Linux desktop client
+
+[Headroom](clients/linux/README.md) is a native Qt Quick frontend for a backend
+already running on your network. It supports KDE / Wayland, a system-tray meter,
+provider drag-and-drop ordering, reset countdowns, and usage notifications. Build
+and installation instructions are in the client README.
+
+Both desktop clients bundle official provider favicons and save a full provider
+order. Drag providers to reorder them; the first provider is the default tray
+meter. Each client keeps its own order.

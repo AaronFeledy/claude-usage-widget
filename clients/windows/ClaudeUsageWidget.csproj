@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <Content Include="app.ico" />
+    <EmbeddedResource Include="../shared/provider-icons/*.png" LogicalName="ProviderIcons.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

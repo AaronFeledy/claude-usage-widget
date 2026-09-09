@@ -53,3 +53,20 @@ dotnet run --project tests/windows/ServerProcessManagerTests.csproj -c Release
 ```
 
 Linux cross-builds need a .NET SDK installation that includes `Microsoft.NET.Sdk.WindowsDesktop`; native tray rendering and Windows Job Object runtime behavior still require a Windows host.
+
+## Provider order and icons
+
+Drag a provider's title, icon, or six-dot handle to reorder the panels. The
+insertion line shows the drop position, and long lists scroll near their edges.
+The first provider becomes the default for the tray meter immediately. The
+primary-provider setting also moves that provider to the top while preserving
+the order of the others. The existing tray fallback to the next successful
+provider is retained when the preferred provider is unavailable.
+
+The full `ProviderOrder` is saved in settings. Schema v3 migrates older files
+using the existing `PrimaryProvider`, keeping it first and preserving the other
+settings and migration backup. Duplicate or unknown names are removed and missing
+providers are appended.
+
+Provider headers and tray badges now use bundled official favicons. Asset
+sources are in [the shared icon directory](../shared/provider-icons/README.md).

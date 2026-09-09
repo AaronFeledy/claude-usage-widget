@@ -3,3 +3,5 @@ bin/
 
 # Task-local agent artifacts
 .omo/
+
+clients/linux/build/
