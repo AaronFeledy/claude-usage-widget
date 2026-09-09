@@ -27,8 +27,11 @@ func TestWindowsForwardSlashInstallPathsBecomeStableIdentity(t *testing.T) {
 	if !inspection.TrustedIdentity || !inspection.Complete {
 		t.Fatalf("normalized installation identity = %+v", inspection)
 	}
+	if !strings.HasPrefix(inspection.VersionPath, "versions/4.5.6.generation-") {
+		t.Fatalf("active version path = %q", inspection.VersionPath)
+	}
 	executable, _, err := ActiveExecutable(forwardInstall)
-	if err != nil || executable != filepath.Join(canonicalInstall, "versions", "4.5.6", "bin", "headroom.exe") {
+	if err != nil || executable != filepath.Join(canonicalInstall, filepath.FromSlash(inspection.VersionPath), "bin", "headroom.exe") {
 		t.Fatalf("active executable = %q, %v", executable, err)
 	}
 	if _, err = NormalizeInstallRoot("relative/install"); err == nil {

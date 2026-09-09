@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestWindowsJunctionInstallRootIsRejected(t *testing.T) {
@@ -69,5 +70,37 @@ func TestWindowsWritableBootstrapBackupRoundTrip(t *testing.T) {
 	}
 	if err := verifyBootstrapRestore(root, entry, backup); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWindowsExactWatchStopsOnlyVerifiedProcess(t *testing.T) {
+	t.Setenv("HEADROOM_FIXTURE_SLEEP_MS", "60000")
+	target := startFixturePath(t, fixtureExecutable)
+	defer func() { _ = target.Process.Kill(); _, _ = target.Process.Wait() }()
+	unrelated := startFixturePath(t, fixtureExecutable)
+	defer func() { _ = unrelated.Process.Kill(); _, _ = unrelated.Process.Wait() }()
+	token, err := captureProcessToken(target.Process.Pid, fixtureExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watch, err := watchProcess(target.Process.Pid, fixtureExecutable, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = watch.KillWait(3 * time.Second); err != nil {
+		watch.Close()
+		t.Fatal(err)
+	}
+	if err = watch.KillWait(time.Second); err != nil {
+		watch.Close()
+		t.Fatalf("already-signaled retained process handle was unsafe: %v", err)
+	}
+	watch.Close()
+	_, _ = target.Process.Wait()
+	if _, err = captureProcessToken(unrelated.Process.Pid, fixtureExecutable); err != nil {
+		t.Fatalf("unrelated process was disturbed: %v", err)
+	}
+	if err = stopRecordedProcess(target.Process.Pid, fixtureExecutable, token, time.Second); err != nil {
+		t.Fatalf("already-exited exact process was unsafe: %v", err)
 	}
 }

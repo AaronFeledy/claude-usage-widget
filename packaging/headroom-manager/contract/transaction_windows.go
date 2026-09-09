@@ -25,14 +25,15 @@ var procMoveFileExW = kernel32.NewProc("MoveFileExW")
 
 const processSynchronize = 0x00100000
 const processQueryLimitedInformation = 0x1000
+const processTerminate = 0x0001
 
 type windowsWatch struct {
 	handle syscall.Handle
 	token  string
 }
 
-func openWindowsProcess(pid int) (syscall.Handle, string, string, error) {
-	h, _, callErr := procOpenProcess.Call(processSynchronize|processQueryLimitedInformation, 0, uintptr(pid))
+func openWindowsProcess(pid int, access uintptr) (syscall.Handle, string, string, error) {
+	h, _, callErr := procOpenProcess.Call(access, 0, uintptr(pid))
 	if h == 0 {
 		return 0, "", "", callErr
 	}
@@ -53,7 +54,7 @@ func openWindowsProcess(pid int) (syscall.Handle, string, string, error) {
 }
 
 func captureProcessToken(pid int, expected string) (string, error) {
-	h, actual, token, err := openWindowsProcess(pid)
+	h, actual, token, err := openWindowsProcess(pid, processSynchronize|processQueryLimitedInformation)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +66,7 @@ func captureProcessToken(pid int, expected string) (string, error) {
 }
 
 func watchProcess(pid int, expected, token string) (processWatch, error) {
-	h, actual, got, err := openWindowsProcess(pid)
+	h, actual, got, err := openWindowsProcess(pid, processSynchronize|processQueryLimitedInformation|processTerminate)
 	if err != nil || !samePath(actual, expected) || got != token {
 		if h != 0 {
 			procCloseHandle.Call(uintptr(h))
@@ -85,7 +86,15 @@ func (w *windowsWatch) Wait(timeout time.Duration) error {
 	return err
 }
 func (w *windowsWatch) KillWait(timeout time.Duration) error {
+	if result, _, err := procWaitForSingleObject.Call(uintptr(w.handle), 0); result == 0 {
+		return nil
+	} else if result == 0xffffffff {
+		return err
+	}
 	if ok, _, err := procTerminateProcess.Call(uintptr(w.handle), 1); ok == 0 {
+		if result, _, _ := procWaitForSingleObject.Call(uintptr(w.handle), 0); result == 0 {
+			return nil
+		}
 		return err
 	}
 	return w.Wait(timeout)
