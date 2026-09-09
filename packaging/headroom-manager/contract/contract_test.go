@@ -64,6 +64,10 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	if !inspection.TrustedIdentity || !inspection.Complete {
 		t.Fatalf("unexpected inspection: %+v", inspection)
 	}
+	expectedApplication := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "headroom"+nativeExtension())
+	if inspection.ActiveExecutable != expectedApplication {
+		t.Fatalf("active executable = %q, want %q", inspection.ActiveExecutable, expectedApplication)
+	}
 	archive2 := makePackage(t, root, "1.2.4", false)
 	state, err = InstallArchive(archive2, installRoot, entry, Expectations{})
 	if err != nil {

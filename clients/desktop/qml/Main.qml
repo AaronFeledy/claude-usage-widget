@@ -108,12 +108,13 @@ ApplicationWindow {
                         text: window.attention + " needs attention"; color: backend.warningColor(window.concernLevel); font.pixelSize: 11
                     }
                     ActionButton {
+                        objectName: "providerFilter"
                         visible: window.providers.length > 0
                         text: backend.displayName(window.filter) + " ⌄"; quiet: true; font.pixelSize: 11
                         Accessible.name: "Filter providers"
                         onClicked: filterMenu.open()
                         Menu {
-                            id: filterMenu
+                            id: filterMenu; objectName: "providerFilterMenu"
                             y: -height - 8
                             Instantiator {
                                 model: ["All providers"].concat(window.providers.map(p => p.provider_name))

@@ -7,9 +7,9 @@
 #include <utility>
 
 Controller::Controller(bool demo, const QString &configPath, QObject *parent, bool allowAutomaticMigration,
-                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions)
+                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions, QByteArray demoPayload)
     : QObject(parent), m_settingsService(configPath, allowAutomaticMigration && !demo),
-      m_demo(demo), m_server(std::move(serverOptions), this), m_credentials(std::move(credentialOptions), this) {
+      m_demo(demo), m_demoPayload(std::move(demoPayload)), m_server(std::move(serverOptions), this), m_credentials(std::move(credentialOptions), this) {
     const auto &loaded = m_settingsService.value();
     m_mode = loaded.connectionMode; m_url = loaded.url; m_token = loaded.token;
     m_interval = loaded.interval; m_notifications = loaded.notifications;
@@ -115,7 +115,7 @@ void Controller::refresh() {
     m_poll.stop();
     if (m_demo) {
         resetRetry();
-        Usage::parse(Usage::demo(), m_providers); m_status = "demo"; m_message.clear();
+        Usage::parse(m_demoPayload.isEmpty() ? Usage::demo() : m_demoPayload, m_providers); m_status = "demo"; m_message.clear();
         m_lastGood = QDateTime::currentSecsSinceEpoch(); updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed(); return;
     }
     if (m_mode == "local") {

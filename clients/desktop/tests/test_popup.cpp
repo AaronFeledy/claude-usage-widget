@@ -18,6 +18,12 @@ private slots:
         // A transient child may have taken focus before an outside window did.
         QTRY_VERIFY(!window.isVisible());
     }
+    void unknownAnchorStillTogglesVisibility() {
+        QQuickWindow window;
+        TrayPopup popup(&window, true);
+        popup.toggle({}, false); QTRY_VERIFY(window.isVisible());
+        popup.toggle({}, false); QVERIFY(!window.isVisible());
+    }
     void placement_data() {
         QTest::addColumn<QRect>("screen"); QTest::addColumn<QRect>("work");
         QTest::addColumn<QPoint>("anchor"); QTest::addColumn<QString>("edge");

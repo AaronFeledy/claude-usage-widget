@@ -13,7 +13,7 @@ class TrayPopup : public QObject {
 public:
     TrayPopup(QQuickWindow *window, bool attached, QObject *parent = nullptr);
     void show();
-    void toggle(const QPoint &anchor);
+    void toggle(const QPoint &anchor = {}, bool hasAnchor = true);
 private:
     void position();
     QQuickWindow *m_window;

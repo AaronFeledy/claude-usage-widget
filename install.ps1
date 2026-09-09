@@ -176,7 +176,36 @@ try {
                 if ([System.IO.Path]::GetFullPath($legacy.TargetPath) -eq [System.IO.Path]::GetFullPath($legacyTarget)) { Remove-Item -LiteralPath $legacyShortcutPath }
             }
         } finally { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
-        if (-not $NoLaunch) { Start-Process -FilePath $EntryPath }
+        Write-Host "Installed Headroom $($manifest.version) at $InstallRoot"
+        if ($NoLaunch) {
+            Write-Host "Quit any running Headroom window and launch $EntryPath to use the installed generation."
+        } else {
+            $readyPath = Join-Path $privateRoot 'installed-ready.json'
+            $nonce = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')).Substring(0, 48)
+            $priorNonce = [Environment]::GetEnvironmentVariable('HEADROOM_READY_NONCE', 'Process')
+            try {
+                [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $nonce, 'Process')
+                $quotedReady = '"' + $readyPath.Replace('"', '\"') + '"'
+                Start-Process -FilePath $EntryPath -ArgumentList @('--headroom-installed-restart', '--headroom-ready-file', $quotedReady)
+            } finally {
+                [Environment]::SetEnvironmentVariable('HEADROOM_READY_NONCE', $priorNonce, 'Process')
+            }
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            $ready = $null
+            while ([DateTime]::UtcNow -lt $deadline) {
+                if ((Test-Path -LiteralPath $readyPath) -and (Get-Item -LiteralPath $readyPath).Length -gt 0) {
+                    try { $ready = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json } catch { $ready = $null }
+                    if ($ready) { break }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $state = Get-Content -LiteralPath (Join-Path $InstallRoot 'install-state.json') -Raw | ConvertFrom-Json
+            $expectedExecutable = [System.IO.Path]::GetFullPath((Join-Path $InstallRoot (Join-Path $state.version_path 'bin\headroom.exe')))
+            $readyMatches = $ready -and $ready.nonce -ceq $nonce -and $ready.version -ceq $state.active_version -and
+                [int64]$ready.pid -gt 0 -and [System.IO.Path]::GetFullPath([string]$ready.executable) -ieq $expectedExecutable
+            if ($readyMatches) { Write-Host 'Started the verified installed generation.' }
+            else { Write-Warning "The installation is ready, but the new generation did not become active. Quit any running Headroom window and launch $EntryPath." }
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $privateRoot) { Remove-Item -LiteralPath $privateRoot -Recurse -Force }

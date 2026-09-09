@@ -4,6 +4,19 @@ import QtQuick.Layouts
 
 Popup {
     id: panel
+    property int selectedInterval: 60
+    property var intervalValues: [15, 30, 60, 120, 300]
+    function intervalLabel(seconds) {
+        if (seconds === 60) return "1 minute"
+        if (seconds % 60 === 0) return (seconds / 60) + " minutes"
+        return seconds + " seconds"
+    }
+    function saveAndConnect() {
+        error.text = backend.saveSettings(localMode.checked ? "local" : "remote", url.text, token.text,
+                                          panel.selectedInterval, notifications.checked,
+                                          backend.settings.primary, forget.checked)
+        if (!error.text) { token.text = ""; panel.close() }
+    }
     signal diagnosticsRequested()
     parent: Overlay.overlay
     anchors.centerIn: parent
@@ -18,8 +31,10 @@ Popup {
         localMode.checked = backend.settings.mode === "local"
         remoteMode.checked = !localMode.checked
         url.text = backend.settings.url; token.text = ""; forget.checked = false
-        interval.currentIndex = [15, 30, 60, 120, 300].indexOf(backend.settings.interval)
-        if (interval.currentIndex < 0) interval.currentIndex = 2
+        selectedInterval = backend.settings.interval
+        intervalValues = [15, 30, 60, 120, 300]
+        if (intervalValues.indexOf(selectedInterval) < 0) intervalValues = intervalValues.concat([selectedInterval])
+        interval.currentIndex = intervalValues.indexOf(selectedInterval)
         notifications.checked = backend.settings.notifications; error.text = ""
         if (remoteMode.checked) url.forceActiveFocus()
     }
@@ -89,7 +104,7 @@ Popup {
                     Text { text: "Fetch the latest backend readings"; color: Theme.muted; font.pixelSize: 11 }
                 }
                 ComboBox {
-                    id: interval; model: ["15 seconds", "30 seconds", "1 minute", "2 minutes", "5 minutes"]
+                    id: interval; objectName: "refreshInterval"; model: panel.intervalValues.map(value => panel.intervalLabel(value))
                     implicitWidth: 140; implicitHeight: 40; Accessible.name: "Refresh interval"
                     background: Rectangle { radius: 8; color: Theme.surface; border.color: interval.activeFocus ? Theme.purple : Theme.selection }
                     contentItem: Text { text: interval.displayText; color: Theme.foreground; font.pixelSize: 12; leftPadding: 12; verticalAlignment: Text.AlignVCenter }
@@ -102,6 +117,7 @@ Popup {
                         highlighted: interval.highlightedIndex === index
                     }
                     popup.background: Rectangle { color: Theme.inset; radius: 8; border.color: Theme.selection }
+                    onActivated: panel.selectedInterval = panel.intervalValues[currentIndex]
                 }
             }
             Check { id: notifications; text: "Notify when meters enter Warning or Critical"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
@@ -116,10 +132,7 @@ Popup {
                 Layout.fillWidth: true; Layout.topMargin: 6
                 ActionButton { text: "Cancel"; quiet: true; onClicked: panel.close() }
                 Item { Layout.fillWidth: true }
-                ActionButton { objectName: "saveConnection"; text: "Save & connect  →"; accent: true; onClicked: {
-                    error.text = backend.saveSettings(localMode.checked ? "local" : "remote", url.text, token.text, [15, 30, 60, 120, 300][interval.currentIndex], notifications.checked, backend.settings.primary, forget.checked)
-                    if (!error.text) { token.text = ""; panel.close() }
-                } }
+                ActionButton { objectName: "saveConnection"; text: "Save & connect  →"; accent: true; onClicked: panel.saveAndConnect() }
             }
     }
 }

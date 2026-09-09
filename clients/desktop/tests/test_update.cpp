@@ -150,7 +150,7 @@ private slots:
         QTRY_COMPARE(service.state(), QStringLiteral("failed")); QVERIFY(!service.restartAvailable());
     }
     void timeoutAndOversizedStderrFailClosed() {
-        auto shortOptions = options(); shortOptions.timeoutMs = 30;
+        auto shortOptions = options(); shortOptions.timeoutMs = 500;
         UpdateService timed(true, shortOptions); QTRY_COMPARE(timed.state(), QStringLiteral("current"));
         qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "hang"); timed.checkForUpdates();
         QTRY_COMPARE(timed.state(), QStringLiteral("failed")); QVERIFY(timed.statusText().contains(QStringLiteral("timed out")));

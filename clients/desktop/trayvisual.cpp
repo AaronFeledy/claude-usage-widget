@@ -51,14 +51,16 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
         if (provider["provider_name"].toString() != primary) continue;
         if (!provider["is_success"].toBool()) { result.kind = Kind::ProviderError; break; }
         const auto buckets = provider["buckets"].toList();
-        for (int i = 0; i < buckets.size(); ++i) {
-            const auto bucket = buckets[i].toMap();
+        bool primaryAssigned = false;
+        for (const auto &entry : buckets) {
+            const auto bucket = entry.toMap();
             const double used = bucket["utilization"].toDouble();
             const QString status = bucket["status_text"].toString();
             const bool statusOnly = bucket["id"] == "on_demand" && used <= 0 && !status.isEmpty() && !status.contains(" / ");
             if (statusOnly) continue;
             const auto severity = level(assessment(primary, bucket));
-            if (i == 0) {
+            if (!primaryAssigned) {
+                primaryAssigned = true;
                 result.used = used; result.level = severity;
                 const auto pace = Usage::pacing(primary, bucket, now);
                 result.expected = pace["available"].toBool() ? pace["expected"].toDouble() : -1;
@@ -104,8 +106,8 @@ QIcon TrayVisual::icon(const Model &model) {
             p.setPen(QPen(QColor("#8be9fd"), 3)); p.drawLine(center + unit * 20, center + unit * 30);
         }
     }
-    const QString asset = QString(":/provider-icons/%1.svg").arg(model.provider.toLower());
-    const QIcon providerIcon(asset);
+    const QIcon providerIcon = model.provider.isEmpty() ? QIcon()
+        : QIcon(QString(":/provider-icons/%1.svg").arg(model.provider.toLower()));
     if (!providerIcon.isNull()) providerIcon.paint(&p, QRect(18, 18, 28, 28));
     else { p.setPen(foreground); p.setFont(QFont("sans-serif", 15, QFont::DemiBold)); p.drawText(QRect(18, 18, 28, 28), Qt::AlignCenter, "H"); }
     p.setPen(foreground); p.setFont(QFont("sans-serif", 10, QFont::DemiBold));

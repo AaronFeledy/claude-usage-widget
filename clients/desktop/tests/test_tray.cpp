@@ -87,6 +87,17 @@ private slots:
         QCOMPARE(missing.kind, TrayVisual::Kind::Idle);
         QCOMPARE(missing.used, -1);
     }
+    void firstMeasurableBucketDrivesTray() {
+        auto billing = meter("on_demand", 0); billing["status_text"] = "On-demand enabled";
+        auto measured = meter("weekly", 37, 86400);
+        const auto model = TrayVisual::build(ready(), {provider("Grok", {billing, measured})}, "Grok", assess, now);
+        QCOMPARE(model.kind, TrayVisual::Kind::Usage);
+        QCOMPARE(model.used, 37);
+        QCOMPARE(model.level, Usage::WarningLevel::Critical);
+        QCOMPARE(model.secondary, Usage::WarningLevel::Normal);
+        QCOMPARE(TrayVisual::build(ready(), {provider("Grok", {billing})}, "Grok", assess, now).kind,
+                 TrayVisual::Kind::Idle);
+    }
 };
 QTEST_MAIN(TrayTest)
 #include "test_tray.moc"

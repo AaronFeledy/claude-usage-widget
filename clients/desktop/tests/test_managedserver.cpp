@@ -314,6 +314,27 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
+#elif defined(Q_OS_LINUX)
+    void abruptOwnerExitKillsOnlyOwnedChild() {
+        QTemporaryDir dir; const auto record = dir.filePath("record"), unrelatedRecord = dir.filePath("unrelated-record"), ready = dir.filePath("ready");
+        qputenv("HEADROOM_FIXTURE_MODE", "degraded"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
+        const quint16 port = unusedPort(); QVERIFY(port);
+        QProcess unrelated;
+        unrelated.setProgram(QStringLiteral(FIXTURE_PATH));
+        unrelated.setArguments({"--listen-addr", QStringLiteral("127.0.0.1:%1").arg(unusedPort())});
+        auto unrelatedEnvironment = QProcessEnvironment::systemEnvironment();
+        unrelatedEnvironment.insert("HEADROOM_FIXTURE_RECORD", unrelatedRecord);
+        unrelated.setProcessEnvironment(unrelatedEnvironment);
+        unrelated.start(); QVERIFY(unrelated.waitForStarted(5000));
+        QProcess owner; owner.start(QStringLiteral(OWNER_PATH), {QStringLiteral(FIXTURE_PATH), QString::number(port), ready});
+        QVERIFY(owner.waitForStarted(5000)); QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(ready), 15000);
+        qint64 pid = 0; QTRY_VERIFY((pid = lastPid(record)) > 0); QVERIFY(processExists(pid));
+        owner.kill(); QVERIFY(owner.waitForFinished(2000));
+        QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
+        QCOMPARE(unrelated.state(), QProcess::Running);
+        unrelated.kill(); QVERIFY(unrelated.waitForFinished(2000));
+        qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
+    }
 #endif
 };
 

@@ -39,18 +39,19 @@ type StageResult struct {
 }
 
 type Inspection struct {
-	Installed       bool     `json:"installed"`
-	TrustedIdentity bool     `json:"trusted_identity"`
-	Complete        bool     `json:"complete"`
-	Version         string   `json:"version,omitempty"`
-	VersionPath     string   `json:"version_path,omitempty"`
-	Platform        string   `json:"platform,omitempty"`
-	Architecture    string   `json:"architecture,omitempty"`
-	PackageAsset    string   `json:"package_asset,omitempty"`
-	LauncherPath    string   `json:"launcher_path,omitempty"`
-	Missing         []string `json:"missing,omitempty"`
-	ApplyStatus     string   `json:"apply_status,omitempty"`
-	ApplyMessage    string   `json:"apply_message,omitempty"`
+	Installed        bool     `json:"installed"`
+	TrustedIdentity  bool     `json:"trusted_identity"`
+	Complete         bool     `json:"complete"`
+	Version          string   `json:"version,omitempty"`
+	VersionPath      string   `json:"version_path,omitempty"`
+	Platform         string   `json:"platform,omitempty"`
+	Architecture     string   `json:"architecture,omitempty"`
+	PackageAsset     string   `json:"package_asset,omitempty"`
+	LauncherPath     string   `json:"launcher_path,omitempty"`
+	ActiveExecutable string   `json:"active_executable,omitempty"`
+	Missing          []string `json:"missing,omitempty"`
+	ApplyStatus      string   `json:"apply_status,omitempty"`
+	ApplyMessage     string   `json:"apply_message,omitempty"`
 }
 
 func StageArchive(archive, installRoot string, expected Expectations) (StageResult, error) {
@@ -306,6 +307,11 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 		result.LauncherPath = filepath.Join(installRoot, "headroom.exe")
 	}
 	versionRoot := filepath.Join(installRoot, filepath.FromSlash(state.VersionPath))
+	applicationName := "headroom"
+	if state.Platform == "windows" {
+		applicationName += ".exe"
+	}
+	result.ActiveExecutable = filepath.Join(versionRoot, "bin", applicationName)
 	for _, record := range manifest.Files {
 		if !strings.HasPrefix(record.Path, "bundle/") {
 			continue

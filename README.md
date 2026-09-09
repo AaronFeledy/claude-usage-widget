@@ -52,9 +52,12 @@ stable entry at `~/.local/bin/headroom`, and adds an application-menu entry.
 Custom roots are supported by the installer options documented in
 [packaging](packaging/README.md).
 
-If Headroom is already running when you rerun an external installer, quit and
-reopen it after installation. The installer replaces the verified on-disk
-generation, but an existing primary Qt process may remain loaded until it exits.
+After installation, the installer starts the stable entry and accepts success
+only when the selected immutable generation reports its exact executable,
+version, PID, and private readiness nonce. If Headroom was already running, its
+existing primary process remains untouched and the installer tells you to quit
+that window and reopen the stable entry. `--no-launch`/`-NoLaunch` always prints
+the same restart instruction and performs no activation attempt.
 
 ## Local and remote operation
 

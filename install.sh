@@ -217,5 +217,31 @@ Terminal=false
 Categories=Utility;
 EOF
 install -m 0644 "$desktop_tmp" "$applications/headroom.desktop"
-if [ "$no_launch" -eq 0 ]; then "$entry_path" >/dev/null 2>&1 & fi
 printf 'Installed Headroom %s at %s\n' "$version" "$install_root"
+if [ "$no_launch" -eq 1 ]; then
+  printf 'Quit any running Headroom window and launch %s to use the installed generation.\n' "$entry_path"
+else
+  ready=$private_root/installed-ready.json
+  nonce=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
+  HEADROOM_READY_NONCE=$nonce "$entry_path" --headroom-installed-restart --headroom-ready-file "$ready" >/dev/null 2>&1 &
+  ready_ok=0
+  attempts=0
+  while [ "$attempts" -lt 100 ]; do
+    if [ -s "$ready" ] && python3 - "$ready" "$install_root" "$nonce" <<'PY'
+import json, os, sys
+marker=json.load(open(sys.argv[1], encoding='utf-8'))
+state=json.load(open(os.path.join(sys.argv[2], 'install-state.json'), encoding='utf-8'))
+expected=os.path.realpath(os.path.join(sys.argv[2], state['version_path'], 'bin', 'headroom'))
+actual=os.path.realpath(marker.get('executable',''))
+if marker.get('nonce') != sys.argv[3] or marker.get('version') != state.get('active_version') or actual != expected or not isinstance(marker.get('pid'), int) or marker['pid'] <= 0:
+    raise SystemExit(1)
+PY
+    then ready_ok=1; break; fi
+    attempts=$((attempts + 1)); sleep 0.1
+  done
+  if [ "$ready_ok" -eq 1 ]; then
+    printf 'Started the verified installed generation.\n'
+  else
+    printf 'The installation is ready, but the new generation did not become active. Quit any running Headroom window and launch %s.\n' "$entry_path" >&2
+  fi
+fi

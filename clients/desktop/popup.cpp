@@ -77,8 +77,8 @@ void TrayPopup::position() {
 void TrayPopup::show() {
     m_dismiss.stop(); position(); m_window->show(); m_window->raise(); m_window->requestActivate();
 }
-void TrayPopup::toggle(const QPoint &anchor) {
-    m_anchor = anchor; m_hasAnchor = true;
+void TrayPopup::toggle(const QPoint &anchor, bool hasAnchor) {
+    m_anchor = anchor; m_hasAnchor = hasAnchor;
     if (m_window->isVisible()) { m_dismiss.stop(); m_window->hide(); }
     else show();
 }

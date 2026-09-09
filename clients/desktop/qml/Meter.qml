@@ -50,7 +50,7 @@ ColumnLayout {
                 width: Math.max(0, parent.width * meter.bucket.utilization / 100)
                 height: parent.height; radius: 3
                 color: meter.usageColor
-                Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+                Behavior on width { enabled: !captureMode; NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
             }
             Repeater {
                 objectName: "meterNotches_" + meter.providerName + "_" + meter.bucket.id
@@ -77,7 +77,7 @@ ColumnLayout {
             visible: meter.pace.available
             x: Math.max(0, Math.min(parent.width - width, parent.width * (meter.pace.expected || 0) / 100 - width / 2))
             width: 4; height: 12; radius: 1
-            color: Theme.foreground; border.width: 1; border.color: Theme.background
+            color: Theme.cyan; border.width: 1; border.color: Theme.background
         }
         HoverHandler { id: graphHover }
         ToolTip.visible: graphHover.hovered
@@ -97,6 +97,8 @@ ColumnLayout {
             ToolTip.text: meter.concern.detail
         }
         Text {
+            objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
+            visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
             text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
             color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
         }

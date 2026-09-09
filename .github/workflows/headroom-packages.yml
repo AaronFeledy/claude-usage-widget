@@ -106,7 +106,7 @@ jobs:
       - name: Test installer streaming download bounds without network
         run: bash packaging/tests/test-install-download.sh
       - name: Install Qt runtime build dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-x11-0
+        run: sudo apt-get update && sudo apt-get install -y ninja-build xvfb libgl1-mesa-dev libxkbcommon-x11-0
       - uses: jurplel/install-qt-action@v4.3.0
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
@@ -123,6 +123,9 @@ jobs:
         run: cmake --build clients/desktop/build-ci --parallel
       - name: Test
         run: ctest --test-dir clients/desktop/build-ci --output-on-failure
+      - name: Exercise QML menus and focus on xcb
+        timeout-minutes: 2
+        run: timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software clients/desktop/build-ci/headroom-ui-tests
       - name: Load QML and capture demo
         env:
           QT_QPA_PLATFORM: offscreen
@@ -176,6 +179,14 @@ jobs:
             }
             exit $testExit
           }
+      - name: Exercise QML menus and focus on native Windows QPA
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          QT_QPA_FONTDIR: C:/Windows/Fonts
+        run: |
+          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom-ui-tests.exe" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - name: Load QML and capture demo
         if: ${{ always() && steps.windows-build.outcome == 'success' }}
         shell: pwsh
@@ -336,6 +347,7 @@ jobs:
     needs: package-linux-x64
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with: { name: headroom-linux-x64-package, path: '${{ runner.temp }}/package' }
       - name: Install and render downloaded bundle without a Qt SDK
@@ -348,14 +360,23 @@ jobs:
           chmod 0700 "$RUNNER_TEMP/headroom-package"
           "$RUNNER_TEMP/headroom-package" install --archive "$archive" --install-root "$RUNNER_TEMP/install with spaces" --entry-path "$RUNNER_TEMP/bin with spaces/headroom" --version "$HEADROOM_PACKAGE_VERSION" --platform linux --arch x86_64 --asset "$(basename "$archive")"
           mkdir -m 0700 "$RUNNER_TEMP/runtime"
+          ready="$RUNNER_TEMP/headroom-clean-linux-ready.json"
+          nonce=0123456789abcdef0123456789abcdef0123456789abcdef
           env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
-            timeout 30s xvfb-run -a env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-clean-linux-xcb.png"
+            HEADROOM_READY_NONCE="$nonce" timeout 30s xvfb-run -a env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --headroom-ready-file "$ready" --screenshot "$RUNNER_TEMP/headroom-clean-linux-xcb.png"
           env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
             timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-clean-linux-offscreen.png"
           HEADROOM_INSTALL_ROOT="$RUNNER_TEMP/obsolete install" HEADROOM_LAUNCHER_PATH="$RUNNER_TEMP/obsolete launcher" HEADROOM_PACKAGE_VERSION=9.9.9 \
             timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
           test -s "$RUNNER_TEMP/headroom-clean-linux-xcb.png" && test -s "$RUNNER_TEMP/headroom-clean-linux-offscreen.png" && test -s "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
           version_path="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version_path"])' "$RUNNER_TEMP/install with spaces/install-state.json")"
+          python3 - "$ready" "$RUNNER_TEMP/install with spaces/$version_path/bin/headroom" "$HEADROOM_PACKAGE_VERSION" "$nonce" <<'PY'
+          import json, os, sys
+          value=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert value['nonce'] == sys.argv[4] and value['version'] == sys.argv[3] and value['pid'] > 0
+          assert os.path.realpath(value['executable']) == os.path.realpath(sys.argv[2])
+          PY
+          python3 packaging/tests/package_server_smoke.py --server "$RUNNER_TEMP/install with spaces/$version_path/bin/usage-server"
           find "$RUNNER_TEMP/install with spaces/$version_path" -type f -printf '%P\n' | sort > "$RUNNER_TEMP/linux-package-inventory.txt"
       - uses: actions/upload-artifact@v7
         with:
@@ -381,6 +402,9 @@ jobs:
             artifact: headroom-windows-arm64-package
     runs-on: ${{ matrix.runner }}
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with: { dotnet-version: 8.0.x }
       - uses: actions/download-artifact@v8
         with: { name: '${{ matrix.artifact }}', path: '${{ runner.temp }}/package' }
       - name: Install and render downloaded bundle without a Qt SDK
@@ -413,7 +437,11 @@ jobs:
             } else {
               Remove-Item Env:QT_QPA_PLATFORM, Env:QT_QPA_FONTDIR -ErrorAction SilentlyContinue
             }
-            $process = Start-Process -FilePath $stable -ArgumentList '--demo','--screenshot',$Image -PassThru
+            $ready = "$Image.ready.json"
+            $nonce = [guid]::NewGuid().ToString('N')
+            $env:HEADROOM_READY_NONCE = $nonce
+            $process = Start-Process -FilePath $stable -ArgumentList '--demo','--headroom-ready-file',$ready,'--screenshot',$Image -PassThru
+            Remove-Item Env:HEADROOM_READY_NONCE
             if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'Headroom package smoke timed out.' }
             if ($process.ExitCode -ne 0) { throw 'Headroom package launcher failed.' }
             $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -421,6 +449,11 @@ jobs:
               Start-Sleep -Milliseconds 100
             }
             if (!(Test-Path $Image) -or (Get-Item $Image).Length -eq 0) { throw 'Headroom package screenshot timed out.' }
+            if (!(Test-Path $ready)) { throw 'Headroom readiness marker is missing.' }
+            $marker = Get-Content -LiteralPath $ready -Raw | ConvertFrom-Json
+            $expected = [IO.Path]::GetFullPath("$install/$versionPath/bin/headroom.exe")
+            if ($marker.nonce -cne $nonce -or $marker.version -cne $version -or [int64]$marker.pid -le 0 -or
+                [IO.Path]::GetFullPath([string]$marker.executable) -ine $expected) { throw 'Headroom readiness identity did not match the installed generation.' }
           }
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-clean-windows-native.png" ''
           $env:QT_QUICK_BACKEND = 'software'
@@ -429,6 +462,10 @@ jobs:
           $env:HEADROOM_LAUNCHER_PATH = Join-Path $env:RUNNER_TEMP 'obsolete launcher.exe'
           $env:HEADROOM_PACKAGE_VERSION = '9.9.9'
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-dirty-environment-windows.png" 'offscreen'
+          python packaging/tests/package_server_smoke.py --server "$install/$versionPath/bin/usage-server.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project tests/windows/PackagedCredentialHelperTests.csproj -c Release -r win-${{ matrix.arch }} -- "$install/$versionPath/bin/headroom-credential-helper.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem "$install/$versionPath" -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length + 1) } | Sort-Object | Set-Content "$env:RUNNER_TEMP/windows-package-inventory.txt"
       - uses: actions/upload-artifact@v7
         with:

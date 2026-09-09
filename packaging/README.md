@@ -131,6 +131,14 @@ configuration, primary-instance IPC, and the QML root are initialized. Only a
 manager-owned bundled server is awaited during handoff; an attached local
 server and remote service are never stopped by the package manager.
 
+An external installer also verifies which immutable generation actually starts.
+It launches the stable entry with a private readiness nonce and accepts only a
+marker whose executable and compiled version match the newly selected install
+state. A process already owning the normal settings scope is left running; in
+that case the installer reports that the on-disk install succeeded and asks the
+user to quit the old window and relaunch the stable entry. `--no-launch` and
+`-NoLaunch` skip activation and print that restart instruction.
+
 ## Release JSON
 
 `Headroom-v<VERSION>-release.json` is strict schema 1 JSON:

@@ -138,6 +138,14 @@ private slots:
         service.configure("local", origin.url(), "fixture-bearer"); service.consider({cursorFailure()});
         QTRY_VERIFY(!service.busy()); QCOMPARE(recovered.size(), 0); QCOMPARE(origin.requests.size(), 1); QCOMPARE(destination.requests.size(), 0);
     }
+    void refusesSameOriginRedirect() {
+        CredentialHttpFixture origin; QVERIFY(origin.listen(QHostAddress::LocalHost));
+        origin.status = 302; origin.headers = "Location: /target\r\n";
+        CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
+        service.configure("local", origin.url(), "fixture-bearer"); service.consider({cursorFailure()});
+        QTRY_VERIFY(!service.busy()); QCOMPARE(recovered.size(), 0); QCOMPARE(origin.requests.size(), 1);
+        QVERIFY(origin.requests.first().startsWith("PUT /api/v1/providers/cursor/credentials "));
+    }
     void endpointChangeKillsHelperAndRemovesOwnedSnapshots() {
         qputenv("HEADROOM_CREDENTIAL_FIXTURE_MODE", "hang");
         CredentialService service(options(40, 5000));

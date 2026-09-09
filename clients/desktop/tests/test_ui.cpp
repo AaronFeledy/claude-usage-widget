@@ -3,12 +3,16 @@
 #include "startup.h"
 #include "appinfo.h"
 #include "updateservice.h"
+#include "palette.h"
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QQuickItem>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <cmath>
@@ -38,6 +42,7 @@ private slots:
         engine.rootContext()->setContextProperty("updateService", &updateService);
         engine.rootContext()->setContextProperty("trayAvailable", false);
         engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
         engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
         auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
@@ -49,6 +54,7 @@ private slots:
         auto marker = findItem(window->contentItem(), "paceMarker_Claude_session");
         auto label = findItem(window->contentItem(), "paceLabel_Claude_session");
         QVERIFY(marker); QVERIFY(marker->isVisible()); QVERIFY(label);
+        QCOMPARE(marker->property("color").value<QColor>(), QColor("#8be9fd"));
         QVERIFY(label->property("text").toString().contains("under pace"));
         const double markerFraction = (marker->x() + marker->width() / 2) / marker->parentItem()->width();
         QVERIFY(std::abs(markerFraction - (1.0 - 8400.0 / 18000)) < 0.01);
@@ -56,13 +62,13 @@ private slots:
             struct Scale { QString name; int count; double step; };
             for (const auto &scale : {Scale{"Claude_session", 4, 1.0 / 5},
                     Scale{"Claude_weekly", 6, 1.0 / 7}, Scale{"Cursor_auto", 4, 7.0 / 30}}) {
+                QTRY_VERIFY_WITH_TIMEOUT(findItem(window->contentItem(), "meter_" + scale.name), 1000);
+                auto scaleMeter = findItem(window->contentItem(), "meter_" + scale.name); QVERIFY(scaleMeter);
+                const auto ticks = controller.notches(scale.name.section('_', 0, 0), scaleMeter->property("bucket").toMap());
+                QCOMPARE(ticks.size(), scale.count);
                 for (int i = 0; i < scale.count; ++i) {
-                    auto tick = findItem(window->contentItem(), "meterNotch_" + scale.name + "_" + QString::number(i));
-                    QVERIFY(tick);
-                    const double fraction = (tick->x() + tick->width() / 2) / tick->parentItem()->width();
-                    QVERIFY(std::abs(fraction - scale.step * (i + 1)) < 0.000001);
+                    QVERIFY(std::abs(ticks[i].toMap()["fraction"].toDouble() - scale.step * (i + 1)) < 0.000001);
                 }
-                QVERIFY(!findItem(window->contentItem(), "meterNotch_" + scale.name + "_" + QString::number(scale.count)));
             }
         };
         verifyNotches();
@@ -74,6 +80,9 @@ private slots:
         QVERIFY(statusOnlyGraph); QVERIFY(!statusOnlyGraph->isVisible());
         auto statusOnlyText = findItem(window->contentItem(), "meterStatus_Cursor_on_demand");
         QVERIFY(statusOnlyText); QCOMPARE(statusOnlyText->property("text").toString(), QString("On-demand enabled"));
+        auto measuredStatus = findItem(window->contentItem(), "meterStatus_Cursor_api");
+        auto measuredReset = findItem(window->contentItem(), "meterReset_Cursor_api");
+        QVERIFY(measuredStatus); QVERIFY(measuredStatus->isVisible()); QVERIFY(measuredReset); QVERIFY(!measuredReset->isVisible());
         QVERIFY(!findItem(window->contentItem(), "meter_Grok_session"));
         const auto claudeCard = findItem(window->contentItem(), "providerCard_Claude");
         const auto grokCard = findItem(window->contentItem(), "providerCard_Grok");
@@ -124,6 +133,14 @@ private slots:
         QTRY_COMPARE(controller.primary(), QString("Codex"));
         QCOMPARE(controller.providers()[0].toMap()["provider_name"].toString(), QString("Codex"));
         QVERIFY(window->grabWindow().save(capture("headroom-reordered.png")));
+        auto filterButton = findItem(window->contentItem(), "providerFilter"); QVERIFY(filterButton);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                          filterButton->mapToScene(QPointF(filterButton->width() / 2, filterButton->height() / 2)).toPoint());
+        auto filterMenu = window->findChild<QObject *>("providerFilterMenu"); QVERIFY(filterMenu);
+        QTRY_VERIFY(filterMenu->property("opened").toBool());
+        QTest::qWait(200); QVERIFY(window->isVisible());
+        QVERIFY(QMetaObject::invokeMethod(filterMenu, "close"));
+        QVERIFY(window->setProperty("filter", QStringLiteral("All providers")));
         auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
         QVERIFY(QMetaObject::invokeMethod(panel, "open"));
         QTest::qWait(150);
@@ -150,7 +167,9 @@ private slots:
         QVERIFY(flickable->setProperty("contentY", flickable->property("contentHeight").toDouble() - flickable->property("height").toDouble()));
         QTest::qWait(100);
         QVERIFY(window->grabWindow().save(capture("headroom-settings-lower.png")));
-        QVERIFY(QMetaObject::invokeMethod(panel, "close"));
+        QVERIFY(QMetaObject::invokeMethod(panel, "saveAndConnect"));
+        QTRY_VERIFY(!panel->property("opened").toBool());
+        QCOMPARE(controller.settings()["interval"].toInt(), 60);
         auto diagnostics = window->findChild<QObject *>("diagnosticsPanel"); QVERIFY(diagnostics);
         QVERIFY(QMetaObject::invokeMethod(diagnostics, "open")); QTest::qWait(100);
         auto log = findItem(window->contentItem(), "diagnosticLog"); QVERIFY(log);
@@ -160,7 +179,6 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(diagnostics, "close"));
         for (int width : {820, 460}) {
             window->resize(width, 800); QTest::qWait(100);
-            verifyNotches();
             QQuickItem *prior = nullptr;
             for (const auto &value : controller.providers()) {
                 auto provider = value.toMap();
@@ -191,6 +209,87 @@ private slots:
             QVERIFY(window->grabWindow().save(capture(width == 460 ? "headroom-compact.png" : "headroom-medium.png")));
         }
     }
+    void preservesAndDisplaysCustomInterval() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile settings(dir.filePath("settings.json")); QVERIFY(settings.open(QIODevice::WriteOnly));
+        QVERIFY(settings.write(R"({"schemaVersion":1,"connectionMode":"remote","url":"","token":"","interval":900,"notifications":true,"primary":"Claude","order":["Claude","Codex","Cursor","Grok"]})") > 0);
+        settings.close();
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(true, settings.fileName(), nullptr, true, {}, credentials);
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty()); auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel); QVERIFY(QMetaObject::invokeMethod(panel, "open"));
+        QTRY_VERIFY(panel->property("opened").toBool()); QCOMPARE(panel->property("selectedInterval").toInt(), 900);
+        auto interval = findItem(window->contentItem(), "refreshInterval"); QVERIFY(interval);
+        QCOMPARE(interval->property("displayText").toString(), QString("15 minutes"));
+        auto save = findItem(window->contentItem(), "saveConnection"); QVERIFY(save);
+        QVERIFY(QMetaObject::invokeMethod(panel, "saveAndConnect"));
+        QCOMPARE(controller.settings()["interval"].toInt(), 900);
+        QVERIFY(QMetaObject::invokeMethod(panel, "close"));
+    }
+    void rendersOneTwoFourAndTwelveMeters() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QJsonArray providers;
+        const QList<QPair<QString, int>> shapes{{"Claude", 1}, {"Codex", 2}, {"Cursor", 4}, {"Grok", 12}};
+        for (const auto &[name, count] : shapes) {
+            QJsonArray buckets;
+            for (int i = 0; i < count; ++i) {
+                buckets.append(QJsonObject{{"id", QString("meter_%1").arg(i)},
+                    {"label", QString("Allowance 測定 %1").arg(i + 1)}, {"utilization", double((i * 7 + 13) % 101)},
+                    {"resets_at", QDateTime::currentDateTimeUtc().addDays(7).toString(Qt::ISODate)},
+                    {"status_text", i == count - 1 ? QJsonValue(QString("Status %1 / %2").arg(i + 1).arg(count)) : QJsonValue(QJsonValue::Null)}});
+            }
+            providers.append(QJsonObject{{"provider_name", name}, {"is_success", true}, {"error", QJsonValue::Null},
+                {"needs_reauth", false}, {"reauth_command", QJsonValue::Null}, {"buckets", buckets}});
+        }
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentials,
+                              QJsonDocument(providers).toJson(QJsonDocument::Compact));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window)); QTRY_COMPARE(controller.providers().size(), 4);
+        auto rows = findItem(window->contentItem(), "providerRows");
+        auto footer = findItem(window->contentItem(), "stickyFooter");
+        QVERIFY(rows); QVERIFY(footer);
+        for (int width : {960, 420}) {
+            window->resize(width, 900); QTest::qWait(50);
+            QVERIFY(footer->y() >= 0); QVERIFY(footer->y() + footer->height() <= window->height() + 1);
+            for (const auto &[name, count] : shapes) {
+                auto card = findItem(window->contentItem(), "providerCard_" + name); QVERIFY(card);
+                for (int i = 0; i < count; ++i) {
+                    auto meter = findItem(window->contentItem(), QString("meter_%1_meter_%2").arg(name).arg(i));
+                    QVERIFY2(meter, qPrintable(QString("missing %1 meter %2").arg(name).arg(i)));
+                    const auto at = meter->mapToItem(card, QPointF());
+                    QVERIFY(at.x() >= -1 && at.y() >= -1);
+                    QVERIFY(at.x() + meter->width() <= card->width() + 1);
+                    QVERIFY(at.y() + meter->height() <= card->height() + 1);
+                    if (width == 420 && i == 0) QCOMPARE(meter->width(), meter->parentItem()->width());
+                }
+            }
+        }
+    }
 };
-int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QApplication app(argc, argv); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
+int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QApplication app(argc, argv); app.setPalette(headroomPalette()); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
 #include "test_ui.moc"

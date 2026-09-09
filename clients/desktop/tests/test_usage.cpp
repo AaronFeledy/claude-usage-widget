@@ -41,6 +41,26 @@ private slots:
             QVariantList result; QVERIFY(!Usage::parse(QJsonDocument(list).toJson(), result));
         }
     }
+    void acceptsTwelveMetersAndRetainsPriorAfterThirteen() {
+        QJsonArray buckets;
+        for (int i = 0; i < 12; ++i) {
+            buckets.append(QJsonObject{{"id", QString("custom_%1").arg(i)},
+                {"label", QString("測定 %1").arg(i)}, {"utilization", i * 8.0},
+                {"resets_at", QJsonValue::Null},
+                {"status_text", i == 11 ? QJsonValue("請求 status") : QJsonValue(QJsonValue::Null)}});
+        }
+        QJsonObject provider{{"provider_name", "Claude"}, {"is_success", true},
+            {"error", QJsonValue::Null}, {"needs_reauth", false}, {"reauth_command", QJsonValue::Null}, {"buckets", buckets}};
+        QVariantList parsed;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        QCOMPARE(parsed.first().toMap()["buckets"].toList().size(), 12);
+        const auto prior = parsed;
+        buckets.append(QJsonObject{{"id", "thirteenth"}, {"label", "Too many"}, {"utilization", 1},
+            {"resets_at", QJsonValue::Null}, {"status_text", QJsonValue::Null}});
+        provider["buckets"] = buckets;
+        QVERIFY(!Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        QCOMPARE(parsed, prior);
+    }
     void legacyAndErrors() {
         auto p = QJsonDocument::fromJson(Usage::demo()).array()[0].toObject();
         p.remove("buckets"); p["current"] = QJsonObject{{"utilization", 0}, {"resets_at", QJsonValue::Null}};
@@ -124,6 +144,11 @@ private slots:
             const auto halfway = start.addSecs(start.secsTo(reset) / 2);
             const QVariantMap bucket{{"id", "credits"}, {"utilization", 35}, {"resets_at", reset.toString(Qt::ISODate)}};
             QCOMPARE(Usage::pacing("Grok", bucket, halfway)["expected"].toDouble(), 50.0);
+            auto onDemand = bucket; onDemand["id"] = "on_demand"; onDemand["status_text"] = "$35 / $100 this cycle";
+            QCOMPARE(Usage::pacing("Grok", onDemand, halfway)["expected"].toDouble(), 50.0);
+            QCOMPARE(Usage::notches("Grok", onDemand).size(), (start.daysTo(reset) - 1) / 7);
+            onDemand["utilization"] = 0; onDemand["status_text"] = "On-demand enabled";
+            QVERIFY(!Usage::pacing("Grok", onDemand, halfway)["available"].toBool());
         }
     }
     void periodNotches() {
@@ -473,6 +498,63 @@ private slots:
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(controller.state()["message"].toString().contains("redirected"));
         QCOMPARE(destinationRequests, 0);
+    }
+    void controllerRefusesSameOriginUsageRedirect() {
+        QTemporaryDir dir; QTcpServer origin; QVERIFY(origin.listen(QHostAddress::LocalHost));
+        int redirectedRequests = 0;
+        connect(&origin, &QTcpServer::newConnection, this, [&] {
+            while (auto socket = origin.nextPendingConnection()) connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                const auto request = socket->property("request").toByteArray() + socket->readAll();
+                socket->setProperty("request", request); if (!request.contains("\r\n\r\n")) return;
+                if (request.startsWith("GET /target ")) { ++redirectedRequests; socket->write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n[]"); }
+                else socket->write("HTTP/1.1 302 Found\r\nLocation: /target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                socket->disconnectFromHost();
+            });
+        });
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
+        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(origin.serverPort()),
+            "synthetic-bearer", 60, false, "Claude", false).isEmpty());
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
+        QVERIFY(controller.state()["message"].toString().contains("redirected")); QCOMPARE(redirectedRequests, 0);
+    }
+    void endpointAndTokenSwitchRejectsLateOldUsage() {
+        QTemporaryDir dir; QTcpServer oldServer, newServer;
+        QVERIFY(oldServer.listen(QHostAddress::LocalHost)); QVERIFY(newServer.listen(QHostAddress::LocalHost));
+        QPointer<QTcpSocket> held; QByteArray oldRequest, newRequest;
+        connect(&oldServer, &QTcpServer::newConnection, this, [&] {
+            held = oldServer.nextPendingConnection();
+            connect(held, &QTcpSocket::readyRead, held, [&] { oldRequest += held->readAll(); });
+        });
+        auto fresh = QJsonDocument::fromJson(Usage::demo()).array().at(1).toObject();
+        fresh["provider_name"] = "Codex";
+        const QByteArray freshBody = QJsonDocument(QJsonArray{fresh}).toJson(QJsonDocument::Compact);
+        connect(&newServer, &QTcpServer::newConnection, this, [&] {
+            auto socket = newServer.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                newRequest += socket->readAll(); if (!newRequest.contains("\r\n\r\n")) return;
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                    QByteArray::number(freshBody.size()) + "\r\nConnection: close\r\n\r\n" + freshBody);
+                socket->disconnectFromHost();
+            });
+        });
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, {}, disabledCredentials());
+        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(oldServer.serverPort()),
+            "old-token", 60, false, "Claude", false).isEmpty());
+        QTRY_VERIFY(held && oldRequest.contains("\r\n\r\n"));
+        QVERIFY(HttpAssertions::hasHeader(oldRequest, "Authorization", "Bearer old-token"));
+        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1").arg(newServer.serverPort()),
+            "new-token", 60, false, "Codex", false).isEmpty());
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
+        QVERIFY(HttpAssertions::hasHeader(newRequest, "Authorization", "Bearer new-token"));
+        QCOMPARE(controller.providers().first().toMap()["provider_name"].toString(), QString("Codex"));
+        if (held) {
+            const auto stale = Usage::demo();
+            held->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+                QByteArray::number(stale.size()) + "\r\nConnection: close\r\n\r\n" + stale);
+            held->disconnectFromHost();
+        }
+        QTest::qWait(100);
+        QCOMPARE(controller.providers().first().toMap()["provider_name"].toString(), QString("Codex"));
     }
     void controllerReplacesOnlyRecoveredProvider() {
         QTemporaryDir dir; QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));

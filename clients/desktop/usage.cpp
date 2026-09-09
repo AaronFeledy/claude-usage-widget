@@ -120,7 +120,7 @@ QVariantMap Usage::period(const QString &provider, const QVariantMap &bucket) {
         unit = weeklyFallback ? "Day" : "Hour";
     } else if (name == "cursor" && QStringList{"session", "plan", "auto", "api", "on_demand"}.contains(id)) {
         duration = 30 * 86400; step = 7 * 86400; window = "30-day billing estimate"; unit = "Week";
-    } else if (name == "grok" && QStringList{"session", "credits", "plan"}.contains(id)) {
+    } else if (name == "grok" && QStringList{"session", "credits", "plan", "on_demand"}.contains(id)) {
         const auto reset = QDateTime::fromString(bucket["resets_at"].toString(), Qt::ISODateWithMs).toUTC();
         if (reset.isValid()) duration = reset.addMonths(-1).secsTo(reset);
         step = 7 * 86400; window = "calendar-month billing estimate"; unit = "Week";

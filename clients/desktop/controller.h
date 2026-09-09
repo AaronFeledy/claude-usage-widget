@@ -21,7 +21,7 @@ class Controller : public QObject {
 public:
     explicit Controller(bool demo = false, const QString &configPath = {}, QObject *parent = nullptr,
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
-                        CredentialServiceOptions credentialOptions = {});
+                        CredentialServiceOptions credentialOptions = {}, QByteArray demoPayload = {});
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -76,6 +76,7 @@ private:
     QString m_errorKind;
     QVariantList m_diagnostics;
     bool m_notifications = true, m_demo = false, m_loading = false;
+    QByteArray m_demoPayload;
     bool m_waitingForUsageRetry = false;
     qint64 m_lastGood = 0;
     QVariantList m_providers;

@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="HeadroomCredentialHelperNativeTests.cs" />
+    <Compile Remove="PackagedCredentialHelperTests.cs" />
     <Compile Include="../../clients/windows/Models/UsageData.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Models/BucketPresentation.cs" Link="Models/%(Filename)%(Extension)" />
     <Compile Include="../../clients/windows/Services/ApiClient*.cs" Link="Services/%(Filename)%(Extension)" />

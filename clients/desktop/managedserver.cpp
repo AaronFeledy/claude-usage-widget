@@ -12,6 +12,11 @@
 #include <QNetworkRequest>
 #include <QProcessEnvironment>
 #include <utility>
+#ifdef Q_OS_LINUX
+#include <signal.h>
+#include <sys/prctl.h>
+#include <unistd.h>
+#endif
 
 namespace {
 constexpr qsizetype maximumHealthBytes = 1024 * 1024;
@@ -282,6 +287,12 @@ void ManagedServer::spawn()
     process->setProcessEnvironment(environment);
     process->setStandardOutputFile(QProcess::nullDevice());
     process->setStandardErrorFile(QProcess::nullDevice());
+#ifdef Q_OS_LINUX
+    const pid_t creatingProcess = getpid();
+    process->setChildProcessModifier([creatingProcess] {
+        if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 || getppid() != creatingProcess) _exit(127);
+    });
+#endif
     const quint64 generation = m_generation;
     connect(process, &QProcess::started, this, [this, process, generation] {
         if (generation != m_generation || process != m_process) return;

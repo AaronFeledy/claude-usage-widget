@@ -6,6 +6,7 @@
 #include "updateservice.h"
 #include "popup.h"
 #include "instance.h"
+#include "palette.h"
 #include <QCursor>
 #include <memory>
 #ifdef HEADROOM_KDE_TRAY
@@ -17,7 +18,6 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
-#include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
@@ -30,20 +30,7 @@
 int main(int argc, char **argv) {
     QQuickStyle::setStyle("Basic");
     QApplication app(argc, argv);
-    QPalette palette;
-    palette.setColor(QPalette::Window, QColor("#282a36"));
-    palette.setColor(QPalette::WindowText, QColor("#f8f8f2"));
-    palette.setColor(QPalette::Base, QColor("#21222c"));
-    palette.setColor(QPalette::AlternateBase, QColor("#303341"));
-    palette.setColor(QPalette::Text, QColor("#f8f8f2"));
-    palette.setColor(QPalette::Button, QColor("#44475a"));
-    palette.setColor(QPalette::ButtonText, QColor("#f8f8f2"));
-    palette.setColor(QPalette::Highlight, QColor("#bd93f9"));
-    palette.setColor(QPalette::HighlightedText, QColor("#282a36"));
-    palette.setColor(QPalette::ToolTipBase, QColor("#44475a"));
-    palette.setColor(QPalette::ToolTipText, QColor("#f8f8f2"));
-    palette.setColor(QPalette::Link, QColor("#8be9fd"));
-    app.setPalette(palette);
+    app.setPalette(headroomPalette());
     app.setOrganizationName("Headroom"); app.setApplicationName("Headroom"); app.setApplicationVersion(HEADROOM_VERSION);
     app.setDesktopFileName("headroom");
     app.setWindowIcon(QIcon(":/qt/qml/Headroom/headroom.svg"));
@@ -54,6 +41,7 @@ int main(int argc, char **argv) {
     parser.addOption({"config", "Use an alternate settings file.", "path"});
     parser.addOption({"headroom-ready-file", "Private update readiness endpoint.", "path"});
     parser.addOption({"headroom-update-restart", "Open the popup after a verified update restart."});
+    parser.addOption({"headroom-installed-restart", "Open the popup after an installer restart."});
     parser.process(app);
     const bool capture = parser.isSet("screenshot"), demo = parser.isSet("demo");
     const bool isolated = parser.isSet("config");
@@ -104,6 +92,7 @@ int main(int argc, char **argv) {
     const bool hasTray = !capture && QSystemTrayIcon::isSystemTrayAvailable();
     engine.rootContext()->setContextProperty("trayAvailable", hasTray);
     engine.rootContext()->setContextProperty("startHidden", true);
+    engine.rootContext()->setContextProperty("captureMode", capture);
     engine.loadFromModule("Headroom", "Main");
     if (engine.rootObjects().isEmpty()) return 1;
     if (parser.isSet("headroom-ready-file")) {
@@ -141,7 +130,7 @@ int main(int argc, char **argv) {
         trayMenu = new QMenu;
         nativeTray->setContextMenu(trayMenu);
         QObject::connect(nativeTray.get(), &KStatusNotifierItem::activateRequested, &app,
-            [&](bool, const QPoint &pos) { popup.toggle(pos); });
+            [&](bool, const QPoint &pos) { popup.toggle(pos, !pos.isNull()); });
     }
 #endif
     QMenu &menu = *trayMenu;
@@ -189,7 +178,8 @@ int main(int argc, char **argv) {
         tray.show();
 #endif
     }
-    if (!parser.isSet("background") || !hasTray || parser.isSet("headroom-update-restart")) show();
+    if (!parser.isSet("background") || !hasTray || parser.isSet("headroom-update-restart")
+        || parser.isSet("headroom-installed-restart")) show();
     if (!demo && !capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
     if (capture) QTimer::singleShot(900, &app, [&] { app.exit(window->grabWindow().save(parser.value("screenshot")) ? 0 : 2); });
     return app.exec();
