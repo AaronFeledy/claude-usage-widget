@@ -3,14 +3,15 @@
 #include <QNetworkAccessManager>
 #include <QPointer>
 #include <QProcess>
-#include <QTcpSocket>
 #include <QTimer>
 #include <QUrl>
 
 struct ManagedServerOptions {
     QUrl localUrl = QUrl(QStringLiteral("http://127.0.0.1:7823/"));
     QString executablePath;
-    int probeTimeoutMs = 3000;
+    // Windows Server 2022 runners can take just over four seconds to report
+    // ConnectionRefused for an unused numeric loopback port.
+    int probeTimeoutMs = 8000;
     int readinessProbeTimeoutMs = 1000;
     int readinessIntervalMs = 100;
     int readinessAttempts = 40;
@@ -44,8 +45,6 @@ private:
     enum class ProbeResult { Compatible, Refused, AuthRejected, Redirected, Malformed, TimedOut, NetworkFailure };
 
     void cancelAsync();
-    void preflight();
-    void finishPreflight(QTcpSocket *socket, quint64 generation, ProbeResult result);
     void probe(ProbePurpose purpose);
     void handleProbe(ProbePurpose purpose, ProbeResult result);
     void spawn();
@@ -59,7 +58,6 @@ private:
 
     ManagedServerOptions m_options;
     QNetworkAccessManager m_network;
-    QPointer<QTcpSocket> m_preflight;
     QPointer<QNetworkReply> m_probe;
     QPointer<QProcess> m_process;
     QPointer<QProcess> m_retiringProcess;

@@ -102,7 +102,7 @@ private:
         ManagedServerOptions result;
         result.localUrl = QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(port));
         result.executablePath = binary;
-        result.probeTimeoutMs = 2000;
+        result.probeTimeoutMs = 8000;
         result.readinessProbeTimeoutMs = 500;
         result.readinessIntervalMs = 50;
         result.readinessAttempts = 30;
@@ -122,6 +122,8 @@ private slots:
         QVERIFY(!server.ownsProcess()); QCOMPARE(server.state(), QString("remote"));
     }
     void nativeLoopbackRefusalDiagnostic() {
+        if (!qEnvironmentVariableIsSet("HEADROOM_NATIVE_NETWORK_DIAGNOSTIC"))
+            QSKIP("Run only from the dedicated native network diagnostic step.");
         const quint16 port = unusedPort(); QVERIFY(port);
         QTcpSocket socket; socket.setProxy(QNetworkProxy::NoProxy);
         QEventLoop socketLoop; QTimer socketDeadline; socketDeadline.setSingleShot(true);
@@ -143,7 +145,6 @@ private slots:
         QVERIFY(socketFinished); QVERIFY(!socketExpired);
         QCOMPARE(socketError, QAbstractSocket::ConnectionRefusedError);
 
-        if (!qEnvironmentVariableIsSet("HEADROOM_NATIVE_NETWORK_DIAGNOSTIC")) return;
         QNetworkAccessManager network; network.setProxy(QNetworkProxy::NoProxy);
         QNetworkRequest request(QUrl(QStringLiteral("http://127.0.0.1:%1/api/v1/health").arg(port)));
         request.setTransferTimeout(15000);
@@ -163,6 +164,20 @@ private slots:
         if (!reply->isFinished()) reply->abort();
         reply->deleteLater();
     }
+    void rejectsInvalidLocalEndpointWithoutNetworkOrSpawn() {
+        for (const QUrl url : {QUrl(QStringLiteral("http://localhost:7823/")),
+                               QUrl(QStringLiteral("http://192.0.2.1:7823/")),
+                               QUrl(QStringLiteral("https://127.0.0.1:7823/"))}) {
+            QTemporaryDir dir; const auto record = dir.filePath("record");
+            qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
+            auto configured = options(7823, QStringLiteral(FIXTURE_PATH)); configured.localUrl = url;
+            ManagedServer server(configured); QSignalSpy failed(&server, &ManagedServer::unavailable);
+            server.configure("local", QString()); server.ensureAvailable();
+            QCOMPARE(failed.size(), 1); QCOMPARE(failed.at(0).at(1).toString(), QString("network"));
+            QVERIFY(!QFileInfo::exists(record)); QVERIFY(!server.ownsProcess());
+        }
+        qunsetenv("HEADROOM_FIXTURE_RECORD");
+    }
     void attachesToCompatibleOkAndDegradedWithoutOwnership() {
         for (const auto status : {QByteArray("ok"), QByteArray("degraded")}) {
             HealthFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
@@ -178,7 +193,7 @@ private slots:
         ManagedServer server(options(unusedPort(), QStringLiteral("/definitely/missing/usage-server")));
         QSignalSpy failed(&server, &ManagedServer::unavailable);
         server.configure("local", QString()); server.ensureAvailable();
-        QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
         QCOMPARE(failed.at(0).at(1).toString(), QString("binary")); QVERIFY(!server.ownsProcess());
     }
     void occupiedOrRejectedEndpointNeverSpawns() {
@@ -231,7 +246,7 @@ private slots:
         auto configured = options(unusedPort(), QStringLiteral(FIXTURE_PATH));
         configured.readinessProbeTimeoutMs = 75; configured.readinessAttempts = 2;
         ManagedServer server(configured); QSignalSpy failed(&server, &ManagedServer::unavailable);
-        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 7000);
+        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 15000);
         qint64 pid = lastPid(record); QVERIFY(pid > 0); QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000); QVERIFY(!server.ownsProcess());
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
@@ -250,10 +265,10 @@ private slots:
         QTemporaryDir dir; const auto record = dir.filePath("record");
         qputenv("HEADROOM_FIXTURE_MODE", "crash"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
         ManagedServer server(options(unusedPort(), QStringLiteral(FIXTURE_PATH))); QSignalSpy failed(&server, &ManagedServer::unavailable);
-        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 15000);
+        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 30000);
         QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll().count("start\n"), 3);
         QTest::qWait(250); file.seek(0); QCOMPARE(file.readAll().count("start\n"), 3);
-        server.ensureAvailable(); QTRY_VERIFY_WITH_TIMEOUT(failed.size() >= 2, 15000);
+        server.ensureAvailable(); QTRY_VERIFY_WITH_TIMEOUT(failed.size() >= 2, 30000);
         file.seek(0); QCOMPARE(file.readAll().count("start\n"), 6);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
@@ -280,7 +295,7 @@ private slots:
                                 "USAGE_PROVIDER_CURSOR_ENABLED", "USAGE_PROVIDER_GROK_ENABLED"})
             environment.set(name, "false");
         auto configured = options(unusedPort(), binary);
-        configured.probeTimeoutMs = 3000; configured.readinessProbeTimeoutMs = 1000;
+        configured.probeTimeoutMs = 8000; configured.readinessProbeTimeoutMs = 1000;
         configured.readinessIntervalMs = 50; configured.readinessAttempts = 60;
         ManagedServer server(configured); QSignalSpy ready(&server, &ManagedServer::available);
         server.configure("local", "fixture-secret"); server.ensureAvailable();

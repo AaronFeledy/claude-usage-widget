@@ -11,7 +11,7 @@ int main(int argc, char **argv)
     ManagedServerOptions options;
     options.executablePath = app.arguments().at(1);
     options.localUrl = QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(app.arguments().at(2)));
-    options.probeTimeoutMs = 3000;
+    options.probeTimeoutMs = 8000;
     options.readinessProbeTimeoutMs = 750;
     options.readinessIntervalMs = 50;
     options.readinessAttempts = 30;

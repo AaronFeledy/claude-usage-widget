@@ -427,7 +427,7 @@ private slots:
         ManagedServerOptions options;
         options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(port));
         options.executablePath = QStringLiteral(MANAGED_FIXTURE_PATH);
-        options.probeTimeoutMs = 2000; options.readinessProbeTimeoutMs = 750;
+        options.probeTimeoutMs = 8000; options.readinessProbeTimeoutMs = 750;
         options.readinessIntervalMs = 50; options.readinessAttempts = 30; options.restartLimit = 2;
         Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
         QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
