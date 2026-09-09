@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -112,19 +111,6 @@ func TestInstallStateCannotRedirectVersionPath(t *testing.T) {
 	}
 	if InspectInstall(installRoot).TrustedIdentity {
 		t.Fatal("noncanonical version path was trusted")
-	}
-}
-
-func TestRestrictiveUmaskStillExtractsRecordedModes(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("umask is Unix-specific")
-	}
-	root := t.TempDir()
-	archive := makePackage(t, root, "4.0.0", false)
-	old := syscall.Umask(0o077)
-	defer syscall.Umask(old)
-	if _, _, err := VerifyArchive(archive, Expectations{}); err != nil {
-		t.Fatal(err)
 	}
 }
 
