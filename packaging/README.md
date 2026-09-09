@@ -129,7 +129,12 @@ existing roaming/XDG locations and are never part of an application bundle.
 The portable Linux x86_64 archive is built on Ubuntu 22.04. It bundles Qt but
 uses the baseline desktop's glibc, libstdc++, graphics, font, X11/XCB, Wayland,
 D-Bus and OpenSSL 3 ABI libraries. The generic bundle supports native X11 and
-Wayland rendering. Precise KDE Wayland tray attachment requires a distro/source
+Wayland rendering. On Ubuntu 22.04, install the runtime packages `libgl1`,
+`libopengl0`, `libfontconfig1`, `libdbus-1-3`, `libssl3`, `libxkbcommon0`,
+`libxkbcommon-x11-0`, `libwayland-client0`, `libwayland-cursor0`,
+`libwayland-egl1`, `libxcb1`, `libxcb-cursor0`, `libxcb-icccm4`,
+`libxcb-image0`, `libxcb-keysyms1`, and `libxcb-render-util0`. Precise KDE
+Wayland tray attachment requires a distro/source
 build with `HEADROOM_WITH_KDE_TRAY` and `HEADROOM_WITH_LAYER_SHELL`; those source
 options remain enabled by default. Package smoke tests do not count as an
 interactive tray-placement test.

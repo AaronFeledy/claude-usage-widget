@@ -14,6 +14,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $assetArch = if ($Architecture -eq 'x86_64') { 'x64' } elseif ($Architecture -eq 'arm64') { 'arm64' } else { throw "Unsupported architecture: $Architecture" }
+$selectedTarget = [string]$env:VSCMD_ARG_TGT_ARCH
+if ($selectedTarget -and $selectedTarget -ine $assetArch) { throw "Selected MSVC target $selectedTarget does not match package target $assetArch." }
 & $Manager asset-name --version $Version --platform windows --arch $Architecture | Out-Null
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $asset = "Headroom-v$Version-windows-$assetArch.zip"
@@ -29,6 +31,16 @@ foreach ($pluginName in @('qwindows.dll', 'qoffscreen.dll')) {
     if ($plugin.Count -ne 1) { throw "Expected one Qt platform plugin $pluginName, found $($plugin.Count)" }
     Copy-Item $plugin[0].FullName (Join-Path $platformDestination $pluginName) -Force
 }
+$redistRoot = [string]$env:VCToolsRedistDir
+if (!$redistRoot -or !(Test-Path -LiteralPath $redistRoot -PathType Container)) { throw 'VCToolsRedistDir does not identify the selected Visual Studio redistributable root.' }
+$redistArchitectureRoot = Join-Path $redistRoot $assetArch
+$crtDirectories = @(Get-ChildItem -LiteralPath $redistArchitectureRoot -Directory -Filter 'Microsoft.VC*.CRT')
+if ($crtDirectories.Count -ne 1) { throw "Expected one $assetArch MSVC CRT directory under $redistArchitectureRoot, found $($crtDirectories.Count)." }
+$crtFiles = @(Get-ChildItem -LiteralPath $crtDirectories[0].FullName -File -Filter '*.dll')
+foreach ($requiredRuntime in @('msvcp140.dll', 'vcruntime140.dll')) {
+    if (@($crtFiles | Where-Object Name -CEQ $requiredRuntime).Count -ne 1) { throw "Required $assetArch MSVC runtime file is missing: $requiredRuntime" }
+}
+Copy-Item -LiteralPath $crtFiles.FullName -Destination (Join-Path $packageRoot 'bundle/bin')
 Copy-Item $Server (Join-Path $packageRoot 'bundle/bin/usage-server.exe')
 Copy-Item $CredentialHelper (Join-Path $packageRoot 'bundle/bin/headroom-credential-helper.exe')
 Copy-Item $Launcher (Join-Path $packageRoot 'bootstrap/headroom.exe')
