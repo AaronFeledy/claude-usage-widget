@@ -4,6 +4,7 @@
 #include "startup.h"
 #include "appinfo.h"
 #include "popup.h"
+#include "instance.h"
 #include <QCursor>
 #include <memory>
 #ifdef HEADROOM_KDE_TRAY
@@ -12,17 +13,14 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFileInfo>
-#include <QLocalServer>
-#include <QLocalSocket>
-#include <QLockFile>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickStyle>
-#include <QStandardPaths>
 #include <QSystemTrayIcon>
 
 int main(int argc, char **argv) {
@@ -52,23 +50,32 @@ int main(int argc, char **argv) {
     parser.addOption({"config", "Use an alternate settings file.", "path"});
     parser.process(app);
     const bool capture = parser.isSet("screenshot"), demo = parser.isSet("demo");
-    QLockFile lock(QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + "/headroom.lock");
-    const QString socketName = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + "/headroom.socket";
-    QLocalServer server;
-    if (!capture && !demo) {
-        if (!lock.tryLock()) { QLocalSocket socket; socket.connectToServer(socketName); socket.waitForConnected(1000); socket.write("show"); socket.waitForBytesWritten(1000); return 0; }
-        QLocalServer::removeServer(socketName); server.setSocketOptions(QLocalServer::UserAccessOption); server.listen(socketName);
+    const bool isolated = parser.isSet("config");
+    if (isolated && parser.value("config").trimmed().isEmpty()) {
+        QMessageBox::critical(nullptr, "Headroom", "The --config option requires a settings file path.");
+        return 2;
     }
-    Controller controller(demo, parser.value("config"));
-    StartupService startup({}, {}, !demo && !capture);
+    const QString settingsPath = isolated ? parser.value("config") : SettingsService::defaultPath();
+    InstanceService instance(settingsPath);
+    if (!capture && !demo) {
+        const auto result = instance.start();
+        if (result == InstanceService::Result::Secondary) return 0;
+        if (result == InstanceService::Result::Error) {
+            QMessageBox::critical(nullptr, "Headroom", "Headroom could not communicate with the running instance.");
+            return 1;
+        }
+    }
+    Controller controller(demo, parser.value("config"), nullptr, !demo && !capture && !isolated);
+    StartupService startup({}, {}, !demo && !capture && !isolated);
     AppInfo appInfo;
     const auto syncServices = [&] {
-        startup.setAllowChanges(!controller.isDemo() && !capture);
+        startup.setAllowChanges(!controller.isDemo() && !capture && !isolated);
         appInfo.setBackend(controller.isDemo() ? QString() : controller.backendUrl(),
                            controller.isDemo() ? QString() : controller.backendToken());
     };
     QObject::connect(&controller, &Controller::settingsChanged, &app, syncServices);
     QObject::connect(&controller, &Controller::changed, &app, syncServices);
+    startup.setPreferenceWriter([&](bool enabled) { return controller.saveStartupPreference(enabled); });
     syncServices();
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &controller);
@@ -82,7 +89,10 @@ int main(int argc, char **argv) {
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     TrayPopup popup(window, hasTray, &app);
     const auto show = [&popup] { popup.show(); };
-    QObject::connect(&server, &QLocalServer::newConnection, &app, [&] { auto socket = server.nextPendingConnection(); socket->deleteLater(); show(); });
+    QObject::connect(&instance, &InstanceService::activationRequested, &app, show);
+    if (!demo && !capture && !isolated && controller.startupMigrationPending() &&
+        startup.migrateLegacyRegistration(controller.startupPreference()))
+        controller.completeStartupMigration();
     QSystemTrayIcon tray(TrayVisual::icon({}));
     QMenu fallbackMenu;
     QMenu *trayMenu = &fallbackMenu;

@@ -3,28 +3,15 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QDateTime>
-#include <QDir>
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QSaveFile>
-#include <QStandardPaths>
+#include <QUrl>
 
-Controller::Controller(bool demo, const QString &configPath, QObject *parent) : QObject(parent), m_demo(demo) {
-    m_path = configPath.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/settings.json" : configPath;
-    QFile file(m_path);
-    if (file.open(QIODevice::ReadOnly)) {
-        const auto doc = QJsonDocument::fromJson(file.readAll());
-        if (!doc.isObject()) m_message = "Settings could not be read. Reconnect to save a new configuration.";
-        const auto o = doc.object();
-        m_url = o["url"].toString(); m_token = o["token"].toString();
-        m_interval = qBound(15, o["interval"].toInt(60), 900);
-        m_notifications = o["notifications"].toBool(true);
-        m_primary = o["primary"].toString("Claude");
-        for (const auto &name : o["order"].toArray()) if (name.isString() && !m_order.contains(name.toString())) m_order.append(name.toString());
-        if (m_order.isEmpty()) m_order.append(m_primary);
-    }
+Controller::Controller(bool demo, const QString &configPath, QObject *parent, bool allowAutomaticMigration)
+    : QObject(parent), m_settingsService(configPath, allowAutomaticMigration && !demo), m_demo(demo) {
+    const auto &loaded = m_settingsService.value();
+    m_mode = loaded.connectionMode; m_url = loaded.url; m_token = loaded.token;
+    m_interval = loaded.interval; m_notifications = loaded.notifications;
+    m_primary = loaded.primary; m_order = loaded.order;
+    if (!m_settingsService.loadError().isEmpty()) m_message = m_settingsService.loadError();
     log("App", "Usage monitor started.");
     m_poll.setSingleShot(true);
     m_poll.setTimerType(Qt::PreciseTimer);
@@ -36,7 +23,7 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent) : 
 }
 
 QVariantMap Controller::settings() const {
-    return {{"url", m_url}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
+    return {{"mode", m_mode}, {"url", m_url}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
         {"notifications", m_notifications}, {"primary", primary()}};
 }
 QVariantMap Controller::state() const {
@@ -88,7 +75,7 @@ void Controller::refresh() {
         Usage::parse(Usage::demo(), m_providers); m_status = "demo"; m_message.clear();
         m_lastGood = QDateTime::currentSecsSinceEpoch(); updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed(); return;
     }
-    if (m_url.isEmpty()) { m_status = "setup"; m_errorKind.clear(); emit changed(); return; }
+    if (m_mode == "local" || m_url.isEmpty()) { m_status = "setup"; m_errorKind.clear(); emit changed(); return; }
     const auto url = Usage::endpoint(m_url);
     if (url.isEmpty()) { fail("Enter a valid HTTP or HTTPS backend address in settings."); return; }
     QNetworkRequest request(url);
@@ -128,21 +115,18 @@ QString Controller::saveSettings(QString url, QString token, int interval, bool 
     const QString error = writeSettings(url, savedToken, interval, notifications, primary);
     if (!error.isEmpty()) return error;
     cancel();
-    if (m_url != url || m_token != savedToken || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
-    m_url = url; m_token = savedToken; m_interval = interval; m_notifications = notifications; m_primary = primary;
+    if (m_mode != "remote" || m_url != url || m_token != savedToken || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
+    m_mode = "remote"; m_url = url; m_token = savedToken; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_demo = false; m_status = "connecting"; m_message.clear(); resetRetry();
     log("Settings", "Connection settings saved.");
     emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
 }
 QString Controller::writeSettings(const QString &url, const QString &token, int interval, bool notifications, const QString &primary) {
-    if (!QDir().mkpath(QFileInfo(m_path).absolutePath())) return "Could not create the settings directory.";
-    QSaveFile file(m_path);
-    if (!file.open(QIODevice::WriteOnly)) return "Could not save settings. Check directory permissions.";
-    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) return "Could not secure the settings file.";
-    const QByteArray data = QJsonDocument(QJsonObject{{"url", url}, {"token", token}, {"interval", interval},
-        {"notifications", notifications}, {"primary", primary}, {"order", QJsonArray::fromStringList(m_order)}}).toJson();
-    if (file.write(data) != data.size() || !file.commit()) return "Could not save settings. Your previous configuration is unchanged.";
-    return {};
+    DesktopSettings updated = m_settingsService.value();
+    updated.connectionMode = "remote"; updated.url = url; updated.token = token;
+    updated.interval = interval; updated.notifications = notifications;
+    updated.primary = primary; updated.order = m_order;
+    return m_settingsService.save(updated, true);
 }
 QVariantList Controller::providers() const {
     auto result = m_providers;
@@ -165,7 +149,7 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
     for (const auto &name : m_order) if (!order.contains(name)) order.append(name);
     const auto previous = m_order; m_order = order;
     if (!m_demo) {
-        const QString error = writeSettings(m_url, m_token, m_interval, m_notifications, order.first());
+        const QString error = m_settingsService.saveOrder(order, order.first());
         if (!error.isEmpty()) { m_order = previous; emit notify("Order could not be saved", error); return; }
     }
     log("Settings", "Provider order changed.");
@@ -238,5 +222,15 @@ QVariantMap Controller::pacing(const QString &provider, const QVariantMap &bucke
 QString Controller::countdown(const QString &timestamp) const { return Usage::countdown(timestamp); }
 void Controller::setPrimary(const QString &name) {
     moveProvider(name, primary(), false);
+}
+QString Controller::saveStartupPreference(bool enabled) {
+    const QString error = m_settingsService.saveStartupPreference(enabled);
+    if (error.isEmpty()) emit settingsChanged();
+    return error;
+}
+QString Controller::completeStartupMigration() {
+    const QString error = m_settingsService.completeStartupMigration();
+    if (error.isEmpty()) emit settingsChanged();
+    return error;
 }
 void Controller::copyText(const QString &text) { QGuiApplication::clipboard()->setText(text); }

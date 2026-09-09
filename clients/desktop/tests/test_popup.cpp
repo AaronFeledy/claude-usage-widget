@@ -28,6 +28,8 @@ private slots:
         QTest::newRow("right") << screen << QRect(0,0,1872,1080) << QPoint(1896,540) << "right";
         QTest::newRow("negative-monitor") << QRect(-1920,0,1920,1080) << QRect(-1920,0,1920,1032) << QPoint(-200,1056) << "bottom";
         QTest::newRow("small-screen") << QRect(0,0,800,600) << QRect(0,0,800,560) << QPoint(700,580) << "bottom";
+        QTest::newRow("scaled-logical-monitor") << QRect(0,0,1707,960) << QRect(0,32,1707,888) << QPoint(1600,944) << "bottom";
+        QTest::newRow("scaled-negative-monitor") << QRect(-1707,0,1707,960) << QRect(-1707,32,1707,888) << QPoint(-1600,16) << "top";
     }
     void placement() {
         QFETCH(QRect, screen); QFETCH(QRect, work); QFETCH(QPoint, anchor); QFETCH(QString, edge);
@@ -37,6 +39,11 @@ private slots:
         if (edge == "top") QVERIFY(popup.top() > anchor.y());
         if (edge == "left") QVERIFY(popup.left() > anchor.x());
         if (edge == "right") QVERIFY(popup.right() < anchor.x());
+    }
+    void clampsOversizedPopupAndUnknownAnchor() {
+        const QRect screen(100, 200, 640, 480), work(100, 240, 640, 440);
+        const auto popup = PopupPlacement::bounds(screen, work, QPoint(-9000, -9000), QSize(1200, 900));
+        QCOMPARE(popup, work.adjusted(12, 12, -12, -12));
     }
 };
 QTEST_MAIN(PopupTest)

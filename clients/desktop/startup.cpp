@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
+#include <QSettings>
 
 namespace {
 QString configDirectory()
@@ -26,25 +27,38 @@ QString quotedExecutable(const QString &path)
     argument.replace("\\", "\\\\");
     return '"' + argument + '"';
 }
+
+QString windowsCommand(const QString &path)
+{
+    return QStringLiteral("\"") + QDir::toNativeSeparators(path) + "\" --background";
+}
 }
 
-StartupService::StartupService(QString configHome, QString executable, bool allowChanges, QObject *parent)
+StartupService::StartupService(QString configHome, QString executable, bool allowChanges, QObject *parent,
+                               Platform platform, QString registryPath)
     : QObject(parent),
       m_entryPath(QDir(configHome.isEmpty() ? configDirectory() : configHome)
                       .filePath("autostart/headroom.desktop")),
       m_executable(executable.isEmpty() ? QCoreApplication::applicationFilePath() : executable),
-      m_allowChanges(allowChanges)
+      m_registryPath(registryPath.isEmpty()
+          ? QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+          : std::move(registryPath)),
+      m_allowChanges(allowChanges),
+      m_windows(platform == Platform::Windows
+#ifdef Q_OS_WIN
+          || platform == Platform::Current
+#endif
+      )
 {
     refresh();
 }
 
 void StartupService::refresh()
 {
-    if (!m_platformSupported) {
-        if (m_enabled) {
-            m_enabled = false;
-            emit enabledChanged();
-        }
+    if (m_windows) {
+        QSettings registry(m_registryPath, QSettings::NativeFormat);
+        const bool active = registry.value("Headroom").toString() == windowsCommand(m_executable);
+        if (m_enabled != active) { m_enabled = active; emit enabledChanged(); }
         return;
     }
     QFile entry(m_entryPath);
@@ -92,6 +106,15 @@ bool StartupService::fail(const QString &message)
     return false;
 }
 
+bool StartupService::persistPreference(bool enabled)
+{
+    if (!m_preferenceWriter) return true;
+    const QString error = m_preferenceWriter(enabled);
+    if (error.isEmpty()) return true;
+    if (m_error != error) { m_error = error; emit errorChanged(); }
+    return false;
+}
+
 void StartupService::clearError()
 {
     if (!m_error.isEmpty()) {
@@ -106,12 +129,41 @@ bool StartupService::setEnabled(bool enabled)
         return fail(tr("Start at login will be available after Windows integration is installed."));
     if (!m_allowChanges)
         return fail(tr("Start at login is unavailable in preview mode."));
+    if (m_windows) {
+        if (!QDir::isAbsolutePath(m_executable) || m_executable.contains('"') ||
+            m_executable.contains('\n') || m_executable.contains('\r') || m_executable.contains(QChar::Null))
+            return fail(tr("The application path cannot be used in a Windows startup entry."));
+        if (!QFileInfo(m_executable).isFile())
+            return fail(tr("The Headroom executable is missing."));
+        QSettings registry(m_registryPath, QSettings::NativeFormat);
+        const bool existed = registry.contains("Headroom");
+        const QVariant previous = registry.value("Headroom");
+        if (enabled) registry.setValue("Headroom", windowsCommand(m_executable));
+        else registry.remove("Headroom");
+        registry.sync();
+        if (registry.status() != QSettings::NoError ||
+            (enabled ? registry.value("Headroom").toString() != windowsCommand(m_executable)
+                     : registry.contains("Headroom")))
+            return fail(tr("Could not update the Headroom startup entry."));
+        if (!persistPreference(enabled)) {
+            if (existed) registry.setValue("Headroom", previous); else registry.remove("Headroom");
+            registry.sync(); refresh(); return false;
+        }
+        clearError(); refresh(); emit preferenceChanged(enabled); return true;
+    }
     if (!enabled) {
         // Only remove our entry. Never remove or rewrite another autostart item.
-        if (QFileInfo::exists(m_entryPath) && !QFile::remove(m_entryPath))
+        const QByteArray previous = [&] { QFile file(m_entryPath); return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{}; }();
+        const bool existed = QFileInfo::exists(m_entryPath);
+        if (existed && !QFile::remove(m_entryPath))
             return fail(tr("Could not remove the Headroom startup entry. Check folder permissions."));
+        if (!persistPreference(false)) {
+            if (existed) { QSaveFile restore(m_entryPath); if (restore.open(QIODevice::WriteOnly)) { restore.write(previous); restore.commit(); } }
+            refresh(); return false;
+        }
         clearError();
         refresh();
+        emit preferenceChanged(false);
         return true;
     }
     // '=' is prohibited in Desktop Entry executable paths. GIO cannot resolve
@@ -125,6 +177,8 @@ bool StartupService::setEnabled(bool enabled)
         return fail(tr("The Headroom executable is missing or is not executable."));
     if (!QDir().mkpath(QFileInfo(m_entryPath).absolutePath()))
         return fail(tr("Could not create the startup folder. Check folder permissions."));
+    const QByteArray previous = [&] { QFile file(m_entryPath); return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{}; }();
+    const bool existed = QFileInfo::exists(m_entryPath);
     QSaveFile entry(m_entryPath);
     if (!entry.open(QIODevice::WriteOnly))
         return fail(tr("Could not write the Headroom startup entry: %1").arg(entry.errorString()));
@@ -135,7 +189,28 @@ bool StartupService::setEnabled(bool enabled)
         "X-GNOME-Autostart-enabled=true\n").arg(quotedExecutable(m_executable)).toUtf8();
     if (entry.write(contents) != contents.size() || !entry.commit())
         return fail(tr("Could not save the Headroom startup entry: %1").arg(entry.errorString()));
+    if (!persistPreference(true)) {
+        if (existed) { QSaveFile restore(m_entryPath); if (restore.open(QIODevice::WriteOnly)) { restore.write(previous); restore.commit(); } }
+        else QFile::remove(m_entryPath);
+        refresh(); return false;
+    }
     clearError();
     refresh();
+    emit preferenceChanged(true);
+    return true;
+}
+
+bool StartupService::migrateLegacyRegistration(bool enabled)
+{
+    if (!m_windows || !enabled) return true;
+    if (!setEnabled(true)) return false;
+    QSettings registry(m_registryPath, QSettings::NativeFormat);
+    // Remove only the legacy application's known value, and only after the
+    // replacement has been written and read back successfully.
+    registry.remove("ClaudeUsageWidget");
+    registry.sync();
+    if (registry.status() != QSettings::NoError || registry.contains("ClaudeUsageWidget"))
+        return fail(tr("Headroom starts at sign-in, but the legacy startup entry could not be removed."));
+    clearError();
     return true;
 }

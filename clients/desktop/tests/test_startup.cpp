@@ -7,7 +7,9 @@
 #include <QProcessEnvironment>
 #include <QSignalSpy>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <QtTest>
 
 namespace {
@@ -33,6 +35,67 @@ QString currentExecutable()
 class StartupTest : public QObject {
     Q_OBJECT
 private slots:
+    void preferenceWriterTracksBothToggles()
+    {
+        QTemporaryDir dir;
+        QList<bool> writes;
+        StartupService service(dir.filePath("config"), currentExecutable(), true, nullptr,
+            StartupService::Platform::Linux);
+        service.setPreferenceWriter([&](bool enabled) { writes.append(enabled); return QString(); });
+        QVERIFY(service.setEnabled(true));
+        QVERIFY(service.setEnabled(false));
+        QCOMPARE(writes, QList<bool>({true, false}));
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+
+        service.setPreferenceWriter([](bool) { return QString("Settings could not be saved."); });
+        QVERIFY(!service.setEnabled(true));
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+        QVERIFY(!service.error().isEmpty());
+    }
+#ifdef Q_OS_WIN
+    void windowsRegistrationAndLegacyMigration()
+    {
+        const QString registryPath = "HKEY_CURRENT_USER\\Software\\HeadroomTests\\" +
+                                     QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QSettings registry(registryPath, QSettings::NativeFormat);
+        registry.setValue("ClaudeUsageWidget", "\"C:\\Legacy App\\ClaudeUsageWidget.exe\"");
+        registry.sync();
+        bool preference = false;
+        StartupService service({}, currentExecutable(), true, nullptr,
+            StartupService::Platform::Windows, registryPath);
+        service.setPreferenceWriter([&](bool enabled) { preference = enabled; return QString(); });
+        QVERIFY(service.migrateLegacyRegistration(true));
+        QCOMPARE(preference, true);
+        const QString expected = "\"" + QDir::toNativeSeparators(currentExecutable()) + "\" --background";
+        QCOMPARE(registry.value("Headroom").toString(), expected);
+        QVERIFY(!registry.contains("ClaudeUsageWidget"));
+        QVERIFY(service.enabled());
+        QVERIFY(service.setEnabled(false));
+        QCOMPARE(preference, false);
+        QVERIFY(!registry.contains("Headroom"));
+        registry.clear(); registry.sync();
+    }
+
+    void windowsPersistenceFailureRollsBackAndRemainsRetryable()
+    {
+        const QString registryPath = "HKEY_CURRENT_USER\\Software\\HeadroomTests\\" +
+                                     QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QSettings registry(registryPath, QSettings::NativeFormat);
+        registry.setValue("ClaudeUsageWidget", "legacy"); registry.sync();
+        StartupService service({}, currentExecutable(), true, nullptr,
+            StartupService::Platform::Windows, registryPath);
+        service.setPreferenceWriter([](bool) { return QString("Could not persist the startup preference."); });
+        QVERIFY(!service.migrateLegacyRegistration(true));
+        QVERIFY(!registry.contains("Headroom"));
+        QVERIFY(registry.contains("ClaudeUsageWidget"));
+        QVERIFY(!service.error().isEmpty());
+        service.setPreferenceWriter([](bool) { return QString(); });
+        QVERIFY(service.migrateLegacyRegistration(true));
+        QVERIFY(registry.contains("Headroom"));
+        QVERIFY(!registry.contains("ClaudeUsageWidget"));
+        registry.clear(); registry.sync();
+    }
+#endif
     void optInPersistenceAndRemoval()
     {
 #ifdef Q_OS_WIN
@@ -69,17 +132,35 @@ private slots:
     void previewNeverMutates()
     {
         QTemporaryDir dir;
+#ifdef Q_OS_WIN
+        const QString registryPath = "HKEY_CURRENT_USER\\Software\\HeadroomTests\\" +
+                                     QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QSettings registry(registryPath, QSettings::NativeFormat);
+        StartupService service(dir.filePath("config"), currentExecutable(), false, nullptr,
+            StartupService::Platform::Windows, registryPath);
+#else
         StartupService service(dir.filePath("config"), currentExecutable(), false);
+#endif
         QVERIFY(!service.available());
         QVERIFY(!service.setEnabled(true));
         QVERIFY(!service.error().isEmpty());
+#ifdef Q_OS_WIN
+        QVERIFY(!registry.contains("Headroom"));
+#else
         QVERIFY(!QFileInfo::exists(dir.filePath("config")));
+#endif
         service.setAllowChanges(true);
 #ifdef Q_OS_WIN
-        QVERIFY(!service.available());
-        QVERIFY(!service.setEnabled(true));
-        QVERIFY(!service.error().isEmpty());
-        QVERIFY(!QFileInfo::exists(dir.filePath("config")));
+        QVERIFY(service.available());
+        QVERIFY(service.error().isEmpty());
+        QVERIFY(service.setEnabled(true));
+        const QString registered = registry.value("Headroom").toString();
+        QVERIFY(!registered.isEmpty());
+        service.setAllowChanges(false);
+        QVERIFY(!service.setEnabled(false));
+        QCOMPARE(registry.value("Headroom").toString(), registered);
+        QVERIFY(service.enabled());
+        registry.clear(); registry.sync();
         return;
 #else
         QVERIFY(service.available());

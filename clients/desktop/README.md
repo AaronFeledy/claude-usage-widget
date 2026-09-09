@@ -44,10 +44,12 @@ Failures back off exponentially up to five minutes (or the configured interval
 if longer), with normal polling restored after success. Manual Refresh bypasses
 the wait.
 
-Configuration is saved atomically in Qt's application config location, normally
-`~/.config/Headroom/Headroom/settings.json`, honoring `XDG_CONFIG_HOME`. This
-contains the bearer token in plaintext with owner-only (`0600`) permissions.
-Tokens never appear in the exposed UI state or error messages. Leave the token
+Configuration is saved atomically at `~/.config/Headroom/Headroom/settings.json`
+on Linux, honoring `XDG_CONFIG_HOME`, and `%APPDATA%\Headroom\Headroom\settings.json`
+on Windows. Linux settings and migration backups use owner-only (`0600`)
+permissions. Windows uses the current user's roaming application-data directory;
+POSIX mode bits are not used as a claim about Windows ACLs. These files contain
+the bearer token in plaintext. Tokens never appear in the exposed UI state or error messages. Leave the token
 field blank to keep the saved token for the same address. Changing the address
 clears the old token unless a new one is entered. Select **Remove saved token** to clear it.
 
@@ -85,8 +87,10 @@ coordinates and LayerShellQt placement, accommodating any panel edge and
 clamping the popup to the selected monitor. Without a known icon position,
 opening from the app menu uses the lower-right of the active screen. There is
 no native title bar, minimize/maximize controls, or taskbar entry in tray mode.
-Use **Quit Headroom** from the tray menu or Ctrl+Q to exit. A second launch opens
-the existing popup. `--background` starts hidden when a system tray is available.
+Use **Quit Headroom** from the tray menu or Ctrl+Q to exit. A second launch in the
+same user and configuration scope opens the existing popup. An explicit `--config`
+path uses its own instance scope and never imports or changes the normal profile.
+`--background` starts hidden when a system tray is available.
 On desktops without a tray, the frameless app opens as a regular window and
 closing it exits normally.
 
@@ -101,9 +105,14 @@ and **Escape** closes settings or hides the window to the tray.
 
 ## Desktop settings and diagnostics
 
-**Start Headroom when I sign in** enables an XDG autostart entry launching the
-installed executable with `--background`. This toggle applies immediately and
-is disabled in preview mode. It is off unless you enable it.
+**Start Headroom when I sign in** enables an XDG autostart entry on Linux or the
+current user's `Headroom` Run entry on Windows, launching the quoted executable
+with `--background`. This toggle applies immediately and is disabled in preview
+and isolated-config modes. On the first normal Windows launch, Headroom imports
+schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new
+settings file is absent. The legacy file remains untouched and a create-once
+backup is kept beside the new settings. Imported empty API addresses retain local
+mode; the managed local-server implementation is part of the next migration batch.
 
 Settings shows the app version and checks the configured server's authenticated
 health/version endpoint. **Check for updates** reads the public project release

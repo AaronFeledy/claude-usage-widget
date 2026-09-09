@@ -27,7 +27,8 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp usage.cpp warning.cpp trayvisual.cpp startup.cpp appinfo.cpp popup.cpp)
+    controller.cpp usage.cpp warning.cpp trayvisual.cpp startup.cpp appinfo.cpp popup.cpp
+    settings.cpp instance.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(headroom-core PUBLIC HEADROOM_VERSION="${PROJECT_VERSION}")
@@ -73,7 +74,7 @@ qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../share
 
 include(CTest)
 if(BUILD_TESTING)
-    foreach(feature startup appinfo tray popup)
+    foreach(feature startup appinfo tray popup settings instance)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)
