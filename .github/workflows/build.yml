@@ -4,16 +4,77 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  HEADROOM_QT_VERSION: 6.8.3
+  # Batch 5 will use this Qt 6.8 MSVC 2022 kit for the ARM64 package build.
+  HEADROOM_WINDOWS_ARM64_QT_ARCH: win64_msvc2022_arm64
+
 jobs:
-  build:
-    runs-on: windows-latest
+  legacy-windows:
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-
-      - name: Build
+      - name: Build legacy client
         run: dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release
+
+  desktop-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt runtime build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-x11-0
+      - uses: jurplel/install-qt-action@v4.3.0
+        with:
+          version: ${{ env.HEADROOM_QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtsvg qtshadertools
+          cache: true
+      - name: Configure shared desktop client
+        run: >-
+          cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DHEADROOM_WITH_KDE_TRAY=OFF
+          -DHEADROOM_WITH_LAYER_SHELL=OFF
+      - name: Build
+        run: cmake --build clients/desktop/build-ci --parallel
+      - name: Test
+        run: ctest --test-dir clients/desktop/build-ci --output-on-failure
+      - name: Load QML and capture demo
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: |
+          clients/desktop/build-ci/headroom --demo --screenshot "$RUNNER_TEMP/headroom-linux.png"
+          test -s "$RUNNER_TEMP/headroom-linux.png"
+
+  desktop-windows-x64:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: jurplel/install-qt-action@v4.3.0
+        with:
+          version: ${{ env.HEADROOM_QT_VERSION }}
+          arch: win64_msvc2022_64
+          modules: qtsvg qtshadertools
+          cache: true
+      - name: Configure shared desktop client
+        run: cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build clients/desktop/build-ci --parallel
+      - name: Test
+        run: ctest --test-dir clients/desktop/build-ci --output-on-failure
+      - name: Load QML and capture demo
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: |
+          $image = Join-Path $env:RUNNER_TEMP "headroom-windows.png"
+          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom.exe" -ArgumentList "--demo", "--screenshot", $image -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or !(Test-Path $image) -or (Get-Item $image).Length -eq 0) { exit 1 }

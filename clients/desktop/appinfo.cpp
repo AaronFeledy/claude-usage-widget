@@ -139,6 +139,6 @@ void AppInfo::openInstallGuide() {
             break;
         }
     }
-    m_releaseStatus = "Could not open the local update guide. Reinstall Headroom's shared files or open clients/linux/update-guide.html in the source checkout.";
+    m_releaseStatus = "Could not open the local update guide. Reinstall Headroom's shared files or open clients/desktop/update-guide.html in the source checkout.";
     emit changed();
 }

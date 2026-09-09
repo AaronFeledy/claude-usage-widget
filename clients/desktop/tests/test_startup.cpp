@@ -1,6 +1,7 @@
 #include "startup.h"
 
 #include <QDir>
+#include <QCoreApplication>
 #include <QFile>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -23,6 +24,10 @@ QByteArray readFile(const QString &path)
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
 }
+QString currentExecutable()
+{
+    return QCoreApplication::applicationFilePath();
+}
 }
 
 class StartupTest : public QObject {
@@ -30,6 +35,9 @@ class StartupTest : public QObject {
 private slots:
     void optInPersistenceAndRemoval()
     {
+#ifdef Q_OS_WIN
+        QSKIP("XDG autostart entries are Linux-specific");
+#endif
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString executable = dir.filePath("bin/headroom");
@@ -61,12 +69,19 @@ private slots:
     void previewNeverMutates()
     {
         QTemporaryDir dir;
-        StartupService service(dir.filePath("config"), "/bin/true", false);
+        StartupService service(dir.filePath("config"), currentExecutable(), false);
         QVERIFY(!service.available());
         QVERIFY(!service.setEnabled(true));
         QVERIFY(!service.error().isEmpty());
         QVERIFY(!QFileInfo::exists(dir.filePath("config")));
         service.setAllowChanges(true);
+#ifdef Q_OS_WIN
+        QVERIFY(!service.available());
+        QVERIFY(!service.setEnabled(true));
+        QVERIFY(!service.error().isEmpty());
+        QVERIFY(!QFileInfo::exists(dir.filePath("config")));
+        return;
+#else
         QVERIFY(service.available());
         QVERIFY(service.error().isEmpty());
         QVERIFY(service.setEnabled(true));
@@ -75,13 +90,17 @@ private slots:
         QVERIFY(!service.setEnabled(false));
         QCOMPARE(readFile(service.entryPath()), original);
         QVERIFY(service.enabled());
+#endif
     }
 
     void disabledEntryAndWriteFailure()
     {
+#ifdef Q_OS_WIN
+        QSKIP("XDG autostart entries are Linux-specific");
+#endif
         QTemporaryDir dir;
-        StartupService service(dir.path(), "/bin/true");
-        QVERIFY(writeFile(service.entryPath(), "[Desktop Entry]\nType=Application\nExec=/bin/true\nHidden=true\n"));
+        StartupService service(dir.path(), currentExecutable());
+        QVERIFY(writeFile(service.entryPath(), "[Desktop Entry]\nType=Application\nExec=headroom\nHidden=true\n"));
         service.refresh();
         QVERIFY(!service.enabled());
         QVERIFY(service.setEnabled(true));
@@ -96,11 +115,14 @@ private slots:
 
     void invalidExecutablePreservesExistingEntry()
     {
+#ifdef Q_OS_WIN
+        QSKIP("Desktop Entry executable validation is Linux-specific");
+#endif
         QTemporaryDir dir;
-        for (const QString path : {QString("relative/headroom"), QString("/missing/headroom"),
-                                   QString("/tmp/a=b"), QString("/tmp/percent%F"), QString("/tmp/headroom\nHidden=true")}) {
+        for (const QString path : {QString("relative/headroom"), dir.filePath("missing/headroom"),
+                                   dir.filePath("a=b"), dir.filePath("percent%F"), dir.filePath("headroom\nHidden=true")}) {
             StartupService service(dir.path(), path);
-            const QByteArray entry = "[Desktop Entry]\nType=Application\nExec=/bin/true\n";
+            const QByteArray entry = "[Desktop Entry]\nType=Application\nExec=headroom\n";
             QVERIFY(writeFile(service.entryPath(), entry));
             QVERIFY(!service.setEnabled(true));
             QCOMPARE(readFile(service.entryPath()), entry);
@@ -110,13 +132,16 @@ private slots:
 
     void respectsXdgConfigHome()
     {
+#ifdef Q_OS_WIN
+        QSKIP("XDG_CONFIG_HOME is Linux-specific");
+#endif
         QTemporaryDir dir;
         const bool existed = qEnvironmentVariableIsSet("XDG_CONFIG_HOME");
         const QByteArray previous = qgetenv("XDG_CONFIG_HOME");
         qputenv("XDG_CONFIG_HOME", dir.path().toUtf8());
-        StartupService service({}, "/bin/true");
+        StartupService service({}, currentExecutable());
         qputenv("XDG_CONFIG_HOME", "relative/ignored");
-        StartupService relative({}, "/bin/true");
+        StartupService relative({}, currentExecutable());
         if (existed) qputenv("XDG_CONFIG_HOME", previous); else qunsetenv("XDG_CONFIG_HOME");
         QCOMPARE(service.entryPath(), dir.filePath("autostart/headroom.desktop"));
         QCOMPARE(relative.entryPath(), QDir::homePath() + "/.config/autostart/headroom.desktop");
@@ -125,6 +150,9 @@ private slots:
 
     void desktopLauncherPreservesSpecialCharacters()
     {
+#ifdef Q_OS_WIN
+        QSKIP("GIO desktop entry launching is Linux-specific");
+#endif
         const QString gio = QStandardPaths::findExecutable("gio");
         if (gio.isEmpty()) QSKIP("GIO is unavailable for desktop entry launch verification");
         QTemporaryDir dir;

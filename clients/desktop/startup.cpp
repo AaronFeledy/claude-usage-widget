@@ -40,6 +40,13 @@ StartupService::StartupService(QString configHome, QString executable, bool allo
 
 void StartupService::refresh()
 {
+    if (!m_platformSupported) {
+        if (m_enabled) {
+            m_enabled = false;
+            emit enabledChanged();
+        }
+        return;
+    }
     QFile entry(m_entryPath);
     bool inGroup = false, application = false, command = false, hidden = false, disabled = false;
     if (entry.open(QIODevice::ReadOnly)) {
@@ -95,6 +102,8 @@ void StartupService::clearError()
 
 bool StartupService::setEnabled(bool enabled)
 {
+    if (!m_platformSupported)
+        return fail(tr("Start at login will be available after Windows integration is installed."));
     if (!m_allowChanges)
         return fail(tr("Start at login is unavailable in preview mode."));
     if (!enabled) {

@@ -340,7 +340,10 @@ private slots:
             QVERIFY(controller.state()["retrySeconds"].toInt() <= expected);
             QVERIFY(controller.state()["retrySeconds"].toInt() > expected - 5);
         }
+#ifndef Q_OS_WIN
+        // POSIX mode bits do not describe the Windows ACL used by QSaveFile.
         QVERIFY(!(QFile::permissions(path) & (QFileDevice::ReadGroup | QFileDevice::ReadOther)));
+#endif
         Controller restored(false, path); QCOMPARE(restored.settings()["hasToken"].toBool(), true);
         QVERIFY(!restored.settings().contains("token"));
         received.clear(); status = 200; body = "[{}]"; controller.refresh();

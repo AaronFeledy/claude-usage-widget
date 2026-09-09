@@ -21,8 +21,11 @@ class UiTest : public QObject {
 private slots:
     void dragReordersAndDrivesTray() {
         QTemporaryDir dir;
+        const auto capture = [&](const QString &name) {
+            return dir.filePath(name);
+        };
         Controller controller(true, dir.filePath("settings.json"));
-        StartupService startup(dir.path(), "/test/headroom", false);
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo;
         QQmlApplicationEngine engine;
         engine.rootContext()->setContextProperty("backend", &controller);
@@ -78,7 +81,7 @@ private slots:
         QCOMPARE(claudeCard->property("color").value<QColor>(), restingColor);
         QVERIFY(track->property("color").value<QColor>() != restingColor);
         QCOMPARE(fill->property("color").value<QColor>(), QColor("#bd93f9"));
-        QVERIFY(window->grabWindow().save("/tmp/headroom-hover.png"));
+        QVERIFY(window->grabWindow().save(capture("headroom-hover.png")));
         auto meter = findItem(window->contentItem(), "meter_Claude_session"); QVERIFY(meter);
         const auto originalBucket = meter->property("bucket").toMap();
         const auto originalConcern = meter->property("concern").toMap();
@@ -91,7 +94,7 @@ private slots:
             QTRY_COMPARE(fill->property("color").value<QColor>(), expected);
         }
         QTRY_COMPARE(fill->width(), track->width());
-        QVERIFY(window->grabWindow().save("/tmp/headroom-critical.png"));
+        QVERIFY(window->grabWindow().save(capture("headroom-critical.png")));
         QVERIFY(meter->setProperty("bucket", originalBucket));
         QVERIFY(meter->setProperty("concern", originalConcern));
         auto rows = findItem(window->contentItem(), "providerRows"); QVERIFY(rows);
@@ -114,24 +117,24 @@ private slots:
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, to);
         QTRY_COMPARE(controller.primary(), QString("Codex"));
         QCOMPARE(controller.providers()[0].toMap()["provider_name"].toString(), QString("Codex"));
-        QVERIFY(window->grabWindow().save("/tmp/headroom-reordered.png"));
+        QVERIFY(window->grabWindow().save(capture("headroom-reordered.png")));
         auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
         QVERIFY(QMetaObject::invokeMethod(panel, "open"));
         QTest::qWait(150);
         auto save = findItem(window->contentItem(), "saveConnection"); QVERIFY(save);
         QVERIFY(save->isVisible());
-        QVERIFY(window->grabWindow().save("/tmp/headroom-settings.png"));
+        QVERIFY(window->grabWindow().save(capture("headroom-settings.png")));
         auto settingsScroll = window->findChild<QObject *>("settingsScroll"); QVERIFY(settingsScroll);
         auto flickable = settingsScroll->property("contentItem").value<QObject *>(); QVERIFY(flickable);
         QVERIFY(flickable->setProperty("contentY", flickable->property("contentHeight").toDouble() - flickable->property("height").toDouble()));
         QTest::qWait(100);
-        QVERIFY(window->grabWindow().save("/tmp/headroom-settings-lower.png"));
+        QVERIFY(window->grabWindow().save(capture("headroom-settings-lower.png")));
         QVERIFY(QMetaObject::invokeMethod(panel, "close"));
         auto diagnostics = window->findChild<QObject *>("diagnosticsPanel"); QVERIFY(diagnostics);
         QVERIFY(QMetaObject::invokeMethod(diagnostics, "open")); QTest::qWait(100);
         auto log = findItem(window->contentItem(), "diagnosticLog"); QVERIFY(log);
         QVERIFY(log->property("text").toString().contains("Usage monitor started"));
-        QVERIFY(window->grabWindow().save("/tmp/headroom-diagnostics.png"));
+        QVERIFY(window->grabWindow().save(capture("headroom-diagnostics.png")));
         controller.clearDiagnostics(); QTRY_COMPARE(log->property("text").toString(), QString());
         QVERIFY(QMetaObject::invokeMethod(diagnostics, "close"));
         for (int width : {820, 460}) {
@@ -158,7 +161,7 @@ private slots:
                 }
                 prior = row;
             }
-            QVERIFY(window->grabWindow().save(width == 460 ? "/tmp/headroom-compact.png" : "/tmp/headroom-medium.png"));
+            QVERIFY(window->grabWindow().save(capture(width == 460 ? "headroom-compact.png" : "headroom-medium.png")));
         }
     }
 };

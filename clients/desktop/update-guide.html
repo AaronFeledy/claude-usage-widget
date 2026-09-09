@@ -4,13 +4,13 @@
 <h1>Update Headroom</h1>
 <p>Headroom currently runs from a local source build. The project's existing release automation publishes Windows executables; those cannot update the Linux client. The app's release checker reports whether a compatible Linux package has been published.</p>
 <h2>Rebuild your local checkout</h2>
-<p>Use the checkout that contains <code>clients/linux</code>. First save or commit any local changes. Review incoming changes before updating your checkout; the app does not fetch or run downloaded code. If a desired revision does not contain <code>clients/linux</code>, it cannot build Headroom.</p>
+<p>Use the checkout that contains <code>clients/desktop</code>. First save or commit any local changes. Review incoming changes before updating your checkout; the app does not fetch or run downloaded code. If a desired revision does not contain <code>clients/desktop</code>, it cannot build Headroom.</p>
 <p>These commands build the source already in your checkout. They do not fetch an update from the network. Run them from the repository root:</p>
-<pre><code>cmake -S clients/linux -B clients/linux/build -DCMAKE_BUILD_TYPE=Release
-cmake --build clients/linux/build --parallel
-ctest --test-dir clients/linux/build --output-on-failure</code></pre>
+<pre><code>cmake -S clients/desktop -B clients/desktop/build -DCMAKE_BUILD_TYPE=Release
+cmake --build clients/desktop/build --parallel
+ctest --test-dir clients/desktop/build --output-on-failure</code></pre>
 <p>After the build and tests succeed, choose <strong>Quit Headroom</strong> in the tray menu, then install and reopen:</p>
-<pre><code>cmake --install clients/linux/build --prefix "$HOME/.local"
+<pre><code>cmake --install clients/desktop/build --prefix "$HOME/.local"
 "$HOME/.local/bin/headroom"</code></pre>
 <p>The install updates the executable and shared app files. Your connection settings, saved provider order, and bearer token stay in their existing configuration file. A custom installation prefix should use the same prefix for subsequent installs.</p>
 <h2>Requirements</h2>

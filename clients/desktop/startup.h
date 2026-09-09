@@ -12,7 +12,7 @@ public:
     explicit StartupService(QString configHome = {}, QString executable = {},
                             bool allowChanges = true, QObject *parent = nullptr);
     bool enabled() const { return m_enabled; }
-    bool available() const { return m_allowChanges; }
+    bool available() const { return m_allowChanges && m_platformSupported; }
     QString error() const { return m_error; }
     QString entryPath() const { return m_entryPath; }
     void setAllowChanges(bool allowed);
@@ -29,5 +29,10 @@ private:
     QString m_executable;
     QString m_error;
     bool m_allowChanges;
+#ifdef Q_OS_WIN
+    const bool m_platformSupported = false;
+#else
+    const bool m_platformSupported = true;
+#endif
     bool m_enabled = false;
 };

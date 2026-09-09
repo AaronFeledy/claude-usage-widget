@@ -9,7 +9,8 @@ Windows and Linux tray clients plus a local/remote usage API server for Claude, 
 ## Layout
 
 - `clients/windows/` - .NET 8 WinForms tray client.
-- `clients/linux/` - native Qt Quick remote client for Linux.
+- `clients/desktop/` - shared Qt Quick desktop client for Windows and Linux.
+- `clients/linux/` - compatibility build entry point for the moved Qt client.
 - `server/` - Go usage API server, provider integrations, and Dockerfile.
 - `tests/windows/` - Linux-runnable C# harness tests for tray/server lifecycle seams.
 - `docs/home-assistant.md` - Home Assistant REST sensor example for the usage API.
@@ -138,7 +139,7 @@ MIT
 
 ## Linux desktop client
 
-[Headroom](clients/linux/README.md) is a native Qt Quick frontend for a backend
+[Headroom](clients/desktop/README.md) is a native Qt Quick frontend for a backend
 already running on your network. It supports KDE / Wayland, a system-tray meter,
 provider drag-and-drop ordering, reset countdowns, and usage notifications. Build
 and installation instructions are in the client README.
