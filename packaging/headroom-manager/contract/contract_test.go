@@ -72,7 +72,8 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	if state.ActiveVersion != "1.2.4" {
 		t.Fatal(state)
 	}
-	server := filepath.Join(installRoot, "versions", "1.2.4", "bin", "usage-server"+nativeExtension())
+	inspection = InspectInstall(installRoot)
+	server := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "usage-server"+nativeExtension())
 	if err = os.Remove(server); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		runtimePath = "plugins/platforms/qoffscreen.dll"
 	}
-	runtimeFile := filepath.Join(installRoot, "versions", "1.2.4", filepath.FromSlash(runtimePath))
+	runtimeFile := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), filepath.FromSlash(runtimePath))
 	if err = os.WriteFile(runtimeFile, []byte("corrupt runtime"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -98,13 +99,67 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	if _, err = InstallArchive(archive2, installRoot, entry, Expectations{}); err != nil {
 		t.Fatalf("matching-version runtime repair failed: %v", err)
 	}
-	app := filepath.Join(installRoot, "versions", "1.2.4", "bin", "headroom"+nativeExtension())
+	inspection = InspectInstall(installRoot)
+	stableManager := filepath.Join(installRoot, "headroom-package"+nativeExtension())
+	managerBytes, err := os.ReadFile(stableManager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managerBytes[len(managerBytes)/2] ^= 0xff
+	if err = os.WriteFile(stableManager, managerBytes, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inspection = InspectInstall(installRoot)
+	if inspection.Complete || !containsPath(inspection.Missing, "bootstrap/headroom-package"+nativeExtension()) {
+		t.Fatalf("stable manager corruption was not detected: %+v", inspection)
+	}
+	if _, _, err = ActiveExecutable(installRoot); err != nil {
+		t.Fatalf("running desktop could not reach bootstrap repair: %v", err)
+	}
+	if _, err = InstallArchive(archive2, installRoot, entry, Expectations{}); err != nil {
+		t.Fatalf("stable manager repair failed: %v", err)
+	}
+	inspection = InspectInstall(installRoot)
+	app := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "headroom"+nativeExtension())
 	if err = os.WriteFile(app, []byte("corrupt"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = ActiveExecutable(installRoot); err == nil {
 		t.Fatal("corrupt desktop was launchable")
 	}
+}
+
+func TestSuccessfulExternalReinstallClearsStaleApplyOutcome(t *testing.T) {
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "install")
+	entry := filepath.Join(root, "entry", "headroom"+nativeExtension())
+	first := makePackage(t, root, "1.3.0", false)
+	state, err := InstallArchive(first, installRoot, entry, Expectations{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = writeDurableJSON(filepath.Join(installRoot, "last-apply-result.json"), ApplyResult{Schema: SchemaVersion,
+		Product: "Headroom", Status: "rolled_back", Version: state.ActiveVersion, VersionPath: state.VersionPath,
+		RolledBack: true, FailureReason: "old failure"}); err != nil {
+		t.Fatal(err)
+	}
+	second := makePackage(t, root, "1.3.1", false)
+	if _, err = InstallArchive(second, installRoot, entry, Expectations{}); err != nil {
+		t.Fatal(err)
+	}
+	inspection := InspectInstall(installRoot)
+	if inspection.Version != "1.3.1" || inspection.ApplyStatus != "" || !inspection.Complete {
+		t.Fatalf("reinstall inherited stale outcome: %+v", inspection)
+	}
+}
+
+func containsPath(paths []string, wanted string) bool {
+	for _, path := range paths {
+		if path == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInstallStateCannotRedirectVersionPath(t *testing.T) {
@@ -282,6 +337,15 @@ func TestManifestRejectsMissingRuntimeCaseCollisionAndUnsafeMode(t *testing.T) {
 	if err = ValidateManifest(missing); err == nil || !strings.Contains(err.Error(), "runtime file missing") {
 		t.Fatalf("missing runtime rejection = %v", err)
 	}
+	manager := "bundle/bin/headroom-package"
+	if manifest.Platform == "windows" {
+		manager += ".exe"
+	}
+	missingManager := manifest
+	missingManager.Files = removeFileRecord(manifest.Files, manager)
+	if err = ValidateManifest(missingManager); err == nil || !strings.Contains(err.Error(), "runtime file missing") {
+		t.Fatalf("missing deployed manager rejection = %v", err)
+	}
 	collision := manifest
 	collision.Files = append([]File(nil), manifest.Files...)
 	copyRecord := collision.Files[0]
@@ -386,17 +450,13 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 	if err = os.MkdirAll(filepath.Join(root, "bootstrap"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	ext := nativeExtension()
-	names := []string{"bundle/bin/headroom" + ext, "bundle/bin/usage-server" + ext, "bootstrap/headroom" + ext, "bootstrap/headroom-package" + ext}
+	names := []string{"bundle/bin/headroom" + ext, "bundle/bin/usage-server" + ext, "bundle/bin/headroom-package" + ext, "bootstrap/headroom" + ext, "bootstrap/headroom-package" + ext}
 	if platform == "windows" {
 		names = append(names, "bundle/bin/headroom-credential-helper.exe")
 	}
 	for _, name := range names {
-		copyFixture(t, self, filepath.Join(root, filepath.FromSlash(name)))
+		copyFixture(t, fixtureExecutable, filepath.Join(root, filepath.FromSlash(name)))
 	}
 	runtimeFiles := []string{"bundle/qml/QtQuick/Controls/Basic/qmldir"}
 	if platform == "windows" {

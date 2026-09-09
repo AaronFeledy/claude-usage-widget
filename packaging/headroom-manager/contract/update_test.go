@@ -282,7 +282,7 @@ func TestRepairPinsInstalledVersionAndRequiresIncompleteTrustedInstall(t *testin
 	if _, err := fixture.client().StageRepair(context.Background(), root); err == nil {
 		t.Fatal("complete install offered repair")
 	}
-	server := filepath.Join(root, "versions", "8.4.2", "bin", "usage-server"+nativeExtension())
+	server := filepath.Join(root, filepath.FromSlash(InspectInstall(root).VersionPath), "bin", "usage-server"+nativeExtension())
 	if err := os.Remove(server); err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestWrongTargetAndInvalidPackageAreRejectedBeforeActiveInstall(t *testing.T
 func TestRepairUsesExactTagAndPublicRequestsHaveNoAuthorization(t *testing.T) {
 	parent := t.TempDir()
 	root, archive := installFixture(t, parent, "8.4.2")
-	server := filepath.Join(root, "versions", "8.4.2", "bin", "usage-server"+nativeExtension())
+	server := filepath.Join(root, filepath.FromSlash(InspectInstall(root).VersionPath), "bin", "usage-server"+nativeExtension())
 	if err := os.Remove(server); err != nil {
 		t.Fatal(err)
 	}
@@ -548,11 +548,11 @@ func TestAggregateDeadlineAndStreamingCancellationCleanPrivateDownload(t *testin
 	if time.Since(started) > 350*time.Millisecond {
 		t.Fatal("each request received a fresh timeout budget")
 	}
-	fixture.delay = 0
-	fixture.packageMode = "cancel"
+	cancelFixture := newUpdateFixture(t, "1.2.4", archive)
+	cancelFixture.packageMode = "cancel"
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(5 * time.Millisecond); cancel() }()
-	if _, err := fixture.client().StageLatest(ctx, root); err == nil {
+	if _, err := cancelFixture.client().StageLatest(ctx, root); err == nil {
 		t.Fatal("cancelled stream staged")
 	}
 	leftovers, _ := filepath.Glob(filepath.Join(root, ".headroom-download-*"))
@@ -590,7 +590,7 @@ func TestUpdaterRejectsLinkedStagingRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := newUpdateFixture(t, "1.2.4", archive)
-	if _, err := fixture.client().StageLatest(context.Background(), root); err == nil || !strings.Contains(err.Error(), "link") {
+	if _, err := fixture.client().StageLatest(context.Background(), root); err == nil || (!strings.Contains(err.Error(), "link") && !strings.Contains(err.Error(), "unsafe")) {
 		t.Fatalf("linked staging accepted: %v", err)
 	}
 	if _, err := os.Stat(external); err != nil {

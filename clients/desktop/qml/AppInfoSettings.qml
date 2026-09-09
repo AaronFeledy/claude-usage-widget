@@ -21,11 +21,11 @@ ColumnLayout {
     Text { text: updateService.statusText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: updateService.state === "failed" ? Theme.red : Theme.muted; font.pixelSize: 12; textFormat: Text.PlainText }
     Flow {
         Layout.fillWidth: true; spacing: 8
-        ActionButton { visible: updateService.canCheck || updateService.busy; text: updateService.busy ? (updateService.state === "downloading" ? "Working…" : "Checking…") : "Check for updates"; enabled: updateService.canCheck; onClicked: updateService.checkForUpdates() }
+        ActionButton { visible: updateService.canCheck || (updateService.busy && updateService.state !== "applying"); text: updateService.busy ? (updateService.state === "downloading" ? "Working…" : "Checking…") : "Check for updates"; enabled: updateService.canCheck; onClicked: updateService.checkForUpdates() }
         ActionButton { visible: updateService.canStage; text: "Download update"; onClicked: updateService.stageUpdate() }
         ActionButton { visible: updateService.canRepair; text: "Repair installation"; onClicked: updateService.repairInstallation() }
-        ActionButton { visible: updateService.busy; text: "Cancel"; quiet: true; onClicked: updateService.cancel() }
-        ActionButton { visible: updateService.restartAvailable; text: "Restart to apply"; enabled: false; quiet: true }
+        ActionButton { visible: updateService.canCancel; text: "Cancel"; quiet: true; onClicked: updateService.cancel() }
+        ActionButton { visible: updateService.restartAvailable; text: "Restart to apply"; onClicked: updateService.restartToApply(); quiet: true }
         ActionButton { visible: updateService.updateMethod !== "automatic"; text: updateService.updateMethod === "system" ? "System update instructions" : "Source update guide"; quiet: true; onClicked: updateService.openUpdateMethod() }
     }
 }

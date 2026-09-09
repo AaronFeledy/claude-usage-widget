@@ -10,8 +10,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+	"time"
 )
 
 const StateName = "install-state.json"
@@ -43,11 +43,14 @@ type Inspection struct {
 	TrustedIdentity bool     `json:"trusted_identity"`
 	Complete        bool     `json:"complete"`
 	Version         string   `json:"version,omitempty"`
+	VersionPath     string   `json:"version_path,omitempty"`
 	Platform        string   `json:"platform,omitempty"`
 	Architecture    string   `json:"architecture,omitempty"`
 	PackageAsset    string   `json:"package_asset,omitempty"`
 	LauncherPath    string   `json:"launcher_path,omitempty"`
 	Missing         []string `json:"missing,omitempty"`
+	ApplyStatus     string   `json:"apply_status,omitempty"`
+	ApplyMessage    string   `json:"apply_message,omitempty"`
 }
 
 func StageArchive(archive, installRoot string, expected Expectations) (StageResult, error) {
@@ -81,8 +84,8 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 	}
 	expected.Platform = platform
 	expected.Architecture = architecture
-	stagingRoot := filepath.Join(installRoot, "staging")
-	if err = os.MkdirAll(stagingRoot, 0o700); err != nil {
+	stagingRoot, err := ensureOwnedDirectory(installRoot, "staging", 0o700)
+	if err != nil {
 		return StageResult{}, err
 	}
 	if err = validateInstallTargets(stagingRoot, ""); err != nil {
@@ -127,7 +130,7 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 			return InstallState{}, err
 		}
 	}
-	if err := validateInstallTargets(installRoot, entryPath); err != nil {
+	if err = validateInstallTargets(installRoot, entryPath); err != nil {
 		return InstallState{}, err
 	}
 	stage, err := StageArchive(archive, installRoot, expected)
@@ -136,88 +139,111 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 	}
 	stageContainer := filepath.Dir(filepath.Dir(stage.PackageRoot))
 	defer os.RemoveAll(stageContainer)
-	manifestFile, err := os.Open(filepath.Join(stage.PackageRoot, PackageManifestName))
+	recoveryErr := RecoverInstall(installRoot)
+	record := filepath.Join(stageContainer, "verified-stage.json")
+	stage, manifest, err := LoadVerifiedStage(installRoot, record)
 	if err != nil {
 		return InstallState{}, err
 	}
-	manifest, err := DecodePackageManifest(manifestFile)
-	manifestFile.Close()
+	lock, err := acquireInstallLock(installRoot, 10*time.Second)
 	if err != nil {
 		return InstallState{}, err
 	}
-	versions := filepath.Join(installRoot, "versions")
-	if err = os.MkdirAll(versions, 0o755); err != nil {
+	defer lock.Close()
+	stage, manifest, err = LoadVerifiedStage(installRoot, record)
+	if err != nil {
 		return InstallState{}, err
 	}
-	versionDir := filepath.Join(versions, manifest.Version)
-	if _, err = os.Stat(versionDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+	var superseded []string
+	if recoveryErr != nil {
+		superseded, err = supersedeUnrecoverableTransactions(installRoot)
+		if err != nil {
+			return InstallState{}, errors.Join(recoveryErr, err)
+		}
+	} else if err = rejectIncompleteTransactions(installRoot); err != nil {
 		return InstallState{}, err
 	}
-	installTemp := versionDir + ".installing"
-	versionBackup := versionDir + ".replaced"
-	os.RemoveAll(installTemp)
-	os.RemoveAll(versionBackup)
-	if err = copyTree(filepath.Join(stage.PackageRoot, "bundle"), installTemp); err != nil {
-		os.RemoveAll(installTemp)
+	transactions, err := ensureOwnedDirectory(installRoot, "transactions", 0o700)
+	if err != nil {
 		return InstallState{}, err
 	}
-	if err = copyFile(filepath.Join(stage.PackageRoot, PackageManifestName), filepath.Join(installTemp, PackageManifestName), 0o644); err != nil {
-		os.RemoveAll(installTemp)
+	token, err := randomHex(8)
+	if err != nil {
 		return InstallState{}, err
 	}
-	if _, statErr := os.Stat(versionDir); statErr == nil {
-		if err = os.Rename(versionDir, versionBackup); err != nil {
-			os.RemoveAll(installTemp)
+	backup := filepath.Join(transactions, "install-"+token)
+	if err = os.Mkdir(backup, 0o700); err != nil {
+		return InstallState{}, err
+	}
+	state, generation, err := createGeneration(installRoot, stage, manifest)
+	if err != nil {
+		_ = os.RemoveAll(backup)
+		return InstallState{}, err
+	}
+	journal := InstallJournal{Schema: SchemaVersion, Product: "Headroom", Phase: "generation-ready", InstallRoot: installRoot,
+		EntryPath: entryPath, GenerationDir: generation, Candidate: state}
+	for _, directory := range superseded {
+		journal.Supersedes = append(journal.Supersedes, filepath.Base(directory))
+	}
+	statePath := filepath.Join(installRoot, StateName)
+	if info, stateErr := os.Lstat(statePath); stateErr == nil {
+		if !info.Mode().IsRegular() {
+			_ = os.RemoveAll(generation)
+			_ = os.RemoveAll(backup)
+			return InstallState{}, errors.New("installed state path is unsafe")
+		}
+		journal.PriorStateExisted = true
+		journal.PriorStateSHA256, err = digestFile(statePath)
+		if err != nil {
+			_ = os.RemoveAll(generation)
+			_ = os.RemoveAll(backup)
 			return InstallState{}, err
 		}
-	}
-	if err = os.Rename(installTemp, versionDir); err != nil {
-		if _, backupErr := os.Stat(versionBackup); backupErr == nil {
-			_ = os.Rename(versionBackup, versionDir)
-		}
-		os.RemoveAll(installTemp)
-		return InstallState{}, err
-	}
-	os.RemoveAll(versionBackup)
-	ext := ""
-	if runtime.GOOS == "windows" {
-		ext = ".exe"
-	}
-	launcherSource := filepath.Join(stage.PackageRoot, "bootstrap", "headroom"+ext)
-	managerSource := filepath.Join(stage.PackageRoot, "bootstrap", "headroom-package"+ext)
-	launcherDest := filepath.Join(installRoot, "headroom-launcher"+ext)
-	managerDest := filepath.Join(installRoot, "headroom-package"+ext)
-	if runtime.GOOS == "windows" {
-		launcherDest = filepath.Join(installRoot, "headroom.exe")
-	}
-	if err = replaceFile(launcherSource, launcherDest, 0o755); err != nil {
-		return InstallState{}, err
-	}
-	if err = replaceFile(managerSource, managerDest, 0o755); err != nil {
-		return InstallState{}, err
-	}
-	if err = replaceBytes([]byte(installRoot+"\n"), launcherDest+".root", 0o600); err != nil {
-		return InstallState{}, err
-	}
-	if entryPath != "" {
-		if !filepath.IsAbs(entryPath) {
-			return InstallState{}, errors.New("entry path must be absolute")
-		}
-		if filepath.Clean(entryPath) != filepath.Clean(launcherDest) {
-			if err = os.MkdirAll(filepath.Dir(entryPath), 0o755); err != nil {
-				return InstallState{}, err
-			}
-			if err = replaceFile(launcherSource, entryPath, 0o755); err != nil {
-				return InstallState{}, err
-			}
-		}
-		if err = replaceBytes([]byte(installRoot+"\n"), entryPath+".root", 0o600); err != nil {
+		if err = copyFile(statePath, filepath.Join(backup, "prior-install-state.json"), 0o600); err != nil {
+			_ = os.RemoveAll(generation)
+			_ = os.RemoveAll(backup)
 			return InstallState{}, err
 		}
+	} else if !errors.Is(stateErr, os.ErrNotExist) {
+		_ = os.RemoveAll(generation)
+		_ = os.RemoveAll(backup)
+		return InstallState{}, stateErr
 	}
-	state := InstallState{Schema: SchemaVersion, Product: "Headroom", Platform: manifest.Platform, Architecture: manifest.Architecture, ActiveVersion: manifest.Version, VersionPath: filepath.ToSlash(filepath.Join("versions", manifest.Version)), ManifestSHA256: stage.ManifestSHA256, PackageAsset: manifest.AssetName}
-	if err = writeAtomicJSON(filepath.Join(installRoot, StateName), state); err != nil {
+	journalPath := filepath.Join(backup, InstallJournalName)
+	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return InstallState{}, err
+	}
+	if err = prepareBootstrapBackup(installRoot, entryPath, backup); err != nil {
+		_ = os.RemoveAll(generation)
+		return InstallState{}, err
+	}
+	journal.Phase = "bootstrap-intent"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return InstallState{}, err
+	}
+	if transactionTestHook != nil {
+		if hookErr := transactionTestHook("install-bootstrap-intent"); hookErr != nil {
+			return InstallState{}, errors.Join(hookErr, recoverInstallJournal(journal, backup))
+		}
+	}
+	if err = applyBootstrap(stage.PackageRoot, installRoot, entryPath, manifest); err != nil {
+		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+	}
+	journal.Phase = "state-intent"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+	}
+	if err = writeDurableJSON(statePath, state); err != nil {
+		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
+	}
+	journal.Phase = "complete"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return InstallState{}, err
+	}
+	_ = os.Remove(filepath.Join(installRoot, "last-apply-result.json"))
+	_ = os.RemoveAll(backup)
+	for _, directory := range superseded {
+		_ = os.RemoveAll(directory)
 	}
 	return state, nil
 }
@@ -228,38 +254,49 @@ func InspectInstall(installRoot string) Inspection {
 	if err != nil {
 		return result
 	}
-	data, err := os.ReadFile(filepath.Join(installRoot, StateName))
+	data, err := readBoundedFile(filepath.Join(installRoot, StateName), maxManifestBytes)
 	if err != nil {
 		return result
 	}
-	result.Installed = true
 	var state InstallState
-	if json.Unmarshal(data, &state) != nil || state.Schema != SchemaVersion || state.Product != "Headroom" || !validVersion(state.ActiveVersion) || state.VersionPath != filepath.ToSlash(filepath.Join("versions", state.ActiveVersion)) {
+	if json.Unmarshal(data, &state) != nil {
 		return result
+	}
+	result, _ = inspectState(installRoot, state)
+	var outcome ApplyResult
+	if data, readErr := readBoundedFile(filepath.Join(installRoot, "last-apply-result.json"), maxManifestBytes); readErr == nil && json.Unmarshal(data, &outcome) == nil &&
+		outcome.Schema == SchemaVersion && outcome.Product == "Headroom" && outcome.Version == state.ActiveVersion && outcome.VersionPath == state.VersionPath {
+		result.ApplyStatus, result.ApplyMessage = outcome.Status, outcome.FailureReason
+	}
+	return result
+}
+
+func inspectState(installRoot string, state InstallState) (Inspection, error) {
+	result := Inspection{Installed: true}
+	if state.Schema != SchemaVersion || state.Product != "Headroom" || !validVersion(state.ActiveVersion) || !validVersionPath(state) {
+		return result, errors.New("installed state identity is invalid")
 	}
 	expectedAsset, err := AssetName(state.ActiveVersion, state.Platform, state.Architecture)
 	if err != nil || expectedAsset != state.PackageAsset || !hashPattern.MatchString(state.ManifestSHA256) {
-		return result
+		return result, errors.New("installed state package identity is invalid")
 	}
 	manifestPath := filepath.Join(installRoot, filepath.FromSlash(state.VersionPath), PackageManifestName)
 	digest, err := digestFile(manifestPath)
 	if err != nil || digest != state.ManifestSHA256 {
-		return result
+		return result, errors.New("installed manifest digest is invalid")
 	}
 	file, err := os.Open(manifestPath)
 	if err != nil {
-		return result
+		return result, err
 	}
 	manifest, err := DecodePackageManifest(file)
 	file.Close()
 	if err != nil || manifest.Version != state.ActiveVersion || manifest.Platform != state.Platform || manifest.Architecture != state.Architecture || manifest.AssetName != state.PackageAsset {
-		return result
+		return result, errors.New("installed manifest identity is invalid")
 	}
 	result.TrustedIdentity = true
-	result.Version = state.ActiveVersion
-	result.Platform = state.Platform
-	result.Architecture = state.Architecture
-	result.PackageAsset = state.PackageAsset
+	result.Version, result.VersionPath = state.ActiveVersion, state.VersionPath
+	result.Platform, result.Architecture, result.PackageAsset = state.Platform, state.Architecture, state.PackageAsset
 	ext := ""
 	if state.Platform == "windows" {
 		ext = ".exe"
@@ -275,18 +312,69 @@ func InspectInstall(installRoot string) Inspection {
 		}
 		relative := strings.TrimPrefix(record.Path, "bundle/")
 		name := filepath.Join(versionRoot, filepath.FromSlash(relative))
-		info, err := os.Lstat(name)
-		if err != nil || !info.Mode().IsRegular() || info.Size() != record.Size {
+		info, statErr := os.Lstat(name)
+		modeMismatch := state.Platform == "linux" && fmt.Sprintf("%04o", infoMode(info)) != record.Mode
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() != record.Size || modeMismatch {
 			result.Missing = append(result.Missing, relative)
 			continue
 		}
-		digest, err := digestFile(name)
-		if err != nil || digest != record.SHA256 {
+		fileDigest, digestErr := digestFile(name)
+		if digestErr != nil || fileDigest != record.SHA256 {
 			result.Missing = append(result.Missing, relative)
 		}
 	}
+	bootstrapMissing := func(recordPath, installedPath string) {
+		for _, record := range manifest.Files {
+			if record.Path != recordPath {
+				continue
+			}
+			info, statErr := os.Lstat(installedPath)
+			digest, digestErr := digestFile(installedPath)
+			if statErr != nil || !info.Mode().IsRegular() || info.Size() != record.Size || digestErr != nil || digest != record.SHA256 {
+				result.Missing = append(result.Missing, recordPath)
+			}
+			return
+		}
+	}
+	if state.Platform == "windows" {
+		bootstrapMissing("bootstrap/headroom.exe", filepath.Join(installRoot, "headroom.exe"))
+		bootstrapMissing("bootstrap/headroom-package.exe", filepath.Join(installRoot, "headroom-package.exe"))
+	} else {
+		bootstrapMissing("bootstrap/headroom", filepath.Join(installRoot, "headroom-launcher"))
+		bootstrapMissing("bootstrap/headroom-package", filepath.Join(installRoot, "headroom-package"))
+	}
+	if data, associationErr := readBoundedFile(result.LauncherPath+".root", 4096); associationErr != nil || string(data) != installRoot+"\n" {
+		result.Missing = append(result.Missing, "bootstrap/association")
+	}
 	result.Complete = len(result.Missing) == 0
-	return result
+	return result, nil
+}
+
+func infoMode(info os.FileInfo) os.FileMode {
+	if info == nil {
+		return 0
+	}
+	return info.Mode().Perm()
+}
+
+func validVersionPath(state InstallState) bool {
+	legacy := filepath.ToSlash(filepath.Join("versions", state.ActiveVersion))
+	if state.VersionPath == legacy {
+		return true
+	}
+	prefix := legacy + ".generation-"
+	if !strings.HasPrefix(state.VersionPath, prefix) || strings.Contains(state.VersionPath, "\\") || filepath.ToSlash(filepath.Clean(filepath.FromSlash(state.VersionPath))) != state.VersionPath {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(state.VersionPath, prefix), "-")
+	if len(parts) != 2 || len(parts[0]) != 16 || len(parts[1]) != 16 {
+		return false
+	}
+	isHex := func(value string) bool {
+		_, err := hex.DecodeString(value)
+		return err == nil && strings.ToLower(value) == value
+	}
+	return isHex(parts[0]) && isHex(parts[1]) && strings.HasPrefix(state.ManifestSHA256, parts[0])
 }
 
 func ActiveExecutable(installRoot string) (string, Inspection, error) {
@@ -303,10 +391,9 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 	if inspection.Platform == "windows" {
 		name += ".exe"
 	}
-	executable := filepath.Join(installRoot, "versions", inspection.Version, "bin", name)
-	allowedMissing := map[string]bool{"bin/usage-server": true, "bin/usage-server.exe": true, "bin/headroom-credential-helper.exe": true}
+	executable := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", name)
 	for _, missing := range inspection.Missing {
-		if !allowedMissing[filepath.ToSlash(missing)] {
+		if !isAuxiliaryPath(missing) {
 			return "", inspection, fmt.Errorf("Headroom %s runtime is incomplete; reinstall %s", inspection.Version, inspection.PackageAsset)
 		}
 	}
@@ -317,10 +404,30 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 	return executable, inspection, nil
 }
 
+func isAuxiliaryPath(path string) bool {
+	switch filepath.ToSlash(path) {
+	case "bin/usage-server", "bin/usage-server.exe", "bin/headroom-credential-helper.exe",
+		"bootstrap/headroom", "bootstrap/headroom.exe", "bootstrap/headroom-package", "bootstrap/headroom-package.exe", "bootstrap/association":
+		return true
+	}
+	return false
+}
+
 // NormalizeInstallRoot accepts native absolute paths with either separator and
 // returns the single path representation persisted in launcher associations.
 func NormalizeInstallRoot(installRoot string) (string, error) {
 	return normalizeAbsolutePath(installRoot, "install root")
+}
+
+func ValidateInstallRoot(installRoot string) (string, error) {
+	root, err := NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return "", err
+	}
+	if err = validateInstallTargets(root, ""); err != nil {
+		return "", err
+	}
+	return root, nil
 }
 
 func normalizeAbsolutePath(value, label string) (string, error) {
@@ -348,7 +455,7 @@ func validateInstallTargets(installRoot, entryPath string) error {
 		current := target
 		for {
 			info, err := os.Lstat(current)
-			if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			if err == nil && pathIsLinkOrReparse(current, info) {
 				return fmt.Errorf("install target traverses a link: %s", current)
 			}
 			parent := filepath.Dir(current)
@@ -424,31 +531,38 @@ func replaceFile(source, destination string, mode os.FileMode) error {
 	return replaceBytes(src, destination, mode)
 }
 func replaceBytes(contents []byte, destination string, mode os.FileMode) error {
-	temporary := destination + ".new"
-	backup := destination + ".old"
-	os.Remove(temporary)
-	os.Remove(backup)
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(temporary, contents, mode); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(destination), ".headroom-replace-*")
+	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(destination); err == nil {
-		if err = os.Rename(destination, backup); err != nil {
-			os.Remove(temporary)
-			return err
+	temporary := file.Name()
+	failed := true
+	defer func() {
+		_ = file.Close()
+		if failed {
+			_ = os.Remove(temporary)
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		os.Remove(temporary)
+	}()
+	if err = file.Chmod(mode); err == nil {
+		_, err = file.Write(contents)
+	}
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, destination); err != nil {
-		os.Rename(backup, destination)
+	if err = replaceAtomic(temporary, destination); err != nil {
 		return err
 	}
-	os.Remove(backup)
-	return nil
+	failed = false
+	return syncDirectory(filepath.Dir(destination))
 }
 func writeAtomicJSON(name string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")

@@ -38,6 +38,8 @@ public:
     QString completeStartupMigration();
     // C++ integration seam for update preparation; attached/remote servers are untouched.
     void stopOwnedServer() { m_server.stopOwned(); }
+    qint64 ownedServerProcessId() const { return m_server.ownedProcessId(); }
+    QString ownedServerExecutablePath() const { return m_server.ownedExecutablePath(); }
     Q_INVOKABLE void refresh();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;

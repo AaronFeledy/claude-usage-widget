@@ -22,6 +22,9 @@
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QQuickStyle>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <QSystemTrayIcon>
 
 int main(int argc, char **argv) {
@@ -49,6 +52,8 @@ int main(int argc, char **argv) {
     parser.addOption({"background", "Start in the system tray."});
     parser.addOption({"screenshot", "Save a screenshot, then exit (for visual verification).", "path"});
     parser.addOption({"config", "Use an alternate settings file.", "path"});
+    parser.addOption({"headroom-ready-file", "Private update readiness endpoint.", "path"});
+    parser.addOption({"headroom-update-restart", "Open the popup after a verified update restart."});
     parser.process(app);
     const bool capture = parser.isSet("screenshot"), demo = parser.isSet("demo");
     const bool isolated = parser.isSet("config");
@@ -70,6 +75,17 @@ int main(int argc, char **argv) {
     StartupService startup({}, {}, !demo && !capture && !isolated);
     AppInfo appInfo;
     UpdateService updateService(!demo && !capture && !isolated);
+    updateService.setOwnedProcessProvider([&controller] {
+        return qMakePair(controller.ownedServerProcessId(), controller.ownedServerExecutablePath());
+    });
+    QStringList relaunchArguments;
+    if (parser.isSet("background")) relaunchArguments << QStringLiteral("--background");
+    if (isolated) relaunchArguments << QStringLiteral("--config") << parser.value("config");
+    updateService.setRelaunchArguments(relaunchArguments);
+    QObject::connect(&updateService, &UpdateService::applyPrepared, &app, [&] {
+        controller.stopOwnedServer();
+        QTimer::singleShot(0, &app, &QCoreApplication::quit);
+    });
     const auto syncServices = [&] {
         startup.setAllowChanges(!controller.isDemo() && !capture && !isolated);
         updateService.setPublicTrafficAllowed(!controller.isDemo());
@@ -90,6 +106,20 @@ int main(int argc, char **argv) {
     engine.rootContext()->setContextProperty("startHidden", true);
     engine.loadFromModule("Headroom", "Main");
     if (engine.rootObjects().isEmpty()) return 1;
+    if (parser.isSet("headroom-ready-file")) {
+        const QString readyPath = parser.value("headroom-ready-file");
+        const QByteArray nonce = qgetenv("HEADROOM_READY_NONCE");
+        QSaveFile ready(readyPath);
+        const QJsonObject value{{QStringLiteral("nonce"), QString::fromUtf8(nonce)},
+            {QStringLiteral("pid"), qint64(QCoreApplication::applicationPid())},
+            {QStringLiteral("version"), QCoreApplication::applicationVersion()},
+            {QStringLiteral("executable"), QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath()}};
+        if (nonce.isEmpty() || !QDir::isAbsolutePath(readyPath) || !ready.open(QIODevice::WriteOnly)
+            || ready.write(QJsonDocument(value).toJson(QJsonDocument::Compact) + '\n') < 0 || !ready.commit()) return 1;
+#ifndef Q_OS_WIN
+        QFile::setPermissions(readyPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+    }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     TrayPopup popup(window, hasTray, &app);
     const auto show = [&popup] { popup.show(); };
@@ -159,7 +189,7 @@ int main(int argc, char **argv) {
         tray.show();
 #endif
     }
-    if (!parser.isSet("background") || !hasTray) show();
+    if (!parser.isSet("background") || !hasTray || parser.isSet("headroom-update-restart")) show();
     if (!demo && !capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
     if (capture) QTimer::singleShot(900, &app, [&] { app.exit(window->grabWindow().save(parser.value("screenshot")) ? 0 : 2); });
     return app.exec();

@@ -31,6 +31,8 @@ public:
     bool ownsProcess() const { return m_process && m_owned; }
     bool isAttached() const { return m_available && !m_owned; }
     bool isAvailable() const { return m_available; }
+    qint64 ownedProcessId() const { return ownsProcess() ? qint64(m_process->processId()) : 0; }
+    QString ownedExecutablePath() const { return ownsProcess() ? binaryPath() : QString(); }
     QString state() const { return m_state; }
     QString message() const { return m_message; }
     QUrl localUrl() const { return m_options.localUrl; }

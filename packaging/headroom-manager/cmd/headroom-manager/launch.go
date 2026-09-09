@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,9 @@ import (
 func launch(arguments []string) error {
 	root, err := associatedInstallRoot()
 	if err != nil {
+		return err
+	}
+	if err = contract.RecoverInstall(root); err != nil {
 		return err
 	}
 	executable, inspection, err := contract.ActiveExecutable(root)
@@ -44,7 +48,7 @@ func associatedInstallRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, readErr := os.ReadFile(launcher + ".root")
+	data, readErr := readAssociation(launcher + ".root")
 	if readErr == nil {
 		return validatedAssociation(strings.TrimSuffix(string(data), "\n"))
 	}
@@ -61,11 +65,35 @@ func associatedInstallRoot() (string, error) {
 }
 
 func validatedAssociation(root string) (string, error) {
-	canonical, err := contract.NormalizeInstallRoot(root)
+	canonical, err := contract.ValidateInstallRoot(root)
 	if err != nil {
 		return "", fmt.Errorf("Headroom launcher association is invalid")
 	}
 	return canonical, nil
+}
+
+func readAssociation(path string) ([]byte, error) {
+	linked, err := os.Lstat(path)
+	if err != nil || !linked.Mode().IsRegular() || linked.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("Headroom launcher association is invalid")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(linked, info) || info.Size() <= 1 || info.Size() > 4096 {
+		return nil, fmt.Errorf("Headroom launcher association is invalid")
+	}
+	data := make([]byte, info.Size())
+	if _, err = io.ReadFull(file, data); err != nil {
+		return nil, fmt.Errorf("Headroom launcher association is invalid")
+	}
+	if len(data) < 2 || data[len(data)-1] != '\n' || strings.ContainsAny(string(data[:len(data)-1]), "\r\n\x00") {
+		return nil, fmt.Errorf("Headroom launcher association is invalid")
+	}
+	return data, nil
 }
 
 func authoritativeEnvironment(base []string, values map[string]string) []string {

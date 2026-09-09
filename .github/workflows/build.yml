@@ -239,7 +239,8 @@ jobs:
           HEADROOM_INSTALL_ROOT="$RUNNER_TEMP/obsolete install" HEADROOM_LAUNCHER_PATH="$RUNNER_TEMP/obsolete launcher" HEADROOM_PACKAGE_VERSION=9.9.9 \
             timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
           test -s "$RUNNER_TEMP/headroom-clean-linux-xcb.png" && test -s "$RUNNER_TEMP/headroom-clean-linux-offscreen.png" && test -s "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
-          find "$RUNNER_TEMP/install with spaces/versions/$HEADROOM_PACKAGE_VERSION" -type f -printf '%P\n' | sort > "$RUNNER_TEMP/linux-package-inventory.txt"
+          version_path="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version_path"])' "$RUNNER_TEMP/install with spaces/install-state.json")"
+          find "$RUNNER_TEMP/install with spaces/$version_path" -type f -printf '%P\n' | sort > "$RUNNER_TEMP/linux-package-inventory.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: headroom-linux-x64-smoke-evidence
@@ -285,7 +286,8 @@ jobs:
           $version = $env:HEADROOM_PACKAGE_VERSION
           & "$env:RUNNER_TEMP/headroom-package.exe" install --archive $archivePath --install-root $install --entry-path $stable --version $env:HEADROOM_PACKAGE_VERSION --platform windows --arch ${{ matrix.contract_arch }} --asset $asset
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (!(Test-Path "$install/versions/$env:HEADROOM_PACKAGE_VERSION/bin/msvcp140.dll") -or !(Test-Path "$install/versions/$env:HEADROOM_PACKAGE_VERSION/bin/vcruntime140.dll")) { exit 1 }
+          $versionPath = (Get-Content -Raw "$install/install-state.json" | ConvertFrom-Json).version_path
+          if (!(Test-Path "$install/$versionPath/bin/msvcp140.dll") -or !(Test-Path "$install/$versionPath/bin/vcruntime140.dll")) { exit 1 }
           Get-ChildItem Env: | Where-Object { $_.Name -like 'QT_*' -or $_.Name -like 'QML*' } | Remove-Item
           Remove-Item Env:HEADROOM_INSTALL_ROOT, Env:HEADROOM_LAUNCHER_PATH, Env:HEADROOM_PACKAGE_VERSION -ErrorAction SilentlyContinue
           function Invoke-Smoke([string]$Image, [string]$Platform) {
@@ -311,7 +313,7 @@ jobs:
           $env:HEADROOM_LAUNCHER_PATH = Join-Path $env:RUNNER_TEMP 'obsolete launcher.exe'
           $env:HEADROOM_PACKAGE_VERSION = '9.9.9'
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-dirty-environment-windows.png" 'offscreen'
-          Get-ChildItem "$install/versions/$version" -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length + 1) } | Sort-Object | Set-Content "$env:RUNNER_TEMP/windows-package-inventory.txt"
+          Get-ChildItem "$install/$versionPath" -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length + 1) } | Sort-Object | Set-Content "$env:RUNNER_TEMP/windows-package-inventory.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: headroom-windows-${{ matrix.arch }}-smoke-evidence

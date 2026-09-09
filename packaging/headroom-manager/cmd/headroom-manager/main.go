@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
 )
@@ -53,6 +54,12 @@ func run(args []string) int {
 		result, err = stageUpdate(args[2:], false)
 	case "stage-repair":
 		result, err = stageUpdate(args[2:], true)
+	case "prepare-apply":
+		result, err = prepareApply(args[2:])
+	case "apply":
+		result, err = applyPrepared(args[2:])
+	case "recover":
+		result, err = recoverInstall(args[2:])
 	case "create-package":
 		result, err = createPackage(args[2:])
 	case "create-release":
@@ -63,6 +70,59 @@ func run(args []string) int {
 		err = fmt.Errorf("unknown command %q", command)
 	}
 	return emit(command, result, err)
+}
+
+func prepareApply(args []string) (any, error) {
+	set := flag.NewFlagSet("prepare-apply", flag.ContinueOnError)
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	entry := set.String("entry-path", defaultEntryPath(), "stable launcher entry")
+	record := set.String("stage-record", "", "verified stage record")
+	pid := set.Int("current-pid", 0, "running Headroom process")
+	executable := set.String("current-executable", "", "running Headroom executable")
+	childPID := set.Int("owned-child-pid", 0, "owned local server process")
+	childExecutable := set.String("owned-child-executable", "", "owned local server executable")
+	var relaunch listFlag
+	set.Var(&relaunch, "relaunch-arg", "argument to preserve when restarting")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	manager, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := contract.PrepareApply(manager, contract.ApplyRequest{InstallRoot: *root, EntryPath: *entry, StageRecord: *record,
+		CurrentPID: *pid, CurrentExecutable: *executable, OwnedChildPID: *childPID, OwnedChildExecutable: *childExecutable,
+		RelaunchArguments: relaunch})
+	if err != nil {
+		return nil, err
+	}
+	if err = startApplyManager(prepared.ManagerPath, prepared.RequestPath); err != nil {
+		return nil, err
+	}
+	if err = contract.WaitForApplyAcknowledgement(prepared, 10*time.Second); err != nil {
+		return nil, err
+	}
+	return prepared, nil
+}
+
+func applyPrepared(args []string) (any, error) {
+	set := flag.NewFlagSet("apply", flag.ContinueOnError)
+	request := set.String("request", "", "private apply request")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	return contract.ApplyPrepared(*request)
+}
+func recoverInstall(args []string) (any, error) {
+	set := flag.NewFlagSet("recover", flag.ContinueOnError)
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	if err := contract.RecoverInstall(*root); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"recovered": true}, nil
 }
 
 func checkUpdate(args []string) (any, error) {

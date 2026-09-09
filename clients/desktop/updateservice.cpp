@@ -10,6 +10,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QUrl>
@@ -80,7 +82,7 @@ void UpdateService::inspectInstallation() { run(Operation::Inspect, QStringLiter
 void UpdateService::startAutomaticCheck() {
     if (m_autoStarted) return;
     m_autoStarted = true;
-    if (!m_allowed) return;
+    if (!m_allowed || m_suppressAutomaticCheck) return;
     m_autoPending = true;
     if (!m_process && m_official) {
         m_autoPending = false;
@@ -91,6 +93,11 @@ void UpdateService::startAutomaticCheck() {
 
 void UpdateService::setPublicTrafficAllowed(bool allowed) {
     const bool effective = m_sessionAllowed && allowed;
+    if (m_operation == Operation::Apply) {
+        m_hasDeferredAllowed = true;
+        m_deferredAllowed = effective;
+        return;
+    }
     if (effective == m_allowed) return;
     m_allowed = effective;
     m_autoPending = false; m_autoStage = false;
@@ -101,10 +108,10 @@ void UpdateService::setPublicTrafficAllowed(bool allowed) {
                 m_prePauseStatus = QStringLiteral("Headroom %1 is available.").arg(m_latestVersion);
             } else if (m_operation == Operation::Repair) {
                 m_prePauseState = QStringLiteral("current");
-                m_prePauseStatus = QStringLiteral("The bundled usage server needs repair.");
+                m_prePauseStatus = QStringLiteral("The Headroom installation needs repair.");
             } else if (m_operation == Operation::Check) {
                 m_prePauseState = QStringLiteral("current");
-                m_prePauseStatus = m_repairable ? QStringLiteral("The bundled usage server needs repair.")
+                m_prePauseStatus = m_repairable ? QStringLiteral("The Headroom installation needs repair.")
                                                 : QStringLiteral("Headroom updates automatically after a startup check.");
             } else {
                 m_prePauseState = m_state;
@@ -123,6 +130,7 @@ void UpdateService::setPublicTrafficAllowed(bool allowed) {
 
 void UpdateService::checkForUpdates() {
     if (!canCheck()) return;
+    m_suppressAutomaticCheck = false;
     m_autoStage = false;
     run(Operation::Check, QStringLiteral("check-update"));
 }
@@ -137,8 +145,27 @@ void UpdateService::repairInstallation() {
     run(Operation::Repair, QStringLiteral("stage-repair"));
 }
 
+void UpdateService::restartToApply() {
+    if (!restartAvailable() || m_verifiedStage.isEmpty() || m_process) return;
+    const QString packageRoot = cleanAbsolute(m_verifiedStage.value(QStringLiteral("package_root")).toString());
+    if (packageRoot.isEmpty()) { fail(QStringLiteral("The verified update stage was not recognized.")); return; }
+    const QString stageRecord = QDir(packageRoot).absoluteFilePath(QStringLiteral("../../verified-stage.json"));
+    QStringList arguments{QStringLiteral("prepare-apply"), QStringLiteral("--install-root"), m_options.installRoot,
+        QStringLiteral("--entry-path"), m_options.launcherPath, QStringLiteral("--stage-record"), QDir::cleanPath(stageRecord),
+        QStringLiteral("--current-pid"), QString::number(QCoreApplication::applicationPid()),
+        QStringLiteral("--current-executable"), QCoreApplication::applicationFilePath()};
+    if (m_ownedProcessProvider) {
+        const auto owned = m_ownedProcessProvider();
+        if (owned.first > 0 && !owned.second.isEmpty()) arguments << QStringLiteral("--owned-child-pid") << QString::number(owned.first)
+            << QStringLiteral("--owned-child-executable") << owned.second;
+    }
+    for (const auto &argument : m_relaunchArguments)
+        arguments << QStringLiteral("--relaunch-arg") << argument;
+    run(Operation::Apply, QStringLiteral("prepare-apply"), arguments);
+}
+
 void UpdateService::cancel() {
-    if (!m_process) return;
+    if (!m_process || m_operation == Operation::Apply) return;
     m_cancelRequested = true;
     auto process = m_process;
     process->closeWriteChannel();
@@ -147,25 +174,40 @@ void UpdateService::cancel() {
     });
 }
 
-void UpdateService::run(Operation operation, const QString &command) {
+void UpdateService::run(Operation operation, const QString &command, const QStringList &explicitArguments) {
     if (m_process) return;
     if (operation != Operation::Inspect && !m_allowed) return;
     auto process = new QProcess(this);
     m_process = process;
     m_operation = operation;
     m_output.clear(); m_errorOutput.clear(); m_cancelRequested = false; m_timedOut = false;
-    QStringList arguments{command, QStringLiteral("--install-root"), m_options.installRoot};
-    if (operation != Operation::Inspect) arguments.append(QStringLiteral("--cancel-stdin"));
+    QStringList arguments;
+    if (operation == Operation::Apply) {
+        arguments = explicitArguments;
+    } else {
+        arguments = {command, QStringLiteral("--install-root"), m_options.installRoot};
+        if (operation != Operation::Inspect) arguments.append(QStringLiteral("--cancel-stdin"));
+    }
     process->setProgram(m_options.managerPath);
     process->setArguments(arguments);
     process->setProcessChannelMode(QProcess::SeparateChannels);
     auto environment = QProcessEnvironment::systemEnvironment();
-    for (const auto &name : {QStringLiteral("USAGE_AUTH_TOKEN"), QStringLiteral("USAGE_CONFIG"),
-                             QStringLiteral("HEADROOM_CREDENTIAL_SNAPSHOT_ROOT")}) environment.remove(name);
+    if (operation != Operation::Apply)
+        for (const auto &name : {QStringLiteral("USAGE_AUTH_TOKEN"), QStringLiteral("USAGE_CONFIG"),
+                                 QStringLiteral("HEADROOM_CREDENTIAL_SNAPSHOT_ROOT")}) environment.remove(name);
     process->setProcessEnvironment(environment);
+#ifdef Q_OS_WIN
+    if (operation == Operation::Apply)
+        process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *arguments) {
+            arguments->flags |= 0x08000000; // CREATE_NO_WINDOW for the console-subsystem private manager.
+        });
+#endif
     if (operation == Operation::Check || operation == Operation::Inspect) {
         m_state = QStringLiteral("checking");
         m_status = operation == Operation::Inspect ? QStringLiteral("Checking installation…") : QStringLiteral("Checking for Headroom updates…");
+    } else if (operation == Operation::Apply) {
+        m_state = QStringLiteral("applying");
+        m_status = QStringLiteral("Preparing a safe restart…");
     } else {
         m_state = QStringLiteral("downloading");
         m_status = operation == Operation::Repair ? QStringLiteral("Downloading a matching repair package…")
@@ -226,7 +268,7 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         m_state = QStringLiteral("failed");
         m_status = m_timedOut ? QStringLiteral("The update operation timed out. Try again later.")
                               : QStringLiteral("The update operation was cancelled.");
-        emit changed(); return;
+		emit changed(); applyDeferredTrafficState(); return;
     }
     if (m_output.size() > maximumToolOutput || m_errorOutput.size() > maximumToolOutput || exitStatus != QProcess::NormalExit || exitCode != 0) {
         fail(QStringLiteral("The update operation did not complete. Try again later.")); return;
@@ -243,6 +285,7 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
     case Operation::Check: expectedCommand = QStringLiteral("check-update"); break;
     case Operation::Stage: expectedCommand = QStringLiteral("stage-update"); break;
     case Operation::Repair: expectedCommand = QStringLiteral("stage-repair"); break;
+    case Operation::Apply: expectedCommand = QStringLiteral("prepare-apply"); break;
     case Operation::None: break;
     }
     if (!object.value(QStringLiteral("ok")).toBool() || object.value(QStringLiteral("command")).toString() != expectedCommand
@@ -250,14 +293,83 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         fail(QStringLiteral("The update package was rejected. The current installation was not changed.")); return;
     }
     const auto result = object.value(QStringLiteral("result")).toObject();
+    if (operation == Operation::Apply) {
+        if (!authorizePreparedApply(result)) {
+            fail(QStringLiteral("The update transaction was not accepted.")); return;
+        }
+        m_status = QStringLiteral("Restarting into the verified Headroom package…"); emit changed(); emit applyPrepared(); return;
+    }
     if (operation == Operation::Inspect) handleInspection(result); else handleUpdateResult(operation, result);
 }
 
-bool UpdateService::validateIdentity(const QJsonObject &result) const {
+bool UpdateService::authorizePreparedApply(const QJsonObject &result) const {
+    if (result.value(QStringLiteral("schema")).toInt() != 1 || result.value(QStringLiteral("product")).toString() != QStringLiteral("Headroom")) return false;
+    const QString root = cleanAbsolute(m_options.installRoot);
+    const QString directory = cleanAbsolute(result.value(QStringLiteral("transaction_directory")).toString());
+    const QString request = cleanAbsolute(result.value(QStringLiteral("request_path")).toString());
+    const QString manager = cleanAbsolute(result.value(QStringLiteral("manager_path")).toString());
+    const QString acknowledgement = cleanAbsolute(result.value(QStringLiteral("acknowledgement_path")).toString());
+    const QString commit = cleanAbsolute(result.value(QStringLiteral("commit_path")).toString());
+    const QString nonce = result.value(QStringLiteral("nonce")).toString();
+    const auto equalsPath = [](const QString &left, const QString &right) {
+        const QString cleanLeft = cleanAbsolute(left), cleanRight = cleanAbsolute(right);
+        return !cleanLeft.isEmpty() && cleanLeft == cleanRight;
+    };
+    if (root.isEmpty() || directory.isEmpty() || request.isEmpty() || manager.isEmpty() || acknowledgement.isEmpty() || commit.isEmpty()
+        || !QRegularExpression(QStringLiteral("^apply-[0-9a-f]{32}$")).match(QFileInfo(directory).fileName()).hasMatch()
+        || QFileInfo(directory).dir().canonicalPath() != QFileInfo(QDir(root).filePath(QStringLiteral("transactions"))).canonicalFilePath()
+        || !equalsPath(request, QDir(directory).filePath(QStringLiteral("apply-request.json")))
+        || !equalsPath(acknowledgement, QDir(directory).filePath(QStringLiteral("accepted.json")))
+        || !equalsPath(commit, QDir(directory).filePath(QStringLiteral("commit.json")))
+        || !equalsPath(manager, QDir(directory).filePath(
+#ifdef Q_OS_WIN
+               QStringLiteral("headroom-apply.exe")))
+#else
+               QStringLiteral("headroom-apply")))
+#endif
+        || !QRegularExpression(QStringLiteral("^[0-9a-f]{48}$")).match(nonce).hasMatch()
+        || !QFileInfo(request).isFile() || QFileInfo(request).isSymLink() || !QFileInfo(manager).isFile() || QFileInfo(manager).isSymLink()) return false;
+    QFile requestFile(request);
+    QJsonParseError requestError;
+    const auto requestDocument = requestFile.open(QIODevice::ReadOnly) && requestFile.size() <= maximumToolOutput
+        ? QJsonDocument::fromJson(requestFile.readAll(), &requestError) : QJsonDocument();
+    if (requestError.error != QJsonParseError::NoError || !requestDocument.isObject()) return false;
+    const auto requestObject = requestDocument.object();
+    const QString packageRoot = cleanAbsolute(m_verifiedStage.value(QStringLiteral("package_root")).toString());
+    const QString expectedStage = packageRoot.isEmpty() ? QString()
+        : cleanAbsolute(QDir::cleanPath(QDir(packageRoot).absoluteFilePath(QStringLiteral("../../verified-stage.json"))));
+    if (requestObject.value(QStringLiteral("schema")).toInt() != 1 || requestObject.value(QStringLiteral("product")).toString() != QStringLiteral("Headroom")
+        || !equalsPath(requestObject.value(QStringLiteral("install_root")).toString(), root)
+        || !equalsPath(requestObject.value(QStringLiteral("entry_path")).toString(), m_options.launcherPath)
+        || expectedStage.isEmpty() || !equalsPath(requestObject.value(QStringLiteral("stage_record")).toString(), expectedStage)
+        || requestObject.value(QStringLiteral("current_pid")).toInteger() != QCoreApplication::applicationPid()
+        || !equalsPath(requestObject.value(QStringLiteral("current_executable")).toString(), QCoreApplication::applicationFilePath())
+        || !equalsPath(requestObject.value(QStringLiteral("acknowledgement_path")).toString(), acknowledgement)
+        || !equalsPath(requestObject.value(QStringLiteral("commit_path")).toString(), commit)
+        || requestObject.value(QStringLiteral("nonce")).toString() != nonce) return false;
+    QFile accepted(acknowledgement);
+    QJsonParseError parseError;
+    const auto acceptedDocument = accepted.open(QIODevice::ReadOnly) && accepted.size() <= 4096
+        ? QJsonDocument::fromJson(accepted.readAll(), &parseError) : QJsonDocument();
+    if (parseError.error != QJsonParseError::NoError || !acceptedDocument.isObject()) return false;
+    const auto acceptedObject = acceptedDocument.object();
+    if (acceptedObject.value(QStringLiteral("schema")).toInt() != 1 || acceptedObject.value(QStringLiteral("product")).toString() != QStringLiteral("Headroom")
+        || !acceptedObject.value(QStringLiteral("accepted")).toBool() || acceptedObject.value(QStringLiteral("nonce")).toString() != nonce) return false;
+    QSaveFile authorization(commit);
+    const QJsonObject value{{QStringLiteral("schema"), 1}, {QStringLiteral("product"), QStringLiteral("Headroom")},
+        {QStringLiteral("commit"), true}, {QStringLiteral("nonce"), nonce}};
+    if (!authorization.open(QIODevice::WriteOnly) || authorization.write(QJsonDocument(value).toJson(QJsonDocument::Compact) + '\n') < 0 || !authorization.commit()) return false;
+#ifndef Q_OS_WIN
+    QFile::setPermissions(commit, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+#endif
+    return true;
+}
+
+bool UpdateService::validateInstalledApplicationIdentity(const QJsonObject &result) const {
     if (m_options.fixtureIdentity) return result.value(QStringLiteral("trusted_identity")).toBool();
     const QString root = cleanAbsolute(m_options.installRoot);
-    const QString launcher = cleanAbsolute(m_options.launcherPath);
     const QString version = result.value(QStringLiteral("version")).toString();
+    const QString versionPath = result.value(QStringLiteral("version_path")).toString();
 #ifdef Q_OS_WIN
     const QString nativePlatform = QStringLiteral("windows");
 #else
@@ -266,7 +378,9 @@ bool UpdateService::validateIdentity(const QJsonObject &result) const {
     QString nativeArchitecture = QSysInfo::currentCpuArchitecture();
     if (nativeArchitecture == QStringLiteral("amd64")) nativeArchitecture = QStringLiteral("x86_64");
     if (nativeArchitecture == QStringLiteral("aarch64")) nativeArchitecture = QStringLiteral("arm64");
-    if (root.isEmpty() || launcher.isEmpty() || version != m_options.packageVersion
+    if (root.isEmpty() || m_options.launcherPath.isEmpty() || version != m_options.packageVersion || versionPath.isEmpty()
+        || QDir::isAbsolutePath(versionPath) || versionPath.contains(QLatin1Char('\\')) || QDir::cleanPath(versionPath) != versionPath
+        || !versionPath.startsWith(QStringLiteral("versions/"))
         || version != QCoreApplication::applicationVersion() || result.value(QStringLiteral("platform")).toString() != nativePlatform
         || result.value(QStringLiteral("architecture")).toString() != nativeArchitecture
         || !result.value(QStringLiteral("trusted_identity")).toBool()) return false;
@@ -275,9 +389,16 @@ bool UpdateService::validateIdentity(const QJsonObject &result) const {
 #else
     const QString appName = QStringLiteral("headroom");
 #endif
-    const QString expectedApp = QDir(root).filePath(QStringLiteral("versions/%1/bin/%2").arg(version, appName));
+    const QString expectedApp = QDir(root).filePath(versionPath + QStringLiteral("/bin/") + appName);
     const QString runningApplication = m_options.applicationPath.isEmpty() ? QCoreApplication::applicationFilePath() : m_options.applicationPath;
-    if (QFileInfo(runningApplication).canonicalFilePath() != QFileInfo(expectedApp).canonicalFilePath()) return false;
+    return QFileInfo(runningApplication).canonicalFilePath() == QFileInfo(expectedApp).canonicalFilePath();
+}
+
+bool UpdateService::validateIdentity(const QJsonObject &result) const {
+    if (!validateInstalledApplicationIdentity(result)) return false;
+    if (m_options.fixtureIdentity) return true;
+    const QString root = cleanAbsolute(m_options.installRoot);
+    const QString launcher = cleanAbsolute(m_options.launcherPath);
     QFile association(launcher + QStringLiteral(".root"));
     if (!association.open(QIODevice::ReadOnly) || association.size() > 4096
         || QString::fromUtf8(association.readAll()) != QDir::toNativeSeparators(root) + QLatin1Char('\n')) return false;
@@ -291,8 +412,11 @@ bool UpdateService::validateIdentity(const QJsonObject &result) const {
 void UpdateService::handleInspection(const QJsonObject &result) {
     if (!validateIdentity(result)) {
         m_state = QStringLiteral("unavailable");
-        m_status = m_options.systemManaged ? QStringLiteral("This installation is managed by your system package manager.")
-                                           : QStringLiteral("This source installation is updated from its source checkout.");
+        m_status = m_options.systemManaged
+            ? QStringLiteral("This installation is managed by your system package manager.")
+            : validateInstalledApplicationIdentity(result)
+                ? QStringLiteral("The Headroom launcher is damaged. Rerun the official installer to repair this installation.")
+                : QStringLiteral("This source installation is updated from its source checkout.");
         emit changed(); return;
     }
     m_official = true; m_method = QStringLiteral("automatic");
@@ -302,13 +426,32 @@ void UpdateService::handleInspection(const QJsonObject &result) {
     for (const auto &item : missing) {
         const QString path = item.toString();
         if (path == QStringLiteral("bin/usage-server") || path == QStringLiteral("bin/usage-server.exe")
-            || path == QStringLiteral("bin/headroom-credential-helper.exe")) m_repairable = true;
+            || path == QStringLiteral("bin/headroom-credential-helper.exe") || path == QStringLiteral("bootstrap/headroom")
+            || path == QStringLiteral("bootstrap/headroom.exe") || path == QStringLiteral("bootstrap/headroom-package")
+            || path == QStringLiteral("bootstrap/headroom-package.exe") || path == QStringLiteral("bootstrap/association")) m_repairable = true;
     }
-    m_state = QStringLiteral("current");
-    m_status = m_repairable ? QStringLiteral("The bundled usage server needs repair.")
-                            : QStringLiteral("Headroom updates automatically after a startup check.");
+    if (result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("rolled_back")) {
+	    m_suppressAutomaticCheck = true;
+        m_state = QStringLiteral("failed");
+        m_status = QStringLiteral("The update could not start, so Headroom restored the previous installation. %1")
+                       .arg(result.value(QStringLiteral("apply_message")).toString());
+    } else if (result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("recovery_required")) {
+        m_suppressAutomaticCheck = true;
+        m_state = QStringLiteral("failed");
+        m_status = QStringLiteral("Headroom could not finish restoring the previous installation. Restart Headroom to retry recovery; if the problem remains, rerun the installer. %1")
+                       .arg(result.value(QStringLiteral("apply_message")).toString());
+    } else {
+        m_state = QStringLiteral("current");
+        m_status = result.value(QStringLiteral("apply_status")).toString() == QStringLiteral("applied")
+            ? QStringLiteral("Headroom updated successfully.")
+            : m_repairable ? QStringLiteral("The Headroom installation needs repair.")
+                           : QStringLiteral("Headroom updates automatically after a startup check.");
+    }
     emit changed();
-    if (m_autoPending) { m_autoPending = false; m_autoStage = true; run(Operation::Check, QStringLiteral("check-update")); }
+    if (m_autoPending) {
+        m_autoPending = false;
+        if (!m_suppressAutomaticCheck) { m_autoStage = true; run(Operation::Check, QStringLiteral("check-update")); }
+    }
 }
 
 void UpdateService::restoreAllowedState() {
@@ -322,7 +465,7 @@ void UpdateService::restoreAllowedState() {
             m_status = m_prePauseStatus;
         } else {
             m_state = QStringLiteral("current");
-            m_status = m_repairable ? QStringLiteral("The bundled usage server needs repair.")
+            m_status = m_repairable ? QStringLiteral("The Headroom installation needs repair.")
                                     : QStringLiteral("Headroom updates automatically after a startup check.");
         }
         m_prePauseState.clear(); m_prePauseStatus.clear();
@@ -395,7 +538,14 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
 void UpdateService::fail(const QString &message) {
     m_autoStage = false;
     m_verifiedStage = {};
-    m_state = QStringLiteral("failed"); m_status = message; emit changed();
+	m_state = QStringLiteral("failed"); m_status = message; emit changed(); applyDeferredTrafficState();
+}
+
+void UpdateService::applyDeferredTrafficState() {
+    if (!m_hasDeferredAllowed) return;
+    const bool desired = m_deferredAllowed;
+    m_hasDeferredAllowed = false;
+    setPublicTrafficAllowed(desired);
 }
 
 QString UpdateService::guidePath() const {

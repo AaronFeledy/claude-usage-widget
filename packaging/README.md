@@ -61,10 +61,16 @@ text.
   `verified-stage.json` beside `contents` records the same result. Failed
   validation removes its private stage.
 - `install` adds `--entry-path`, stages first, copies the complete bundle to
-  `versions/<VERSION>`, writes its manifest and atomic `install-state.json`,
-  and replaces the stable launcher only after validation. Installing the
-  active version again is the repair operation for a missing or corrupt
-  component.
+  a new immutable `versions/<VERSION>.generation-<manifest-prefix>-<random>`
+  directory, writes its manifest and atomic `install-state.json`, and replaces
+  the stable launcher only after validation. A private durable journal restores
+  the prior state and every stable entry after interruption. Installing the
+  active version again creates a separate generation, so external reinstall can
+  repair a missing or corrupt component without replacing loaded files. If a
+  prior recovery is blocked by a lost backup, a fully verified native reinstall
+  may supersede only the journal that owns the current state, after stopping its
+  exact recorded candidate; the old journal is retired only after the replacement
+  state is durably complete.
 - `check-update --install-root <path>` checks the public GitHub release metadata
   for a newer stable version of the exact native package. `stage-update` performs
   the same check, downloads the complete archive into a private directory,
@@ -78,13 +84,26 @@ text.
   are build-recipe commands. `create-package` verifies its resulting archive;
   `create-release` fully verifies all three input archives before writing the
   release JSON.
+- `prepare-apply` creates a private manager copy and a bounded request that pins
+  the prior state digest, verified stage, current application process identity,
+  and optional manager-owned server identity. The detached manager revalidates
+  them under the install lock before acknowledging. Qt validates the returned
+  transaction paths and acknowledgement, then writes a nonce-bound commit;
+  without that second commit the transaction expires without changing the
+  running installation. `apply` waits for the exact old processes, activates a
+  new generation, and accepts readiness only from the expected executable,
+  PID, nonce, and compiled package version. `recover` stops an exact recorded
+  candidate before restoring an interrupted transaction. Apply outcomes are
+  persisted for the reopened UI as `applied`, `rolled_back`, or
+  `recovery_required`.
 
 The stable launcher is `headroom.exe` at the Windows install root and
 `headroom-launcher` at the Linux install root, copied to the user-facing Linux
 entry path. Each launcher has an adjacent mode-0600 `<launcher>.root` file
 containing one absolute clean install-root path. This association makes custom
 roots work without environment variables. The launcher verifies
-`install-state.json`, its canonical `versions/<VERSION>` path, manifest digest,
+`install-state.json`, its canonical legacy `versions/<VERSION>` or immutable
+generation path, manifest digest,
 application and required runtime files before starting the Qt executable. A
 missing `usage-server` or Windows credential helper keeps the verified package
 identity trusted and permits the UI to open so a matching-version repair can
@@ -92,6 +111,14 @@ run; a missing or corrupt desktop/runtime blocks launch. It passes
 `HEADROOM_INSTALL_ROOT`, `HEADROOM_LAUNCHER_PATH`, and
 `HEADROOM_PACKAGE_VERSION` to Qt. `StartupService` registers that stable path,
 so version changes do not rewrite login configuration.
+
+Restart-to-apply keeps ordinary launch arguments and runtime configuration,
+overrides stale `HEADROOM_*` metadata with the exact active generation, and
+adds a private restart flag so a tray-started application reopens its popup.
+Provider connectivity is not part of readiness. Qt reaches readiness after
+configuration, primary-instance IPC, and the QML root are initialized. Only a
+manager-owned bundled server is awaited during handoff; an attached local
+server and remote service are never stopped by the package manager.
 
 ## Release JSON
 

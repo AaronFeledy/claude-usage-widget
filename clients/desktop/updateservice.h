@@ -5,6 +5,7 @@
 #include <QProcess>
 #include <QJsonObject>
 #include <QTimer>
+#include <functional>
 
 struct UpdateServiceOptions {
     QString managerPath;
@@ -24,6 +25,7 @@ class UpdateService : public QObject {
     Q_PROPERTY(QString statusText READ statusText NOTIFY changed)
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY changed)
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
+    Q_PROPERTY(bool canCancel READ canCancel NOTIFY changed)
     Q_PROPERTY(bool canCheck READ canCheck NOTIFY changed)
     Q_PROPERTY(bool canStage READ canStage NOTIFY changed)
     Q_PROPERTY(bool canRepair READ canRepair NOTIFY changed)
@@ -36,6 +38,7 @@ public:
     QString statusText() const { return m_status; }
     QString latestVersion() const { return m_latestVersion; }
     bool busy() const { return m_process; }
+    bool canCancel() const { return m_process && m_operation != Operation::Apply; }
     bool canCheck() const { return m_allowed && m_official && !busy(); }
     bool canStage() const { return m_allowed && m_state == QStringLiteral("available") && !busy(); }
     bool canRepair() const { return m_allowed && m_repairable && !busy(); }
@@ -45,22 +48,29 @@ public:
     Q_INVOKABLE void checkForUpdates();
     Q_INVOKABLE void stageUpdate();
     Q_INVOKABLE void repairInstallation();
+    Q_INVOKABLE void restartToApply();
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void openUpdateMethod();
     void startAutomaticCheck();
     void setPublicTrafficAllowed(bool allowed);
+    void setOwnedProcessProvider(std::function<QPair<qint64, QString>()> provider) { m_ownedProcessProvider = std::move(provider); }
+    void setRelaunchArguments(QStringList arguments) { m_relaunchArguments = std::move(arguments); }
 signals:
     void changed();
+    void applyPrepared();
 private:
-    enum class Operation { None, Inspect, Check, Stage, Repair };
+    enum class Operation { None, Inspect, Check, Stage, Repair, Apply };
     void inspectInstallation();
-    void run(Operation operation, const QString &command);
+    void run(Operation operation, const QString &command, const QStringList &explicitArguments = {});
     void finish(Operation operation, int exitCode, QProcess::ExitStatus exitStatus);
     void fail(const QString &message);
+    bool validateInstalledApplicationIdentity(const QJsonObject &result) const;
     bool validateIdentity(const QJsonObject &result) const;
+    bool authorizePreparedApply(const QJsonObject &result) const;
     void handleInspection(const QJsonObject &result);
     void handleUpdateResult(Operation operation, const QJsonObject &result);
     void restoreAllowedState();
+    void applyDeferredTrafficState();
     QString guidePath() const;
     UpdateServiceOptions m_options;
     QPointer<QProcess> m_process;
@@ -86,5 +96,10 @@ private:
     bool m_timedOut = false;
     bool m_autoStarted = false;
     bool m_resumeAfterCancel = false;
+    bool m_suppressAutomaticCheck = false;
+    bool m_hasDeferredAllowed = false;
+    bool m_deferredAllowed = true;
+    std::function<QPair<qint64, QString>()> m_ownedProcessProvider;
+    QStringList m_relaunchArguments;
     Operation m_operation = Operation::None;
 };

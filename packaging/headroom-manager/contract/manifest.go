@@ -376,13 +376,13 @@ func ValidateManifest(m PackageManifest) error {
 		}
 	}
 	if m.Platform == "windows" {
-		for _, name := range []string{"bundle/bin/msvcp140.dll", "bundle/bin/vcruntime140.dll", "bundle/plugins/platforms/qwindows.dll", "bundle/plugins/platforms/qoffscreen.dll", "bundle/plugins/tls/qschannelbackend.dll", "bundle/plugins/imageformats/qsvg.dll", "bundle/plugins/iconengines/qsvgicon.dll", "bundle/qml/QtQuick/Controls/Basic/qmldir"} {
+		for _, name := range []string{"bundle/bin/headroom-package.exe", "bundle/bin/msvcp140.dll", "bundle/bin/vcruntime140.dll", "bundle/plugins/platforms/qwindows.dll", "bundle/plugins/platforms/qoffscreen.dll", "bundle/plugins/tls/qschannelbackend.dll", "bundle/plugins/imageformats/qsvg.dll", "bundle/plugins/iconengines/qsvgicon.dll", "bundle/qml/QtQuick/Controls/Basic/qmldir"} {
 			if !seen[name] {
 				return fmt.Errorf("required Windows runtime file missing: %s", name)
 			}
 		}
 	} else {
-		for _, name := range []string{"bundle/plugins/platforms/libqxcb.so", "bundle/plugins/platforms/libqoffscreen.so", "bundle/plugins/tls/libqopensslbackend.so", "bundle/plugins/imageformats/libqsvg.so", "bundle/plugins/iconengines/libqsvgicon.so", "bundle/qml/QtQuick/Controls/Basic/qmldir"} {
+		for _, name := range []string{"bundle/bin/headroom-package", "bundle/plugins/platforms/libqxcb.so", "bundle/plugins/platforms/libqoffscreen.so", "bundle/plugins/tls/libqopensslbackend.so", "bundle/plugins/imageformats/libqsvg.so", "bundle/plugins/iconengines/libqsvgicon.so", "bundle/qml/QtQuick/Controls/Basic/qmldir"} {
 			if !seen[name] {
 				return fmt.Errorf("required Linux runtime file missing: %s", name)
 			}
@@ -394,6 +394,9 @@ func ValidateManifest(m PackageManifest) error {
 			if record, ok := fileRecord(m.Files, component.Path); !ok || record.Mode != "0755" {
 				return fmt.Errorf("package executable mode must be 0755: %s", component.Path)
 			}
+		}
+		if record, ok := fileRecord(m.Files, "bundle/bin/headroom-package"); !ok || record.Mode != "0755" {
+			return errors.New("package runtime manager mode must be 0755")
 		}
 	}
 	return nil

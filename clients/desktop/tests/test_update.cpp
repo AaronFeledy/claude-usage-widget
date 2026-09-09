@@ -27,10 +27,12 @@ private slots:
     void initTestCase() { QVERIFY(m_dir.isValid()); m_record = m_dir.filePath(QStringLiteral("record")); QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0")); }
     void init() {
         QFile::remove(m_record);
+        QDir(m_dir.filePath(QStringLiteral("transactions"))).removeRecursively();
+        QDir(m_dir.filePath(QStringLiteral("staging"))).removeRecursively();
         qputenv("HEADROOM_UPDATE_FIXTURE_RECORD", m_record.toUtf8());
-        qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE");
+		qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS");
     }
-    void cleanup() { qunsetenv("HEADROOM_UPDATE_FIXTURE_RECORD"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("USAGE_AUTH_TOKEN"); }
+	void cleanup() { qunsetenv("HEADROOM_UPDATE_FIXTURE_RECORD"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS"); qunsetenv("USAGE_AUTH_TOKEN"); }
     void sourceAndIsolatedModesNeverStartManager() {
         UpdateServiceOptions source;
         source.managerPath = QStringLiteral(UPDATE_FIXTURE_PATH);
@@ -66,6 +68,25 @@ private slots:
         value.applicationPath = QDir::toNativeSeparators(application); value.fixtureIdentity = false;
         UpdateService service(true, value);
         QTRY_COMPARE(service.state(), QStringLiteral("current")); QCOMPARE(service.updateMethod(), QStringLiteral("automatic"));
+    }
+    void damagedOfficialLauncherRequestsExternalInstallerRepair() {
+        const QString root = m_dir.filePath(QStringLiteral("damaged official identity"));
+#ifdef Q_OS_WIN
+        const QString appName = QStringLiteral("headroom.exe");
+        const QString external = m_dir.filePath(QStringLiteral("damaged entry.exe"));
+#else
+        const QString appName = QStringLiteral("headroom");
+        const QString external = m_dir.filePath(QStringLiteral("damaged entry"));
+#endif
+        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/bin/") + appName);
+        QVERIFY(QDir().mkpath(QFileInfo(application).absolutePath()));
+        QFile app(application); QVERIFY(app.open(QIODevice::WriteOnly)); QVERIFY(app.write("application") > 0); app.close();
+        auto value = options(); value.installRoot = QDir::toNativeSeparators(root); value.launcherPath = QDir::toNativeSeparators(external);
+        value.applicationPath = QDir::toNativeSeparators(application); value.fixtureIdentity = false;
+        UpdateService service(true, value);
+        QTRY_COMPARE(service.state(), QStringLiteral("unavailable"));
+        QVERIFY(service.statusText().contains(QStringLiteral("official installer")));
+        QVERIFY(!service.canRepair());
     }
     void manualCheckAndStageUseExplicitStatesAndNoBearerEnvironment() {
         qputenv("USAGE_AUTH_TOKEN", "must-not-reach-public-updater");
@@ -112,6 +133,11 @@ private slots:
         service.repairInstallation(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
         QCOMPARE(service.latestVersion(), QStringLiteral("0.1.0")); QVERIFY(record().contains("stage-repair"));
     }
+    void bootstrapDamageIsRepairableForVerifiedIdentity() {
+        qputenv("HEADROOM_UPDATE_FIXTURE_MISSING", "bootstrap/headroom-package");
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canRepair()); QVERIFY(service.statusText().contains(QStringLiteral("installation needs repair")));
+    }
     void cancellationNeverAdvertisesRestart() {
         UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));
         qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "hang");
@@ -138,6 +164,66 @@ private slots:
         service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
         qputenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE", "1"); service.stageUpdate();
         QTRY_COMPARE(service.state(), QStringLiteral("failed")); QVERIFY(!service.restartAvailable()); QVERIFY(service.verifiedStage().isEmpty());
+    }
+    void restartRequiresValidatedCommitAndCannotBeCancelled() {
+        UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        service.setRelaunchArguments({QStringLiteral("--background")});
+        service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
+        service.stageUpdate(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.restartToApply();
+		QVERIFY(service.busy()); QVERIFY(!service.canCancel());
+        service.cancel(); service.setPublicTrafficAllowed(false);
+		QTRY_VERIFY2(prepared.count() == 1, qPrintable(service.statusText()));
+        QCOMPARE(service.state(), QStringLiteral("applying"));
+        const QString commit = m_dir.filePath(QStringLiteral("transactions/apply-0123456789abcdef0123456789abcdef/commit.json"));
+        QFile commitFile(commit); QVERIFY(commitFile.open(QIODevice::ReadOnly));
+        const auto committed = QJsonDocument::fromJson(commitFile.readAll()).object();
+        QVERIFY(committed.value(QStringLiteral("commit")).toBool());
+        QCOMPARE(committed.value(QStringLiteral("nonce")).toString(), QString(48, QLatin1Char('a')));
+        QVERIFY(record().contains("--relaunch-arg|--background"));
+    }
+    void mismatchedPreparedApplyDoesNotCommitOrClose() {
+        UpdateService service(true, options()); QTRY_COMPARE(service.state(), QStringLiteral("current"));
+        service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
+        service.stageUpdate(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "mismatched-prepare");
+        service.restartToApply();
+        QTRY_COMPARE(service.state(), QStringLiteral("failed"));
+        QCOMPARE(prepared.count(), 0);
+        const QString commit = m_dir.filePath(QStringLiteral("transactions/apply-0123456789abcdef0123456789abcdef/commit.json"));
+        QVERIFY(!QFileInfo::exists(commit));
+    }
+    void rollbackOutcomeSuppressesAutomaticRestageUntilManualCheck() {
+        qputenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS", "rolled_back");
+        UpdateService service(true, options()); service.startAutomaticCheck(); QTRY_COMPARE(service.state(), QStringLiteral("failed"));
+        QVERIFY(service.statusText().contains(QStringLiteral("restored")));
+        QTest::qWait(100);
+        QCOMPARE(record().count("check-update"), 0);
+        service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
+        QCOMPARE(record().count("check-update"), 1);
+    }
+    void recoveryRequiredSuppressesAutomaticRestage() {
+        qputenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS", "recovery_required");
+        UpdateService service(true, options()); service.startAutomaticCheck();
+        QTRY_COMPARE(service.state(), QStringLiteral("failed"));
+        QVERIFY(service.statusText().contains(QStringLiteral("retry recovery")));
+        QTest::qWait(100); QCOMPARE(record().count("check-update"), 0);
+    }
+    void failedApplyPreparationAppliesDeferredPreviewState() {
+        auto value = options(); value.timeoutMs = 1000;
+        for (const auto &mode : {QByteArray("malformed"), QByteArray("hang")}) {
+            qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE");
+            UpdateService service(true, value); QTRY_COMPARE(service.state(), QStringLiteral("current"));
+            service.checkForUpdates(); QTRY_COMPARE(service.state(), QStringLiteral("available"));
+            service.stageUpdate(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
+            qputenv("HEADROOM_UPDATE_FIXTURE_MODE", mode);
+            service.restartToApply(); QVERIFY(service.busy()); QVERIFY(!service.canCancel());
+            service.setPublicTrafficAllowed(false);
+            QTRY_COMPARE(service.state(), QStringLiteral("unavailable"));
+            QVERIFY(!service.canCheck()); QVERIFY(service.statusText().contains(QStringLiteral("paused")));
+        }
     }
 };
 
