@@ -41,6 +41,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test WSL request safety with isolated HTTP fixtures
         run: python3 -m unittest discover -s server/deploy/wsl -p 'test_*.py'
+      - name: Test installer streaming download bounds without network
+        run: bash packaging/tests/test-install-download.sh
       - name: Install Qt runtime build dependencies
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-x11-0
       - uses: jurplel/install-qt-action@v4.3.0
@@ -130,7 +132,7 @@ jobs:
       - uses: actions/setup-go@v6
         with: { go-version: '1.25.x' }
       - name: Install package build dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libwayland-dev libxkbcommon-x11-0
+        run: sudo apt-get update && sudo apt-get install -y ninja-build patchelf libgl1-mesa-dev libwayland-dev libxkbcommon-x11-0
       - uses: jurplel/install-qt-action@v4.3.0
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}

@@ -382,12 +382,12 @@ func ValidateManifest(m PackageManifest) error {
 			}
 		}
 	} else {
-		for _, name := range []string{"bundle/lib/qt6/plugins/platforms/libqxcb.so", "bundle/lib/qt6/plugins/platforms/libqoffscreen.so", "bundle/lib/qt6/plugins/tls/libqopensslbackend.so", "bundle/lib/qt6/plugins/imageformats/libqsvg.so", "bundle/lib/qt6/plugins/iconengines/libqsvgicon.so", "bundle/lib/qt6/qml/QtQuick/Controls/Basic/qmldir"} {
+		for _, name := range []string{"bundle/plugins/platforms/libqxcb.so", "bundle/plugins/platforms/libqoffscreen.so", "bundle/plugins/tls/libqopensslbackend.so", "bundle/plugins/imageformats/libqsvg.so", "bundle/plugins/iconengines/libqsvgicon.so", "bundle/qml/QtQuick/Controls/Basic/qmldir"} {
 			if !seen[name] {
 				return fmt.Errorf("required Linux runtime file missing: %s", name)
 			}
 		}
-		if !seen["bundle/lib/qt6/plugins/platforms/libqwayland-generic.so"] && !seen["bundle/lib/qt6/plugins/platforms/libqwayland.so"] {
+		if !seen["bundle/plugins/platforms/libqwayland-generic.so"] && !seen["bundle/plugins/platforms/libqwayland.so"] {
 			return errors.New("required Linux Wayland platform plugin is missing")
 		}
 		for _, component := range []Component{m.Components.Application, m.Components.Server, m.Components.Launcher, m.Components.Manager} {

@@ -40,7 +40,7 @@ Copy-Item LICENSE (Join-Path $packageRoot 'bundle/share/licenses/headroom/LICENS
 $trackedQtLicenses = @(Get-ChildItem -LiteralPath 'packaging/licenses/qt' -File)
 if ($trackedQtLicenses.Count -lt 5) { throw 'Required Qt license texts are missing.' }
 $trackedQtLicenses | Copy-Item -Destination (Join-Path $packageRoot 'bundle/share/licenses/qt')
-$qtLicenses = @(Get-ChildItem $QtRoot -Recurse -Depth 3 -File -Include 'LICENSE*','*NOTICE*')
+$qtLicenses = @(@((Join-Path $QtRoot 'LICENSES'), (Join-Path $QtRoot 'licenses')) | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File })
 foreach ($license in $qtLicenses) {
     $relative = $license.FullName.Substring($QtRoot.TrimEnd('\','/').Length).TrimStart('\','/')
     $destination = Join-Path $packageRoot "bundle/share/licenses/qt/$relative"
@@ -51,8 +51,8 @@ foreach ($license in $qtLicenses) {
 if (!(Test-Path -LiteralPath $ProjectAssets -PathType Leaf)) { throw "Credential helper project.assets.json not found: $ProjectAssets" }
 $assets = Get-Content -LiteralPath $ProjectAssets -Raw | ConvertFrom-Json
 $packageRoots = @($assets.packageFolders.PSObject.Properties.Name)
-if ($packageRoots.Count -ne 1 -or !(Test-Path -LiteralPath $packageRoots[0] -PathType Container)) { throw 'Expected one resolved NuGet package root.' }
-$packageCache = $packageRoots[0]
+$packageRoots = @($packageRoots | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+if ($packageRoots.Count -eq 0) { throw 'No resolved NuGet package root is available.' }
 $resolvedPackages = @($assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -ceq 'package' } | ForEach-Object { $_.Name })
 $framework = @($assets.project.frameworks.PSObject.Properties.Value)
 if ($framework.Count -ne 1) { throw 'Expected one credential-helper target framework.' }
@@ -68,8 +68,9 @@ foreach ($package in $inventoryPackages) {
     if ($separator -le 0) { throw "Invalid resolved NuGet package key: $package" }
     $packageName = $package.Substring(0, $separator).ToLowerInvariant()
     $packageVersion = $package.Substring($separator + 1).ToLowerInvariant()
-    $sourceRoot = Join-Path $packageCache "$packageName/$packageVersion"
-    if (!(Test-Path -LiteralPath $sourceRoot -PathType Container)) { throw "Resolved NuGet package is missing: $package" }
+    $sourceRoot = @($packageRoots | ForEach-Object { Join-Path $_ "$packageName/$packageVersion" } | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1)
+    if ($sourceRoot.Count -ne 1) { throw "Resolved NuGet package is missing: $package" }
+    $sourceRoot = $sourceRoot[0]
     $destinationRoot = Join-Path $packageRoot "bundle/share/licenses/nuget/$packageName/$packageVersion"
     New-Item -ItemType Directory -Force $destinationRoot | Out-Null
     $nuspecs = @(Get-ChildItem -LiteralPath $sourceRoot -File -Filter '*.nuspec')

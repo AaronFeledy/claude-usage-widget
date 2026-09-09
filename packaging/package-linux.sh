@@ -22,6 +22,18 @@ package_root="${work_dir}/Headroom-v${version}-linux-x86_64"
 rm -rf -- "$package_root"
 mkdir -p -- "$package_root/bundle" "$package_root/bootstrap" "$output_dir"
 cmake --install "$build_dir" --prefix "$package_root/bundle"
+for directory in plugins qml; do
+  if [[ ! -d "$package_root/bundle/$directory" && -d "$package_root/bundle/lib/qt6/$directory" ]]; then
+    mv -- "$package_root/bundle/lib/qt6/$directory" "$package_root/bundle/$directory"
+  fi
+  [[ -d "$package_root/bundle/$directory" ]] || { echo "deployed Qt $directory directory is missing" >&2; exit 1; }
+done
+cat > "$package_root/bundle/bin/qt.conf" <<'EOF'
+[Paths]
+Prefix = ..
+Plugins = plugins
+QmlImports = qml
+EOF
 copy_platform_plugin() {
   local filename=$1
   local source=
@@ -29,8 +41,8 @@ copy_platform_plugin() {
     if [[ -f "$candidate" ]]; then source=$candidate; break; fi
   done
   [[ -n "$source" ]] || { echo "Qt platform plugin $filename was not found under $qt_root" >&2; exit 1; }
-  install -Dm0755 "$source" "$package_root/bundle/lib/qt6/plugins/platforms/$filename"
-  patchelf --set-rpath '$ORIGIN/../../../' "$package_root/bundle/lib/qt6/plugins/platforms/$filename"
+  install -Dm0755 "$source" "$package_root/bundle/plugins/platforms/$filename"
+  patchelf --set-rpath '$ORIGIN/../../lib' "$package_root/bundle/plugins/platforms/$filename"
 }
 copy_platform_plugin libqxcb.so
 copy_platform_plugin libqoffscreen.so
@@ -47,7 +59,7 @@ install -m 0644 packaging/THIRD_PARTY_NOTICES.txt "$package_root/bundle/share/he
 install -Dm0644 LICENSE "$package_root/bundle/share/licenses/headroom/LICENSE"
 mkdir -p "$package_root/bundle/share/licenses/qt" "$package_root/bundle/share/licenses/go/runtime" "$package_root/bundle/share/licenses/go/protobuf" "$package_root/bundle/share/licenses/go/yaml" "$package_root/bundle/share/licenses/openssl"
 find packaging/licenses/qt -maxdepth 1 -type f -exec install -Dm0644 '{}' "$package_root/bundle/share/licenses/qt/" \;
-mapfile -d '' qt_licenses < <(find "$qt_root" -maxdepth 3 -type f \( -name 'LICENSE*' -o -name '*NOTICE*' \) -print0)
+mapfile -d '' qt_licenses < <(find "$qt_root/LICENSES" "$qt_root/licenses" -type f \( -name 'LICENSE*' -o -name '*NOTICE*' -o -name '*.txt' \) -print0 2>/dev/null || true)
 for license in "${qt_licenses[@]}"; do relative=${license#"$qt_root"/}; install -Dm0644 "$license" "$package_root/bundle/share/licenses/qt/$relative"; done
 [[ -s "$package_root/bundle/share/licenses/qt/LGPL-3.0-only.txt" && -s "$package_root/bundle/share/licenses/qt/Qt-GPL-exception-1.0.txt" ]] || { echo 'required Qt license texts are missing' >&2; exit 1; }
 install -m 0644 "$(go env GOROOT)/LICENSE" "$package_root/bundle/share/licenses/go/runtime/LICENSE"
@@ -62,6 +74,10 @@ done
 [[ -n "$openssl_license" ]] || { echo 'OpenSSL license inventory not found' >&2; exit 1; }
 install -m 0644 "$openssl_license" "$package_root/bundle/share/licenses/openssl/$(basename "$openssl_license")"
 "$manager" materialize-links --root "$package_root"
+while IFS= read -r -d '' library; do
+  relative_lib=$(realpath --relative-to="$(dirname "$library")" "$package_root/bundle/lib")
+  patchelf --set-rpath "\$ORIGIN/$relative_lib" "$library"
+done < <(find "$package_root/bundle/plugins" "$package_root/bundle/qml" -type f -name '*.so*' -print0)
 env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
   "$manager" create-package --root "$package_root" --output "$output_dir/$asset" \
     --version "$version" --platform linux --arch x86_64 --qt-version 6.8.3 \

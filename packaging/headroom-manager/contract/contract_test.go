@@ -84,7 +84,7 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	if err != nil || filepath.Base(executable) != "headroom"+nativeExtension() {
 		t.Fatalf("desktop should remain launchable: %q %v", executable, err)
 	}
-	runtimePath := "lib/qt6/plugins/platforms/libqoffscreen.so"
+	runtimePath := "plugins/platforms/libqoffscreen.so"
 	if runtime.GOOS == "windows" {
 		runtimePath = "plugins/platforms/qoffscreen.dll"
 	}
@@ -275,7 +275,7 @@ func TestManifestRejectsMissingRuntimeCaseCollisionAndUnsafeMode(t *testing.T) {
 	}
 	required := "bundle/qml/QtQuick/Controls/Basic/qmldir"
 	if manifest.Platform == "linux" {
-		required = "bundle/lib/qt6/qml/QtQuick/Controls/Basic/qmldir"
+		required = "bundle/qml/QtQuick/Controls/Basic/qmldir"
 	}
 	missing := manifest
 	missing.Files = removeFileRecord(missing.Files, required)
@@ -402,7 +402,7 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 	if platform == "windows" {
 		runtimeFiles = append(runtimeFiles, "bundle/bin/msvcp140.dll", "bundle/bin/vcruntime140.dll", "bundle/plugins/platforms/qwindows.dll", "bundle/plugins/platforms/qoffscreen.dll", "bundle/plugins/tls/qschannelbackend.dll", "bundle/plugins/imageformats/qsvg.dll", "bundle/plugins/iconengines/qsvgicon.dll")
 	} else {
-		runtimeFiles = []string{"bundle/lib/qt6/qml/QtQuick/Controls/Basic/qmldir", "bundle/lib/qt6/plugins/platforms/libqxcb.so", "bundle/lib/qt6/plugins/platforms/libqwayland-generic.so", "bundle/lib/qt6/plugins/platforms/libqoffscreen.so", "bundle/lib/qt6/plugins/tls/libqopensslbackend.so", "bundle/lib/qt6/plugins/imageformats/libqsvg.so", "bundle/lib/qt6/plugins/iconengines/libqsvgicon.so"}
+		runtimeFiles = []string{"bundle/qml/QtQuick/Controls/Basic/qmldir", "bundle/plugins/platforms/libqxcb.so", "bundle/plugins/platforms/libqwayland-generic.so", "bundle/plugins/platforms/libqoffscreen.so", "bundle/plugins/tls/libqopensslbackend.so", "bundle/plugins/imageformats/libqsvg.so", "bundle/plugins/iconengines/libqsvgicon.so"}
 	}
 	for _, name := range runtimeFiles {
 		full := filepath.Join(root, filepath.FromSlash(name))

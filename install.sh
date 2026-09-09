@@ -40,8 +40,11 @@ download() {
   current=$1
   destination=$2
   maximum=${3:-8388608}
+  timeout_seconds=${4:-600}
   response=$private_root/download-response
   headers=$private_root/download-headers
+  curl_exit_file=$private_root/curl-exit
+  deadline=$(( $(date +%s) + timeout_seconds ))
   redirects=0
   while [ "$redirects" -le 5 ]; do
     python3 - "$current" <<'PY'
@@ -51,8 +54,56 @@ allowed = {'api.github.com', 'github.com', 'objects.githubusercontent.com', 'rel
 if u.scheme != 'https' or u.username or u.password or u.port not in (None,443) or (u.hostname or '').lower() not in allowed:
     raise SystemExit('refusing untrusted download URL: ' + sys.argv[1])
 PY
-    status=$(curl --silent --show-error --proto '=https' --connect-timeout 20 --max-time 600 --max-filesize "$maximum" \
-      --user-agent Headroom-Installer --dump-header "$headers" --output "$response" --write-out '%{http_code}' "$current")
+    now=$(date +%s)
+    remaining=$((deadline - now))
+    [ "$remaining" -gt 0 ] || { echo 'download deadline exceeded' >&2; return 1; }
+    connect_timeout=$remaining
+    [ "$connect_timeout" -le 20 ] || connect_timeout=20
+    rm -f -- "$response" "$headers" "$curl_exit_file"
+    if (
+      set +e
+      curl --silent --show-error --proto '=https' --connect-timeout "$connect_timeout" --max-time "$remaining" \
+        --user-agent Headroom-Installer --dump-header "$headers" --output - "$current"
+      printf '%s\n' "$?" > "$curl_exit_file"
+    ) | python3 -c '
+import os, sys
+destination, maximum = sys.argv[1], int(sys.argv[2])
+written = 0
+try:
+    with open(destination, "xb") as output:
+        while True:
+            chunk = sys.stdin.buffer.read(min(65536, maximum - written + 1))
+            if not chunk:
+                break
+            allowed = maximum - written
+            if len(chunk) > allowed:
+                if allowed:
+                    output.write(chunk[:allowed])
+                    written += allowed
+                raise SystemExit(3)
+            output.write(chunk)
+            written += len(chunk)
+except BaseException:
+    try: os.remove(destination)
+    except FileNotFoundError: pass
+    raise
+' "$response" "$maximum"; then
+      stream_status=0
+    else
+      stream_status=$?
+    fi
+    curl_status=$(cat "$curl_exit_file" 2>/dev/null || printf '1')
+    if [ "$stream_status" -ne 0 ]; then
+      rm -f -- "$response"
+      echo "download exceeds the $maximum byte limit" >&2
+      return 1
+    fi
+    if [ "$curl_status" -ne 0 ]; then
+      rm -f -- "$response"
+      echo "download failed with curl exit $curl_status" >&2
+      return 1
+    fi
+    status=$(awk 'toupper($1) ~ /^HTTP\// { code=$2 } END { print code }' "$headers")
     case "$status" in
       200) mv -- "$response" "$destination"; return ;;
       301|302|303|307|308)
@@ -71,6 +122,10 @@ PY
   echo 'too many download redirects' >&2
   exit 1
 }
+
+if [ "${HEADROOM_INSTALLER_SOURCE_ONLY:-0}" -eq 1 ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 if [ -n "$package_path" ]; then
   [ "$(wc -c < "$manifest_path")" -le 4194304 ] || { echo 'release manifest is too large' >&2; exit 1; }

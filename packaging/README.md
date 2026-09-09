@@ -20,7 +20,9 @@ manifest lists the size and SHA-256 digest of every regular payload file.
 
 The bundle keeps `headroom`, `usage-server`, and the Windows-only
 `headroom-credential-helper.exe` adjacent under `bundle/bin`. Qt libraries,
-plugins and QML imports live in the relative paths recorded by `qt.conf`.
+plugins and QML imports live under `bundle/lib`, `bundle/plugins`, and
+`bundle/qml`; `bundle/bin/qt.conf` records those relative roots consistently
+across Qt deployment-tool versions.
 `QtQuick.Controls.Basic` is an explicit deployed dependency. Notices and exact
 license texts are under `bundle/share` and are part of the hash inventory.
 
