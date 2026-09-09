@@ -25,7 +25,8 @@ int main(int argc, char **argv)
     const auto recordPath = qEnvironmentVariable("HEADROOM_FIXTURE_RECORD");
     if (!recordPath.isEmpty()) {
         QFile record(recordPath);
-        if (record.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        // Keep fixture assertions identical on Windows and Unix.
+        if (record.open(QIODevice::WriteOnly | QIODevice::Append)) {
             QTextStream stream(&record);
             stream << "start\nargs=" << arguments.mid(1).join('|') << "\n"
                    << "token_present=" << (!qEnvironmentVariable("USAGE_AUTH_TOKEN").isEmpty() ? "yes" : "no") << "\n"
