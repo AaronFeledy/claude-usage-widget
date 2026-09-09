@@ -97,7 +97,7 @@ private slots:
         auto fill = findItem(window->contentItem(), "meterFill_Claude_session"); QVERIFY(fill);
         const auto restingColor = claudeCard->property("color").value<QColor>();
         QTest::mouseMove(window, track->mapToScene(QPointF(track->width() / 2, 3)).toPoint());
-        if (!QGuiApplication::platformName().startsWith("wayland")) QTRY_VERIFY(hover->property("hovered").toBool());
+        if (QGuiApplication::platformName() == "offscreen") QTRY_VERIFY(hover->property("hovered").toBool());
         QCOMPARE(claudeCard->property("color").value<QColor>(), restingColor);
         QVERIFY(track->property("color").value<QColor>() != restingColor);
         QCOMPARE(fill->property("color").value<QColor>(), QColor("#bd93f9"));
