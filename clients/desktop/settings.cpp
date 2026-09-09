@@ -153,6 +153,7 @@ bool SettingsService::loadHeadroom()
     }
     QJsonParseError parseError;
     const QByteArray original = file.readAll();
+    file.close(); // Windows cannot atomically replace a file with an open read handle.
     const auto document = QJsonDocument::fromJson(original, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
         m_loadError = "Settings file is malformed and was not changed.";
@@ -307,7 +308,6 @@ QString SettingsService::save(const DesktopSettings &settings, bool explicitUser
     normalized.interval = qBound(15, normalized.interval, 900);
     normalized.order = normalizeOrder(normalized.order, normalized.primary);
     normalized.primary = normalized.order.first();
-    if (explicitUserSave && m_blockImplicitWrites) m_document = {};
     const QString error = write(normalized);
     if (error.isEmpty()) {
         m_value = normalized;

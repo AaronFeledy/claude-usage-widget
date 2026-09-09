@@ -56,8 +56,10 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
             delete m_lock; m_lock = nullptr;
             return Result::Error;
         }
-        socket.write("activate\n");
-        if (!socket.waitForBytesWritten(timeoutMilliseconds)) {
+        const QByteArray message = "activate\n";
+        if (socket.write(message) != message.size() ||
+            (socket.bytesToWrite() > 0 && !socket.waitForBytesWritten(timeoutMilliseconds) &&
+             socket.bytesToWrite() > 0)) {
             m_error = "The running Headroom instance did not accept the activation request.";
             delete m_lock; m_lock = nullptr;
             return Result::Error;

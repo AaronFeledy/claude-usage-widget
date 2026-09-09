@@ -29,7 +29,8 @@ private slots:
         const QString path = dir.filePath("settings.json");
         InstanceService primary(path); QVERIFY2(primary.start() == InstanceService::Result::Primary, qPrintable(primary.error()));
         QSignalSpy activated(&primary, &InstanceService::activationRequested);
-        InstanceService secondary(path); QCOMPARE(secondary.start(), InstanceService::Result::Secondary);
+        InstanceService secondary(path);
+        QVERIFY2(secondary.start() == InstanceService::Result::Secondary, qPrintable(secondary.error()));
         QTRY_COMPARE(activated.size(), 1);
     }
 
@@ -41,8 +42,13 @@ private slots:
         QSignalSpy activated(&primary, &InstanceService::activationRequested);
         QLocalSocket socket; socket.connectToServer(primary.scopeName());
         QVERIFY(socket.waitForConnected(1000));
-        socket.write("acti"); QVERIFY(socket.waitForBytesWritten(1000)); QTest::qWait(10);
-        socket.write("vate\n"); QVERIFY(socket.waitForBytesWritten(1000));
+        const auto write = [&](const QByteArray &data) {
+            QCOMPARE(socket.write(data), data.size());
+            QVERIFY(socket.bytesToWrite() == 0 || socket.waitForBytesWritten(1000) || socket.bytesToWrite() == 0);
+            QCOMPARE(socket.bytesToWrite(), 0);
+        };
+        write("acti"); QTest::qWait(10);
+        write("vate\n");
         QTRY_COMPARE(activated.size(), 1);
     }
 };
