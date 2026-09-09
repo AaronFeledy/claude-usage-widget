@@ -28,8 +28,9 @@ the WSL sync helper; users can select Local mode when an adjacent server exists.
 
 Headroom keeps the first provider selected even when its data fails and renders
 an unknown tray meter. The legacy client could fall back to another successful
-provider. Headroom's tray uses the selected provider's first API bucket; the
-legacy tray used the compatibility `current` field.
+provider. Headroom's tray uses the selected provider's first measurable API
+bucket; status-only buckets remain visible in the popup but do not drive the
+tray. The legacy tray used the compatibility `current` field.
 
 The centered provider badge is surrounded by the primary usage ring. A cyan tick
 marks expected spend and a secondary dot carries the highest warning among the
@@ -66,10 +67,13 @@ MSVC runtime, and Start menu shortcut. Linux x86_64 packages target the Ubuntu
 22.04 desktop ABI, include X11/Wayland Qt plugins, and add an XDG application
 entry. Source and system-managed builds do not use public self-update traffic.
 
-Rerunning an external installer repairs or replaces the on-disk generation. If
-Headroom is already open, quit and reopen it after the installer finishes: a new
-launcher invocation may activate the old primary process until it exits. The
-in-app restart path does stop and replace the expected running generation.
+Rerunning an external installer repairs or replaces the on-disk generation. It
+launches the stable entry and accepts startup only after the selected generation
+reports a matching nonce, process ID, executable path, and compiled version. If
+Headroom is already open, that launch may activate the old primary process; the
+installer then reports that a restart is required instead of claiming the new
+generation started. Quit and reopen Headroom to complete that transition. The
+in-app restart path stops and replaces the expected running generation.
 
 ## Source references
 

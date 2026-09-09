@@ -125,7 +125,10 @@ jobs:
         run: ctest --test-dir clients/desktop/build-ci --output-on-failure
       - name: Exercise QML menus and focus on xcb
         timeout-minutes: 2
-        run: timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software clients/desktop/build-ci/headroom-ui-tests
+        run: >-
+          timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software
+          clients/desktop/build-ci/headroom-ui-tests
+          dragReordersAndDrivesTray preservesAndDisplaysCustomInterval
       - name: Load QML and capture demo
         env:
           QT_QPA_PLATFORM: offscreen
@@ -185,7 +188,12 @@ jobs:
         env:
           QT_QPA_FONTDIR: C:/Windows/Fonts
         run: |
-          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom-ui-tests.exe" -Wait -PassThru
+          $result = Join-Path $env:RUNNER_TEMP "headroom-native-ui.txt"
+          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom-ui-tests.exe" -ArgumentList @('dragReordersAndDrivesTray', 'preservesAndDisplaysCustomInterval', '-o', "$result,txt") -PassThru
+          $timedOut = !$process.WaitForExit(90000)
+          if ($timedOut) { $process.Kill(); $process.WaitForExit() }
+          if (Test-Path $result) { Get-Content -Raw $result }
+          if ($timedOut) { throw 'Native QML UI test timed out.' }
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - name: Load QML and capture demo
         if: ${{ always() && steps.windows-build.outcome == 'success' }}
@@ -464,7 +472,42 @@ jobs:
           Invoke-Smoke "$env:RUNNER_TEMP/headroom-dirty-environment-windows.png" 'offscreen'
           python packaging/tests/package_server_smoke.py --server "$install/$versionPath/bin/usage-server.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet run --project tests/windows/PackagedCredentialHelperTests.csproj -c Release -r win-${{ matrix.arch }} -- "$install/$versionPath/bin/headroom-credential-helper.exe"
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
+            throw 'Browser-profile quarantine is permitted only on a disposable GitHub-hosted runner.'
+          }
+          $localData = [Environment]::GetFolderPath('LocalApplicationData')
+          $roamingData = [Environment]::GetFolderPath('ApplicationData')
+          $profileRoots = @(
+            (Join-Path $localData 'Google/Chrome/User Data'),
+            (Join-Path $localData 'Microsoft/Edge/User Data'),
+            (Join-Path $localData 'BraveSoftware/Brave-Browser/User Data'),
+            (Join-Path $roamingData 'Mozilla/Firefox/Profiles')
+          )
+          $quarantineSuffix = '.headroom-fixture-' + [guid]::NewGuid().ToString('N')
+          $movedProfiles = @()
+          $preparedRoots = @()
+          try {
+            for ($index = 0; $index -lt $profileRoots.Count; $index++) {
+              $source = $profileRoots[$index]
+              if (Test-Path -LiteralPath $source) {
+                $destination = $source + $quarantineSuffix
+                [IO.Directory]::Move($source, $destination)
+                $movedProfiles += [pscustomobject]@{ Source = $source; Destination = $destination }
+              }
+              $preparedRoots += $source
+            }
+            dotnet run --project tests/windows/PackagedCredentialHelperTests.csproj -c Release -r win-${{ matrix.arch }} -- "$install/$versionPath/bin/headroom-credential-helper.exe"
+            if ($LASTEXITCODE -ne 0) { throw "Packaged credential helper fixture failed with exit code $LASTEXITCODE." }
+          } finally {
+            foreach ($profileRoot in $preparedRoots) {
+              if (Test-Path -LiteralPath $profileRoot) { Remove-Item -LiteralPath $profileRoot -Recurse -Force }
+            }
+            foreach ($moved in $movedProfiles) {
+              New-Item -ItemType Directory -Path (Split-Path -Parent $moved.Source) -Force | Out-Null
+              [IO.Directory]::Move($moved.Destination, $moved.Source)
+            }
+          }
+          dotnet run --project tests/windows/HeadroomCredentialHelperNativeTests.csproj -c Release -r win-${{ matrix.arch }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem "$install/$versionPath" -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length + 1) } | Sort-Object | Set-Content "$env:RUNNER_TEMP/windows-package-inventory.txt"
       - uses: actions/upload-artifact@v7

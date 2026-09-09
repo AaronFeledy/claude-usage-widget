@@ -24,8 +24,13 @@ func TestTransactionalApplyAndReadinessUseActualGeneration(t *testing.T) {
 	inspection := InspectInstall(installRoot)
 	ownedPath := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "usage-server"+nativeExtension())
 	owned := startFixturePath(t, ownedPath)
-	unrelated := startFixturePath(t, fixtureExecutable)
-	unrelatedToken, err := captureProcessToken(unrelated.Process.Pid, fixtureExecutable)
+	unrelatedPath := filepath.Join(root, "unrelated", "bin", "usage-server"+nativeExtension())
+	if err := os.MkdirAll(filepath.Dir(unrelatedPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	copyFixture(t, fixtureExecutable, unrelatedPath)
+	unrelated := startFixturePath(t, unrelatedPath)
+	unrelatedToken, err := captureProcessToken(unrelated.Process.Pid, unrelatedPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +81,7 @@ func TestTransactionalApplyAndReadinessUseActualGeneration(t *testing.T) {
 	if err = stopRecordedProcess(journal.CandidatePID, journal.CandidateExe, journal.CandidateToken, time.Second); err != nil {
 		t.Fatal(err)
 	}
-	if token, tokenErr := captureProcessToken(unrelated.Process.Pid, fixtureExecutable); tokenErr != nil || token != unrelatedToken {
+	if token, tokenErr := captureProcessToken(unrelated.Process.Pid, unrelatedPath); tokenErr != nil || token != unrelatedToken {
 		t.Fatalf("unrelated process was disturbed: %q %v", token, tokenErr)
 	}
 }

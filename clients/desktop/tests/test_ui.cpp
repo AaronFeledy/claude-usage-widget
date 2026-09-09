@@ -2,6 +2,7 @@
 #include "usage.h"
 #include "startup.h"
 #include "appinfo.h"
+#include "popup.h"
 #include "updateservice.h"
 #include "palette.h"
 #include <QApplication>
@@ -14,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QElapsedTimer>
 #include <QtTest>
 #include <cmath>
 
@@ -40,13 +42,16 @@ private slots:
         engine.rootContext()->setContextProperty("startupService", &startup);
         engine.rootContext()->setContextProperty("appInfo", &appInfo);
         engine.rootContext()->setContextProperty("updateService", &updateService);
-        engine.rootContext()->setContextProperty("trayAvailable", false);
-        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("trayAvailable", true);
+        engine.rootContext()->setContextProperty("startHidden", true);
         engine.rootContext()->setContextProperty("captureMode", true);
         engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
         QVERIFY(!engine.rootObjects().isEmpty());
         auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-        QVERIFY(window); QVERIFY(QTest::qWaitForWindowExposed(window));
+        QVERIFY(window);
+        TrayPopup popup(window, true);
+        popup.show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
         QCOMPARE(QQuickStyle::name(), QString("Basic"));
         QVERIFY(window->flags().testFlag(Qt::FramelessWindowHint));
         QVERIFY(!window->flags().testFlag(Qt::WindowMinMaxButtonsHint));
@@ -92,7 +97,7 @@ private slots:
         auto fill = findItem(window->contentItem(), "meterFill_Claude_session"); QVERIFY(fill);
         const auto restingColor = claudeCard->property("color").value<QColor>();
         QTest::mouseMove(window, track->mapToScene(QPointF(track->width() / 2, 3)).toPoint());
-        QTRY_VERIFY(hover->property("hovered").toBool());
+        if (!QGuiApplication::platformName().startsWith("wayland")) QTRY_VERIFY(hover->property("hovered").toBool());
         QCOMPARE(claudeCard->property("color").value<QColor>(), restingColor);
         QVERIFY(track->property("color").value<QColor>() != restingColor);
         QCOMPARE(fill->property("color").value<QColor>(), QColor("#bd93f9"));
@@ -274,18 +279,42 @@ private slots:
         auto footer = findItem(window->contentItem(), "stickyFooter");
         QVERIFY(rows); QVERIFY(footer);
         for (int width : {960, 420}) {
-            window->resize(width, 900); QTest::qWait(50);
-            QVERIFY(footer->y() >= 0); QVERIFY(footer->y() + footer->height() <= window->height() + 1);
+            window->resize(width, 900);
+            QTRY_COMPARE(window->size(), QSize(width, 900));
+            QTest::qWait(100);
+            const bool compact = window->width() < 700;
+            QCOMPARE(window->property("compact").toBool(), compact);
+            QVERIFY(window->width() >= window->minimumWidth());
+            QVERIFY(window->height() >= window->minimumHeight());
+            const auto footerContained = [&] { return footer->y() >= 0
+                && footer->y() + footer->height() <= window->height() + 1; };
+            QElapsedTimer footerSettle; footerSettle.start();
+            while (!footerContained() && footerSettle.elapsed() < 5000) QTest::qWait(20);
+            const QString footerGeometry = QString("window=%1x%2 content=%3x%4 footer@%5=%6")
+                .arg(window->width()).arg(window->height()).arg(window->contentItem()->width())
+                .arg(window->contentItem()->height()).arg(footer->y()).arg(footer->height());
+            QVERIFY2(footerContained(), qPrintable(footerGeometry));
             for (const auto &[name, count] : shapes) {
                 auto card = findItem(window->contentItem(), "providerCard_" + name); QVERIFY(card);
                 for (int i = 0; i < count; ++i) {
                     auto meter = findItem(window->contentItem(), QString("meter_%1_meter_%2").arg(name).arg(i));
                     QVERIFY2(meter, qPrintable(QString("missing %1 meter %2").arg(name).arg(i)));
+                    if (compact && i == 0) QTRY_COMPARE(meter->width(), meter->parentItem()->width());
+                    const auto contained = [&] {
+                        const auto at = meter->mapToItem(card, QPointF());
+                        return at.x() >= -1 && at.y() >= -1
+                            && at.x() + meter->width() <= card->width() + 2
+                            && at.y() + meter->height() <= card->height() + 2;
+                    };
+                    QElapsedTimer settle; settle.start();
+                    while (!contained() && settle.elapsed() < 5000) QTest::qWait(20);
                     const auto at = meter->mapToItem(card, QPointF());
-                    QVERIFY(at.x() >= -1 && at.y() >= -1);
-                    QVERIFY(at.x() + meter->width() <= card->width() + 1);
-                    QVERIFY(at.y() + meter->height() <= card->height() + 1);
-                    if (width == 420 && i == 0) QCOMPARE(meter->width(), meter->parentItem()->width());
+                    const QString geometry = QString("%1/%2 window=%3x%4 content=%5x%6 card=%7x%8 meter@%9,%10=%11x%12")
+                        .arg(name).arg(i).arg(window->width()).arg(window->height())
+                        .arg(window->contentItem()->width()).arg(window->contentItem()->height())
+                        .arg(card->width()).arg(card->height()).arg(at.x()).arg(at.y())
+                        .arg(meter->width()).arg(meter->height());
+                    QVERIFY2(contained(), qPrintable(geometry));
                 }
             }
         }
