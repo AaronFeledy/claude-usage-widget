@@ -75,24 +75,30 @@ include(CTest)
 if(BUILD_TESTING)
     foreach(feature startup appinfo tray popup)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
+        set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
         target_link_libraries(headroom-${feature}-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets)
-        add_test(NAME headroom-${feature}-tests COMMAND headroom-${feature}-tests)
+        add_test(NAME headroom-${feature}-tests COMMAND headroom-${feature}-tests
+            -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-${feature}-tests.xml,junitxml")
         set_tests_properties(headroom-${feature}-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endforeach()
     qt_add_resources(headroom-tray-tests provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
         ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
         ../shared/provider-icons/cursor.svg ../shared/provider-icons/grok.svg)
     qt_add_executable(headroom-tests tests/test_usage.cpp)
+    set_target_properties(headroom-tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-tests PRIVATE headroom-core Qt6::Test)
     qt_add_executable(headroom-ui-tests tests/test_ui.cpp)
+    set_target_properties(headroom-ui-tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-ui-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets Qt6::QuickControls2)
     target_compile_definitions(headroom-ui-tests PRIVATE SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     qt_add_resources(headroom-ui-tests provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
         ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
         ../shared/provider-icons/cursor.svg ../shared/provider-icons/grok.svg)
-    add_test(NAME headroom-ui-tests COMMAND headroom-ui-tests)
+    add_test(NAME headroom-ui-tests COMMAND headroom-ui-tests
+        -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-ui-tests.xml,junitxml")
     set_tests_properties(headroom-ui-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
-    add_test(NAME headroom-tests COMMAND headroom-tests)
+    add_test(NAME headroom-tests COMMAND headroom-tests
+        -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-tests.xml,junitxml")
     set_tests_properties(headroom-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 

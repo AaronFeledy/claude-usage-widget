@@ -66,10 +66,24 @@ jobs:
       - name: Configure shared desktop client
         run: cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
+        id: windows-build
         run: cmake --build clients/desktop/build-ci --parallel
       - name: Test
-        run: ctest --test-dir clients/desktop/build-ci --output-on-failure
+        shell: pwsh
+        run: |
+          ctest --test-dir clients/desktop/build-ci --output-on-failure
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            $log = "clients/desktop/build-ci/Testing/Temporary/LastTest.log"
+            if (Test-Path $log) { Get-Content -Raw $log }
+            Get-ChildItem "clients/desktop/build-ci" -Filter "headroom-*-tests.xml" | ForEach-Object {
+              Write-Host "===== $($_.Name) ====="
+              Get-Content -Raw $_.FullName
+            }
+            exit $testExit
+          }
       - name: Load QML and capture demo
+        if: ${{ always() && steps.windows-build.outcome == 'success' }}
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
