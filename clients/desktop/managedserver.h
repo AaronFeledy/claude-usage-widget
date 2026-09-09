@@ -3,6 +3,7 @@
 #include <QNetworkAccessManager>
 #include <QPointer>
 #include <QProcess>
+#include <QTcpSocket>
 #include <QTimer>
 #include <QUrl>
 
@@ -43,6 +44,8 @@ private:
     enum class ProbeResult { Compatible, Refused, AuthRejected, Redirected, Malformed, TimedOut, NetworkFailure };
 
     void cancelAsync();
+    void preflight();
+    void finishPreflight(QTcpSocket *socket, quint64 generation, ProbeResult result);
     void probe(ProbePurpose purpose);
     void handleProbe(ProbePurpose purpose, ProbeResult result);
     void spawn();
@@ -56,6 +59,7 @@ private:
 
     ManagedServerOptions m_options;
     QNetworkAccessManager m_network;
+    QPointer<QTcpSocket> m_preflight;
     QPointer<QNetworkReply> m_probe;
     QPointer<QProcess> m_process;
     QPointer<QProcess> m_retiringProcess;

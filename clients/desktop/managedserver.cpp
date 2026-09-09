@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
+#include <QNetworkProxy>
 #include <QNetworkRequest>
 #include <QProcessEnvironment>
 #include <utility>
@@ -41,10 +42,11 @@ bool compatibleHealth(const QByteArray &body)
 ManagedServer::ManagedServer(ManagedServerOptions options, QObject *parent)
     : QObject(parent), m_options(std::move(options))
 {
+    m_network.setProxy(QNetworkProxy::NoProxy);
     m_readinessTimer.setSingleShot(true);
     m_restartTimer.setSingleShot(true);
     connect(&m_readinessTimer, &QTimer::timeout, this, [this] { probe(ProbePurpose::Readiness); });
-    connect(&m_restartTimer, &QTimer::timeout, this, [this] { probe(ProbePurpose::Initial); });
+    connect(&m_restartTimer, &QTimer::timeout, this, &ManagedServer::preflight);
 }
 
 ManagedServer::~ManagedServer()
@@ -101,14 +103,14 @@ void ManagedServer::ensureAvailable()
         m_ensureAfterRetire = true;
         return;
     }
-    if (m_probe || m_readinessTimer.isActive() || m_restartTimer.isActive()
+    if (m_preflight || m_probe || m_readinessTimer.isActive() || m_restartTimer.isActive()
         || (m_process && m_process->state() == QProcess::Starting)) return;
     if (m_state == QStringLiteral("failed")) m_restartCount = 0;
     m_readinessAttempt = 0;
     m_state = QStringLiteral("probing");
     m_message.clear();
     emit stateChanged();
-    probe(ProbePurpose::Initial);
+    preflight();
 }
 
 void ManagedServer::reportConnectionFailure()
@@ -122,7 +124,7 @@ void ManagedServer::reportConnectionFailure()
         beginReadiness();
     } else {
         m_owned = false;
-        probe(ProbePurpose::Initial);
+        preflight();
     }
 }
 
@@ -142,6 +144,13 @@ void ManagedServer::cancelAsync()
 {
     m_readinessTimer.stop();
     m_restartTimer.stop();
+    if (m_preflight) {
+        auto socket = m_preflight;
+        m_preflight.clear();
+        socket->disconnect(this);
+        socket->abort();
+        socket->deleteLater();
+    }
     if (m_probe) {
         auto reply = m_probe;
         m_probe.clear();
@@ -149,6 +158,48 @@ void ManagedServer::cancelAsync()
         reply->abort();
         reply->deleteLater();
     }
+}
+
+void ManagedServer::preflight()
+{
+    if (m_mode != QStringLiteral("local") || m_preflight || m_probe) return;
+    const QHostAddress address(m_options.localUrl.host());
+    const quint16 port = static_cast<quint16>(m_options.localUrl.port(7823));
+    if (address.isNull() || !address.isLoopback() || port == 0) {
+        handleProbe(ProbePurpose::Initial, ProbeResult::NetworkFailure);
+        return;
+    }
+    const quint64 generation = m_generation;
+    auto socket = new QTcpSocket(this);
+    socket->setProxy(QNetworkProxy::NoProxy);
+    m_preflight = socket;
+    auto timeout = new QTimer(socket);
+    timeout->setSingleShot(true);
+    connect(timeout, &QTimer::timeout, this, [this, socket, generation] {
+        finishPreflight(socket, generation, ProbeResult::TimedOut);
+    });
+    connect(socket, &QTcpSocket::connected, this, [this, socket, generation] {
+        finishPreflight(socket, generation, ProbeResult::Compatible);
+    });
+    connect(socket, &QTcpSocket::errorOccurred, this,
+            [this, socket, generation](QAbstractSocket::SocketError error) {
+        finishPreflight(socket, generation, error == QAbstractSocket::ConnectionRefusedError
+            ? ProbeResult::Refused : ProbeResult::NetworkFailure);
+    });
+    timeout->start(m_options.probeTimeoutMs);
+    socket->connectToHost(address, port);
+}
+
+void ManagedServer::finishPreflight(QTcpSocket *socket, quint64 generation, ProbeResult result)
+{
+    if (m_preflight != socket) return;
+    m_preflight.clear();
+    socket->disconnect(this);
+    socket->abort();
+    socket->deleteLater();
+    if (generation != m_generation || m_mode != QStringLiteral("local")) return;
+    if (result == ProbeResult::Compatible) probe(ProbePurpose::Initial);
+    else handleProbe(ProbePurpose::Initial, result);
 }
 
 void ManagedServer::probe(ProbePurpose purpose)

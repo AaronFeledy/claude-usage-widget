@@ -68,6 +68,16 @@ jobs:
       - name: Build
         id: windows-build
         run: cmake --build clients/desktop/build-ci --parallel
+      - name: Diagnose native loopback refusal
+        shell: pwsh
+        env:
+          HEADROOM_NATIVE_NETWORK_DIAGNOSTIC: 1
+        run: |
+          $diagnostic = "clients/desktop/build-ci/headroom-network-diagnostic.txt"
+          & "clients/desktop/build-ci/headroom-managedserver-tests.exe" nativeLoopbackRefusalDiagnostic -o "$diagnostic,txt"
+          $diagnosticExit = $LASTEXITCODE
+          if (Test-Path $diagnostic) { Get-Content -Raw $diagnostic }
+          if ($diagnosticExit -ne 0) { exit $diagnosticExit }
       - name: Test
         shell: pwsh
         env:

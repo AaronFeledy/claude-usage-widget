@@ -1,7 +1,12 @@
 #include "managedserver.h"
 
 #include <QFile>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QNetworkProxy>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSignalSpy>
@@ -36,10 +41,12 @@ public:
     QByteArray response = R"({"status":"ok","version":"1.7.1","providers":[]})";
     int status = 200;
     bool hold = false;
+    int connections = 0;
     int requests = 0;
     HealthFixture() {
         connect(this, &QTcpServer::newConnection, this, [this] {
             while (auto socket = nextPendingConnection()) {
+                ++connections;
                 connect(socket, &QTcpSocket::readyRead, socket, [this, socket] {
                     QByteArray request = socket->property("request").toByteArray() + socket->readAll();
                     socket->setProperty("request", request);
@@ -111,7 +118,50 @@ private slots:
         HealthFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
         ManagedServer server(options(fixture.serverPort(), QStringLiteral(FIXTURE_PATH)));
         server.configure(QStringLiteral("remote"), QString()); server.ensureAvailable(); QTest::qWait(150);
-        QCOMPARE(fixture.requests, 0); QVERIFY(!server.ownsProcess()); QCOMPARE(server.state(), QString("remote"));
+        QCOMPARE(fixture.connections, 0); QCOMPARE(fixture.requests, 0);
+        QVERIFY(!server.ownsProcess()); QCOMPARE(server.state(), QString("remote"));
+    }
+    void nativeLoopbackRefusalDiagnostic() {
+        const quint16 port = unusedPort(); QVERIFY(port);
+        QTcpSocket socket; socket.setProxy(QNetworkProxy::NoProxy);
+        QEventLoop socketLoop; QTimer socketDeadline; socketDeadline.setSingleShot(true);
+        bool socketFinished = false, socketExpired = false;
+        QAbstractSocket::SocketError socketError = QAbstractSocket::UnknownSocketError;
+        connect(&socket, &QTcpSocket::errorOccurred, &socketLoop, [&](QAbstractSocket::SocketError error) {
+            socketFinished = true; socketError = error; socketLoop.quit();
+        });
+        connect(&socketDeadline, &QTimer::timeout, &socketLoop, [&] {
+            socketExpired = true; socket.abort(); socketLoop.quit();
+        });
+        QElapsedTimer elapsed; elapsed.start(); socketDeadline.start(15000);
+        socket.connectToHost(QHostAddress::LocalHost, port);
+        if (!socketFinished) socketLoop.exec();
+        socketDeadline.stop();
+        qInfo("unused loopback TCP finished=%d expired=%d error=%d elapsed_ms=%lld",
+              int(socketFinished), int(socketExpired), int(socketError),
+              static_cast<long long>(elapsed.elapsed()));
+        QVERIFY(socketFinished); QVERIFY(!socketExpired);
+        QCOMPARE(socketError, QAbstractSocket::ConnectionRefusedError);
+
+        if (!qEnvironmentVariableIsSet("HEADROOM_NATIVE_NETWORK_DIAGNOSTIC")) return;
+        QNetworkAccessManager network; network.setProxy(QNetworkProxy::NoProxy);
+        QNetworkRequest request(QUrl(QStringLiteral("http://127.0.0.1:%1/api/v1/health").arg(port)));
+        request.setTransferTimeout(15000);
+        auto reply = network.get(request);
+        QEventLoop httpLoop; QTimer httpDeadline; httpDeadline.setSingleShot(true);
+        bool httpFinished = false, httpExpired = false;
+        connect(reply, &QNetworkReply::finished, &httpLoop, [&] { httpFinished = true; httpLoop.quit(); });
+        connect(&httpDeadline, &QTimer::timeout, &httpLoop, [&] {
+            httpExpired = true; reply->abort(); httpLoop.quit();
+        });
+        elapsed.restart(); httpDeadline.start(15000);
+        if (!httpFinished) httpLoop.exec();
+        httpDeadline.stop();
+        qInfo("unused loopback HTTP no-proxy finished=%d expired=%d error=%d elapsed_ms=%lld",
+              int(httpFinished), int(httpExpired), int(reply->error()),
+              static_cast<long long>(elapsed.elapsed()));
+        if (!reply->isFinished()) reply->abort();
+        reply->deleteLater();
     }
     void attachesToCompatibleOkAndDegradedWithoutOwnership() {
         for (const auto status : {QByteArray("ok"), QByteArray("degraded")}) {
