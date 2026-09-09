@@ -11,6 +11,98 @@
 #include <QStandardPaths>
 #include <QTimer>
 
+#ifndef Q_OS_WIN
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+#endif
+
+namespace {
+#ifndef Q_OS_WIN
+class ScopedFd {
+public:
+    explicit ScopedFd(int fd = -1) : m_fd(fd) {}
+    ~ScopedFd() { if (m_fd >= 0) ::close(m_fd); }
+    ScopedFd(const ScopedFd &) = delete;
+    ScopedFd &operator=(const ScopedFd &) = delete;
+    int get() const { return m_fd; }
+    void reset(int fd)
+    {
+        if (m_fd >= 0) ::close(m_fd);
+        m_fd = fd;
+    }
+private:
+    int m_fd;
+};
+
+bool safeAncestor(const struct stat &status, uid_t systemUid)
+{
+    return S_ISDIR(status.st_mode) &&
+           (status.st_uid == geteuid() || status.st_uid == systemUid) &&
+           (!(status.st_mode & (S_IWGRP | S_IWOTH)) || (status.st_mode & S_ISVTX));
+}
+
+bool privateDirectory(const struct stat &status)
+{
+    return S_ISDIR(status.st_mode) && status.st_uid == geteuid() &&
+           (status.st_mode & 0777) == 0700;
+}
+
+bool openPrivateRuntime(const QString &path, ScopedFd &result)
+{
+    if (path.isEmpty() || !QDir::isAbsolutePath(path)) return false;
+
+    ScopedFd current(::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    if (current.get() < 0) return false;
+    struct stat rootStatus {};
+    if (::fstat(current.get(), &rootStatus) != 0 || !S_ISDIR(rootStatus.st_mode)) return false;
+    const uid_t systemUid = rootStatus.st_uid;
+    const QStringList components = QDir::cleanPath(path).split('/', Qt::SkipEmptyParts);
+    for (qsizetype index = 0; index < components.size(); ++index) {
+        const QByteArray component = QFile::encodeName(components.at(index));
+        const int next = ::openat(current.get(), component.constData(),
+                                  O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (next < 0) return false;
+        current.reset(next);
+        struct stat status {};
+        if (::fstat(current.get(), &status) != 0 ||
+            (index + 1 == components.size() ? !privateDirectory(status)
+                                             : !safeAncestor(status, systemUid))) {
+            return false;
+        }
+    }
+    result.reset(::fcntl(current.get(), F_DUPFD_CLOEXEC, 0));
+    return result.get() >= 0;
+}
+
+bool openOrCreatePrivateDirectory(int parent, const QByteArray &name, ScopedFd &result)
+{
+    bool created = false;
+    if (::mkdirat(parent, name.constData(), 0700) == 0) {
+        created = true;
+    } else if (errno != EEXIST) {
+        return false;
+    }
+    const int fd = ::openat(parent, name.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return false;
+    result.reset(fd);
+    if (created && ::fchmod(result.get(), 0700) != 0) return false;
+    struct stat status {};
+    return ::fstat(result.get(), &status) == 0 && privateDirectory(status);
+}
+
+bool safeEndpoint(const QString &path, mode_t expectedType)
+{
+    const QByteArray nativePath = QFile::encodeName(path);
+    struct stat status {};
+    if (::lstat(nativePath.constData(), &status) != 0) return errno == ENOENT;
+    return (status.st_mode & S_IFMT) == expectedType && status.st_uid == geteuid();
+}
+#endif
+}
+
 InstanceService::InstanceService(QString configPath, QObject *parent) : QObject(parent)
 {
     QFileInfo info(configPath);
@@ -25,17 +117,37 @@ InstanceService::InstanceService(QString configPath, QObject *parent) : QObject(
 #endif
     const QByteArray identity = userRoot.toUtf8() + '\0' + QDir::cleanPath(canonical).toUtf8();
     const QString digest = QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex().left(24));
+#ifdef Q_OS_WIN
     const QString lockDirectory = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
                                       .filePath("Headroom/" + digest);
-    QDir().mkpath(lockDirectory);
-#ifndef Q_OS_WIN
-    QFile(lockDirectory).setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-#endif
+    if (!QDir().mkpath(lockDirectory)) {
+        m_error = "Headroom could not create its instance directory.";
+        return;
+    }
     m_lockPath = QDir(lockDirectory).filePath("instance.lock");
-#ifdef Q_OS_WIN
     m_scopeName = "headroom-" + digest;
+    m_pathsReady = true;
 #else
-    m_scopeName = QDir(lockDirectory).filePath("activation.socket");
+    const QString runtimePath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    ScopedFd runtime;
+    ScopedFd headroom;
+    ScopedFd scope;
+    if (!openPrivateRuntime(runtimePath, runtime) ||
+        !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom) ||
+        !openOrCreatePrivateDirectory(headroom.get(), digest.toLatin1(), scope)) {
+        m_error = "Headroom could not establish a private per-user runtime directory.";
+        return;
+    }
+    const QString lockDirectory = QDir(runtimePath).filePath("Headroom/" + digest);
+    m_lockPath = QDir(lockDirectory).filePath("lock");
+    m_scopeName = QDir(lockDirectory).filePath("activate");
+    if (QFile::encodeName(m_scopeName).size() >= qsizetype(sizeof(sockaddr_un::sun_path))) {
+        m_lockPath.clear();
+        m_scopeName.clear();
+        m_error = "Headroom's private activation endpoint path is too long.";
+        return;
+    }
+    m_pathsReady = true;
 #endif
 }
 
@@ -48,6 +160,13 @@ InstanceService::~InstanceService()
 InstanceService::Result InstanceService::start(int timeoutMilliseconds)
 {
     if (m_server || m_lock) return m_server ? Result::Primary : Result::Error;
+    if (!m_pathsReady) return Result::Error;
+#ifndef Q_OS_WIN
+    if (!safeEndpoint(m_lockPath, S_IFREG) || !safeEndpoint(m_scopeName, S_IFSOCK)) {
+        m_error = "Headroom refused an unsafe instance endpoint in its private runtime directory.";
+        return Result::Error;
+    }
+#endif
     m_lock = new QLockFile(m_lockPath);
     if (!m_lock->tryLock()) {
         QLocalSocket socket;

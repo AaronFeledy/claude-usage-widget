@@ -22,6 +22,7 @@ private:
     QString m_scopeName;
     QString m_lockPath;
     QString m_error;
+    bool m_pathsReady = false;
     QLocalServer *m_server = nullptr;
     QLockFile *m_lock = nullptr;
 };

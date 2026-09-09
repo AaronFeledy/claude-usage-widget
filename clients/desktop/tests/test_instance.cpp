@@ -9,9 +9,18 @@
 #include <QTimer>
 #include <QtTest>
 
+#include <memory>
+
+#ifndef Q_OS_WIN
+#include <sys/stat.h>
+#endif
+
 class InstanceTest : public QObject {
     Q_OBJECT
 private:
+    QByteArray previousRuntime;
+    std::unique_ptr<QTemporaryDir> runtime;
+
     QString helperPath() const
     {
         QString path = QCoreApplication::applicationDirPath() + "/headroom-instance-helper";
@@ -25,6 +34,28 @@ private slots:
     {
         QCoreApplication::setOrganizationName("HeadroomTests");
         QCoreApplication::setApplicationName("InstanceFixture");
+#ifndef Q_OS_WIN
+        previousRuntime = qgetenv("XDG_RUNTIME_DIR");
+#endif
+    }
+    void init()
+    {
+#ifndef Q_OS_WIN
+        runtime = std::make_unique<QTemporaryDir>(QDir(QDir::tempPath()).filePath("hr-instance-XXXXXX"));
+        QVERIFY(runtime->isValid());
+        QVERIFY(QFile::setPermissions(runtime->path(), QFileDevice::ReadOwner |
+                                                       QFileDevice::WriteOwner |
+                                                       QFileDevice::ExeOwner));
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime->path()));
+#endif
+    }
+    void cleanup()
+    {
+#ifndef Q_OS_WIN
+        if (previousRuntime.isNull()) qunsetenv("XDG_RUNTIME_DIR");
+        else qputenv("XDG_RUNTIME_DIR", previousRuntime);
+        runtime.reset();
+#endif
     }
     void scopeStableAcrossSettingsCreation()
     {
@@ -107,6 +138,76 @@ private slots:
         QVERIFY2(peer.waitForFinished(3000), qPrintable(peer.errorString()));
         QCOMPARE(peer.exitCode(), 0);
     }
+
+#ifndef Q_OS_WIN
+    void permissiveHeadroomDirectoryIsRejected()
+    {
+        QTemporaryDir runtime;
+        const QString headroom = runtime.filePath("Headroom");
+        QVERIFY(QDir().mkdir(headroom));
+        QVERIFY(QFile::setPermissions(headroom, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
+                                                   QFileDevice::ExeOwner | QFileDevice::ReadGroup |
+                                                   QFileDevice::ExeGroup | QFileDevice::ReadOther |
+                                                   QFileDevice::ExeOther));
+        const QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+        InstanceService instance(runtime.filePath("settings.json"));
+        if (previous.isNull()) qunsetenv("XDG_RUNTIME_DIR"); else qputenv("XDG_RUNTIME_DIR", previous);
+        QCOMPARE(instance.start(), InstanceService::Result::Error);
+        QVERIFY(instance.error().contains("private per-user runtime"));
+        QCOMPARE(QDir(headroom).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).size(), 0);
+    }
+
+    void symlinkedHeadroomDirectoryDoesNotTouchTarget()
+    {
+        QTemporaryDir runtime;
+        QTemporaryDir external;
+        const QString sentinelPath = external.filePath("sentinel");
+        QFile sentinel(sentinelPath);
+        QVERIFY(sentinel.open(QIODevice::WriteOnly));
+        QCOMPARE(sentinel.write("untouched"), qint64(9));
+        sentinel.close();
+        QVERIFY(QFile::link(external.path(), runtime.filePath("Headroom")));
+        const QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+        InstanceService instance(runtime.filePath("settings.json"));
+        if (previous.isNull()) qunsetenv("XDG_RUNTIME_DIR"); else qputenv("XDG_RUNTIME_DIR", previous);
+        QCOMPARE(instance.start(), InstanceService::Result::Error);
+        QFile check(sentinelPath);
+        QVERIFY(check.open(QIODevice::ReadOnly));
+        QCOMPARE(check.readAll(), QByteArray("untouched"));
+        QCOMPARE(QDir(external.path()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot),
+                 QStringList{"sentinel"});
+    }
+
+    void symlinkedEndpointDoesNotTouchTarget_data()
+    {
+        QTest::addColumn<bool>("lockEndpoint");
+        QTest::newRow("lock") << true;
+        QTest::newRow("activation-socket") << false;
+    }
+
+    void symlinkedEndpointDoesNotTouchTarget()
+    {
+        QFETCH(bool, lockEndpoint);
+        QTemporaryDir runtime;
+        const QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+        InstanceService instance(runtime.filePath("settings.json"));
+        if (previous.isNull()) qunsetenv("XDG_RUNTIME_DIR"); else qputenv("XDG_RUNTIME_DIR", previous);
+        const QString sentinelPath = runtime.filePath("sentinel");
+        QFile sentinel(sentinelPath);
+        QVERIFY(sentinel.open(QIODevice::WriteOnly));
+        QCOMPARE(sentinel.write("untouched"), qint64(9));
+        sentinel.close();
+        QVERIFY(QFile::link(sentinelPath, lockEndpoint ? instance.lockPath() : instance.scopeName()));
+        QCOMPARE(instance.start(), InstanceService::Result::Error);
+        QVERIFY(instance.error().contains("unsafe instance endpoint"));
+        QFile check(sentinelPath);
+        QVERIFY(check.open(QIODevice::ReadOnly));
+        QCOMPARE(check.readAll(), QByteArray("untouched"));
+    }
+#endif
 };
 
 QTEST_GUILESS_MAIN(InstanceTest)
