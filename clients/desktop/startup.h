@@ -18,6 +18,8 @@ public:
     bool available() const { return m_allowChanges && m_platformSupported; }
     QString error() const { return m_error; }
     QString entryPath() const { return m_entryPath; }
+    static QString defaultExecutablePath();
+    static QString packagedExecutablePath(const QString &applicationPath);
     void setAllowChanges(bool allowed);
     void setPreferenceWriter(std::function<QString(bool)> writer) { m_preferenceWriter = std::move(writer); }
     Q_INVOKABLE bool setEnabled(bool enabled);

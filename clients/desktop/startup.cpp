@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
+#include <QRegularExpression>
 
 namespace {
 QString configDirectory()
@@ -34,12 +35,45 @@ QString windowsCommand(const QString &path)
 }
 }
 
+QString StartupService::defaultExecutablePath()
+{
+    return packagedExecutablePath(QCoreApplication::applicationFilePath());
+}
+
+QString StartupService::packagedExecutablePath(const QString &applicationPath)
+{
+    const QString application = QFileInfo(applicationPath).absoluteFilePath();
+    const QString root = qEnvironmentVariable("HEADROOM_INSTALL_ROOT");
+    const QString launcher = qEnvironmentVariable("HEADROOM_LAUNCHER_PATH");
+    const QString version = qEnvironmentVariable("HEADROOM_PACKAGE_VERSION");
+    static const QRegularExpression safeVersion(
+        QStringLiteral("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"));
+    if (QDir::isAbsolutePath(root) && QDir::isAbsolutePath(launcher)
+        && safeVersion.match(version).hasMatch() && QFileInfo(launcher).isFile()) {
+        const QString expected = QFileInfo(QDir(root).filePath(QStringLiteral("versions/%1/bin/%2")
+            .arg(version,
+#ifdef Q_OS_WIN
+                 QStringLiteral("headroom.exe")
+#else
+                 QStringLiteral("headroom")
+#endif
+            ))).absoluteFilePath();
+#ifdef Q_OS_WIN
+        if (QString::compare(application, expected, Qt::CaseInsensitive) == 0)
+#else
+        if (application == expected)
+#endif
+            return QFileInfo(launcher).absoluteFilePath();
+    }
+    return application;
+}
+
 StartupService::StartupService(QString configHome, QString executable, bool allowChanges, QObject *parent,
                                Platform platform, QString registryPath)
     : QObject(parent),
       m_entryPath(QDir(configHome.isEmpty() ? configDirectory() : configHome)
                       .filePath("autostart/headroom.desktop")),
-      m_executable(executable.isEmpty() ? QCoreApplication::applicationFilePath() : executable),
+      m_executable(executable.isEmpty() ? defaultExecutablePath() : executable),
       m_registryPath(registryPath.isEmpty()
           ? QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run")
           : std::move(registryPath)),

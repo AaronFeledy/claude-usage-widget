@@ -1,0 +1,36 @@
+Headroom third-party notices
+============================
+
+Each packaged build includes the license texts shipped with the exact runtime
+components used to create it under share/licenses. The package manifest hashes
+those texts along with the executable payload.
+
+Qt 6.8.3
+--------
+Headroom uses Qt Core, GUI, Widgets, Network, QML, Quick, Quick Controls 2 and
+SVG, plus Qt platform, image, icon and TLS plugins. Qt is available under its
+applicable commercial and open-source licenses. See share/licenses/qt and
+https://www.qt.io/licensing/ for the corresponding terms and source offer.
+
+.NET 8 credential helper (Windows packages)
+-------------------------------------------
+The self-contained Windows credential helper includes the .NET runtime,
+Microsoft.Data.Sqlite, SQLitePCLRaw and SQLite. Their notices and license texts
+are included under share/licenses/dotnet and share/licenses/sqlite.
+
+Go runtime and server dependencies
+----------------------------------
+The stable launcher, package validator and usage-server include the Go runtime.
+The Go license and notices for the server's protobuf and YAML dependencies are
+included under share/licenses/go.
+
+Microsoft Visual C++ runtime (Windows packages)
+-----------------------------------------------
+The app-local MSVC runtime files are redistributed under Microsoft's Visual
+Studio licensing terms. See share/licenses/msvc.
+
+OpenSSL (Linux packages)
+------------------------
+Headroom's Qt TLS backend uses the OpenSSL 3 runtime supplied by the documented
+Ubuntu 22.04-compatible desktop baseline. OpenSSL itself is not copied into the
+bundle. See share/licenses/openssl for the applicable notice.

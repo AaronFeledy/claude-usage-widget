@@ -35,6 +35,26 @@ QString currentExecutable()
 class StartupTest : public QObject {
     Q_OBJECT
 private slots:
+    void packagedLauncherPathIsUsedOnlyForMatchingInstall()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString launcher = dir.filePath("headroom-launcher");
+        QFile file(launcher); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("fixture"); file.close();
+        qputenv("HEADROOM_INSTALL_ROOT", dir.path().toUtf8());
+        qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());
+        qputenv("HEADROOM_PACKAGE_VERSION", "9.8.7");
+        QCOMPARE(StartupService::defaultExecutablePath(), QCoreApplication::applicationFilePath());
+        const QString packaged = dir.filePath(QStringLiteral("versions/9.8.7/bin/%1")
+#ifdef Q_OS_WIN
+            .arg("headroom.exe"));
+#else
+            .arg("headroom"));
+#endif
+        QVERIFY(writeFile(packaged, "fixture", true));
+        QCOMPARE(StartupService::packagedExecutablePath(packaged), QFileInfo(launcher).absoluteFilePath());
+        qunsetenv("HEADROOM_INSTALL_ROOT"); qunsetenv("HEADROOM_LAUNCHER_PATH"); qunsetenv("HEADROOM_PACKAGE_VERSION");
+    }
     void preferenceWriterTracksBothToggles()
     {
         QTemporaryDir dir;

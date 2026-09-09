@@ -1,0 +1,251 @@
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+
+	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
+)
+
+var buildVersion = "dev"
+
+type output struct {
+	OK      bool   `json:"ok"`
+	Command string `json:"command"`
+	Result  any    `json:"result,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+func main() { os.Exit(run(os.Args)) }
+func run(args []string) int {
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(args[0])), ".exe")
+	if name == "headroom" || name == "headroom-launcher" || len(args) == 1 {
+		if err := launch(args[1:]); err != nil {
+			showLaunchError(err.Error())
+			return emit("launch", nil, err)
+		}
+		return 0
+	}
+	command := args[1]
+	var result any
+	var err error
+	switch command {
+	case "asset-name":
+		result, err = assetName(args[2:])
+	case "inspect":
+		result, err = inspect(args[2:])
+	case "verify":
+		result, err = verify(args[2:])
+	case "stage":
+		result, err = stage(args[2:])
+	case "install":
+		result, err = install(args[2:])
+	case "create-package":
+		result, err = createPackage(args[2:])
+	case "create-release":
+		result, err = createRelease(args[2:])
+	case "materialize-links":
+		result, err = materializeLinks(args[2:])
+	default:
+		err = fmt.Errorf("unknown command %q", command)
+	}
+	return emit(command, result, err)
+}
+func assetName(args []string) (any, error) {
+	set := flag.NewFlagSet("asset-name", flag.ContinueOnError)
+	version := set.String("version", "", "version")
+	platform := set.String("platform", "", "platform")
+	arch := set.String("arch", "", "architecture")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	asset, err := contract.AssetName(*version, *platform, *arch)
+	if err != nil {
+		return nil, err
+	}
+	root, err := contract.ArchiveRoot(*version, *platform, *arch)
+	return map[string]string{"asset_name": asset, "archive_root": root}, err
+}
+func emit(command string, result any, err error) int {
+	o := output{OK: err == nil, Command: command, Result: result}
+	if err != nil {
+		o.Error = err.Error()
+	}
+	data, _ := json.Marshal(o)
+	fmt.Println(string(data))
+	if err != nil {
+		return 2
+	}
+	return 0
+}
+func flags(command string) (*flag.FlagSet, *string, *string, *string, *string) {
+	set := flag.NewFlagSet(command, flag.ContinueOnError)
+	set.SetOutput(os.Stderr)
+	return set, set.String("version", "", "expected version"), set.String("platform", "", "expected platform"), set.String("arch", "", "expected architecture"), set.String("asset", "", "expected asset name")
+}
+func expectations(v, p, a, n *string) contract.Expectations {
+	return contract.Expectations{Version: *v, Platform: *p, Architecture: *a, AssetName: *n}
+}
+func inspect(args []string) (any, error) {
+	set := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	return contract.InspectInstall(*root), nil
+}
+func verify(args []string) (any, error) {
+	set, v, p, a, n := flags("verify")
+	archive := set.String("archive", "", "package archive")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	m, root, err := contract.VerifyArchive(*archive, expectations(v, p, a, n))
+	if err == nil {
+		err = contract.CheckExpectations(m, expectations(v, p, a, n))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"manifest": m, "archive_root": root}, nil
+}
+func stage(args []string) (any, error) {
+	set, v, p, a, n := flags("stage")
+	archive := set.String("archive", "", "package archive")
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	return contract.StageArchive(*archive, *root, expectations(v, p, a, n))
+}
+func install(args []string) (any, error) {
+	set, v, p, a, n := flags("install")
+	archive := set.String("archive", "", "package archive")
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	entry := set.String("entry-path", defaultEntryPath(), "stable launcher entry")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	return contract.InstallArchive(*archive, *root, *entry, expectations(v, p, a, n))
+}
+func createPackage(args []string) (any, error) {
+	set := flag.NewFlagSet("create-package", flag.ContinueOnError)
+	root := set.String("root", "", "package root")
+	output := set.String("output", "", "archive output")
+	version := set.String("version", buildVersion, "version")
+	platform := set.String("platform", runtime.GOOS, "platform")
+	arch := set.String("arch", nativeArch(), "architecture")
+	qt := set.String("qt-version", "6.8.3", "Qt version")
+	baseline := set.String("baseline", "", "runtime baseline")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	manifest, err := contract.BuildManifest(*root, *version, *platform, *arch, *qt, *baseline)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Base(*output) != manifest.AssetName {
+		return nil, fmt.Errorf("archive output must be named %s", manifest.AssetName)
+	}
+	if err = contract.WriteJSON(filepath.Join(*root, contract.PackageManifestName), manifest); err != nil {
+		return nil, err
+	}
+	if err = contract.WriteArchive(*root, *output); err != nil {
+		return nil, err
+	}
+	size, hash, err := contract.FileDigest(*output)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"manifest": manifest, "archive_size": size, "archive_sha256": hash}, nil
+}
+func createRelease(args []string) (any, error) {
+	set := flag.NewFlagSet("create-release", flag.ContinueOnError)
+	output := set.String("output", "", "release manifest output")
+	version := set.String("version", buildVersion, "version")
+	var packages listFlag
+	set.Var(&packages, "package", "package archive (repeatable)")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	if filepath.Base(*output) != "Headroom-v"+*version+"-release.json" {
+		return nil, fmt.Errorf("release manifest output must be named Headroom-v%s-release.json", *version)
+	}
+	release := contract.ReleaseManifest{Schema: contract.SchemaVersion, Product: "Headroom", Version: *version}
+	for _, archive := range packages {
+		manifest, root, err := contract.VerifyArchive(archive, contract.Expectations{})
+		if err != nil {
+			return nil, err
+		}
+		if manifest.Version != *version {
+			return nil, fmt.Errorf("package version mismatch")
+		}
+		size, hash, err := contract.FileDigest(archive)
+		if err != nil {
+			return nil, err
+		}
+		release.Packages = append(release.Packages, contract.ReleasePackage{Platform: manifest.Platform, Architecture: manifest.Architecture, AssetName: manifest.AssetName, Size: size, SHA256: hash, PackageManifestPath: root + "/" + contract.PackageManifestName, Components: manifest.Components})
+	}
+	sort.Slice(release.Packages, func(i, j int) bool {
+		return release.Packages[i].Platform+"/"+release.Packages[i].Architecture < release.Packages[j].Platform+"/"+release.Packages[j].Architecture
+	})
+	encoded, err := json.Marshal(release)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = contract.DecodeReleaseManifest(strings.NewReader(string(encoded))); err != nil {
+		return nil, err
+	}
+	if err := contract.WriteJSON(*output, release); err != nil {
+		return nil, err
+	}
+	return release, nil
+}
+
+func materializeLinks(args []string) (any, error) {
+	set := flag.NewFlagSet("materialize-links", flag.ContinueOnError)
+	root := set.String("root", "", "package root")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	if err := contract.MaterializeLinks(*root); err != nil {
+		return nil, err
+	}
+	return map[string]string{"root": *root}, nil
+}
+
+type listFlag []string
+
+func (f *listFlag) String() string         { return strings.Join(*f, ",") }
+func (f *listFlag) Set(value string) error { *f = append(*f, value); return nil }
+func nativeArch() string {
+	if runtime.GOARCH == "amd64" {
+		return "x86_64"
+	}
+	return runtime.GOARCH
+}
+func defaultInstallRoot() string {
+	if value := os.Getenv("HEADROOM_INSTALL_ROOT"); value != "" {
+		return value
+	}
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Headroom")
+	}
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" {
+		data = filepath.Join(os.Getenv("HOME"), ".local", "share")
+	}
+	return filepath.Join(data, "headroom")
+}
+func defaultEntryPath() string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(defaultInstallRoot(), "headroom.exe")
+	}
+	return filepath.Join(os.Getenv("HOME"), ".local", "bin", "headroom")
+}

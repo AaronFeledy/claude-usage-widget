@@ -1,13 +1,33 @@
 cmake_minimum_required(VERSION 3.21)
-project(Headroom VERSION 0.1.0 LANGUAGES CXX)
+set(HEADROOM_VERSION "0.1.0" CACHE STRING "Headroom application version")
+project(Headroom VERSION ${HEADROOM_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(HEADROOM_WITH_KDE_TRAY "Use KDE StatusNotifierItem integration when available" ON)
 option(HEADROOM_WITH_LAYER_SHELL "Use LayerShellQt popup placement when available" ON)
+option(HEADROOM_PACKAGE_BUILD "Install a relocatable package runtime" OFF)
+
+if(HEADROOM_PACKAGE_BUILD)
+    set(QT_DEPLOY_PLUGINS_DIR "plugins")
+    set(QT_DEPLOY_QML_DIR "qml")
+    find_program(HEADROOM_PATCHELF patchelf)
+    if(HEADROOM_PATCHELF)
+        set(QT_DEPLOY_USE_PATCHELF TRUE)
+        set(QT_DEPLOY_PATCHELF_EXECUTABLE "${HEADROOM_PATCHELF}")
+    endif()
+endif()
+
+if(HEADROOM_PACKAGE_BUILD AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
+endif()
 
 find_package(Qt6 6.6 REQUIRED COMPONENTS Quick QuickControls2 Widgets Network Svg Test)
+if(HEADROOM_PACKAGE_BUILD AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Qt6 6.6 REQUIRED COMPONENTS WaylandClient)
+endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(HEADROOM_WITH_LAYER_SHELL)
         find_package(LayerShellQt 6.6 QUIET)
@@ -63,10 +83,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND HEADROOM_WITH_KDE_TRAY AND KF6StatusNo
     target_compile_definitions(headroom PRIVATE HEADROOM_KDE_TRAY)
 endif()
 target_link_libraries(headroom PRIVATE headroom-core Qt6::Widgets Qt6::QuickControls2 Qt6::Svg)
+if(HEADROOM_PACKAGE_BUILD AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(headroom PRIVATE Qt6::WaylandClient)
+endif()
 
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 qt_add_qml_module(headroom URI Headroom VERSION 1.0 QML_FILES
-    qml/Theme.qml qml/Main.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml
+    qml/Theme.qml qml/Main.qml qml/ActionButton.qml qml/ProviderCard.qml qml/Meter.qml qml/SettingsPanel.qml qml/StartupSettings.qml qml/AppInfoSettings.qml qml/DiagnosticsPanel.qml qml/BasicStyleDependency.qml
     RESOURCES headroom.svg)
 qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
     ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
@@ -145,3 +168,19 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     install(FILES headroom.svg DESTINATION share/icons/hicolor/scalable/apps)
 endif()
 install(FILES update-guide.html DESTINATION share/headroom)
+if(HEADROOM_PACKAGE_BUILD)
+    if(WIN32)
+        qt_generate_deploy_qml_app_script(
+            TARGET headroom OUTPUT_SCRIPT headroom_deploy_script NO_TRANSLATIONS)
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        if(QT6_INSTALL_PREFIX MATCHES "^/usr(/|$)")
+            qt_generate_deploy_qml_app_script(
+                TARGET headroom OUTPUT_SCRIPT headroom_deploy_script NO_TRANSLATIONS)
+        else()
+            qt_generate_deploy_qml_app_script(
+                TARGET headroom OUTPUT_SCRIPT headroom_deploy_script NO_TRANSLATIONS
+                PRE_EXCLUDE_REGEXES "^/lib" "^/usr/lib")
+        endif()
+    endif()
+    install(SCRIPT ${headroom_deploy_script})
+endif()

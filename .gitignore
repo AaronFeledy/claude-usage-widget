@@ -1,5 +1,7 @@
 obj/
 bin/
+__pycache__/
+/tmp/
 
 # Task-local agent artifacts
 .omo/
