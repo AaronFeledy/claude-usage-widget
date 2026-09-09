@@ -15,6 +15,7 @@ public:
     Result start(int timeoutMilliseconds = 1000);
     QString error() const { return m_error; }
     QString scopeName() const { return m_scopeName; }
+    QString lockPath() const { return m_lockPath; }
 signals:
     void activationRequested();
 private:

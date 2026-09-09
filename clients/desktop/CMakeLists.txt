@@ -82,6 +82,10 @@ if(BUILD_TESTING)
             -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-${feature}-tests.xml,junitxml")
         set_tests_properties(headroom-${feature}-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endforeach()
+    qt_add_executable(headroom-instance-helper tests/instance_helper.cpp)
+    set_target_properties(headroom-instance-helper PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-instance-helper PRIVATE headroom-core)
+    add_dependencies(headroom-instance-tests headroom-instance-helper)
     qt_add_resources(headroom-tray-tests provider-icons PREFIX "/provider-icons" BASE "../shared/provider-icons" FILES
         ../shared/provider-icons/claude.svg ../shared/provider-icons/codex.svg
         ../shared/provider-icons/cursor.svg ../shared/provider-icons/grok.svg)

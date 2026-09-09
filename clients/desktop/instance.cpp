@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFileDevice>
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QLockFile>
@@ -50,7 +51,8 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
     m_lock = new QLockFile(m_lockPath);
     if (!m_lock->tryLock()) {
         QLocalSocket socket;
-        socket.connectToServer(m_scopeName, QIODevice::WriteOnly);
+        socket.setReadBufferSize(9);
+        socket.connectToServer(m_scopeName, QIODevice::ReadWrite);
         if (!socket.waitForConnected(timeoutMilliseconds)) {
             m_error = "Another Headroom instance owns this settings scope but could not be activated.";
             delete m_lock; m_lock = nullptr;
@@ -64,7 +66,22 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
             delete m_lock; m_lock = nullptr;
             return Result::Error;
         }
-        socket.disconnectFromServer();
+        QByteArray acknowledgement;
+        QElapsedTimer timer; timer.start();
+        while (!acknowledgement.contains('\n') && timer.elapsed() < timeoutMilliseconds) {
+            acknowledgement += socket.read(qMax<qint64>(0, 9 - acknowledgement.size()));
+            if (acknowledgement.size() > 8 || socket.bytesAvailable() > 0) break;
+            if (acknowledgement.contains('\n')) break;
+            const int remaining = timeoutMilliseconds - int(timer.elapsed());
+            if (remaining <= 0 || (!socket.waitForReadyRead(remaining) && socket.bytesAvailable() == 0)) break;
+        }
+        acknowledgement += socket.read(qMax<qint64>(0, 9 - acknowledgement.size()));
+        if (acknowledgement != "ok\n") {
+            m_error = "The running Headroom instance did not acknowledge the activation request.";
+            delete m_lock; m_lock = nullptr;
+            return Result::Error;
+        }
+        socket.abort();
         delete m_lock; m_lock = nullptr;
         return Result::Secondary;
     }
@@ -83,14 +100,26 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
         while (auto socket = m_server->nextPendingConnection()) {
             socket->setReadBufferSize(33);
             const auto readActivation = [this, socket] {
+                if (socket->property("headroomActivationComplete").toBool()) return;
                 QByteArray buffered = socket->property("headroomActivation").toByteArray();
                 buffered += socket->read(qMax<qint64>(0, 33 - buffered.size()));
-                if (buffered.size() > 32) { socket->disconnectFromServer(); return; }
+                if (buffered.size() > 32) {
+                    socket->setProperty("headroomActivationComplete", true);
+                    socket->disconnectFromServer(); return;
+                }
                 socket->setProperty("headroomActivation", buffered);
                 if (buffered.contains('\n')) {
-                    if (buffered == "activate\n") emit activationRequested();
+                    socket->setProperty("headroomActivationComplete", true);
+                    if (buffered == "activate\n") {
+                        emit activationRequested();
+                        socket->write("ok\n");
+                        socket->flush();
+                    }
                     socket->disconnectFromServer();
-                } else if (buffered.size() >= 32 || socket->bytesAvailable() > 0) socket->disconnectFromServer();
+                } else if (buffered.size() >= 32 || socket->bytesAvailable() > 0) {
+                    socket->setProperty("headroomActivationComplete", true);
+                    socket->disconnectFromServer();
+                }
             };
             connect(socket, &QLocalSocket::readyRead, this, readActivation);
             connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
