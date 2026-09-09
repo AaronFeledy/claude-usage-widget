@@ -64,9 +64,9 @@ ApplicationWindow {
                         Layout.fillWidth: true; implicitHeight: 300; radius: 12; color: Theme.surface; border.color: Theme.selection
                         ColumnLayout {
                             anchors.centerIn: parent; width: parent.width - 50; spacing: 18
-                            Text { text: window.state.status === "ready" ? "No providers enabled" : "Connect your usage server"; color: Theme.foreground; font.pixelSize: 24; font.weight: Font.Medium; Layout.alignment: Qt.AlignHCenter }
-                            Text { text: window.state.status === "ready" ? "Enable providers on your backend to see their usage here." : "Bring Claude, ChatGPT, Cursor, and Grok into view."; color: Theme.muted; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                            ActionButton { text: window.state.loading ? "Connecting…" : "Connect your backend →"; accent: true; Layout.alignment: Qt.AlignHCenter; onClicked: settings.open() }
+                            Text { text: window.state.status === "ready" ? "No providers enabled" : window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing your local server" : "Connecting to your server") : "Connect your usage server"; color: Theme.foreground; font.pixelSize: 24; font.weight: Font.Medium; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: window.state.status === "ready" ? "Enable providers on your backend to see their usage here." : window.state.status === "connecting" || window.state.status === "offline" ? window.state.message : "Bring Claude, ChatGPT, Cursor, and Grok into view."; color: Theme.muted; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                            ActionButton { text: window.state.status === "connecting" ? (backend.settings.mode === "local" ? "Preparing…" : "Connecting…") : window.state.status === "offline" ? "Connection settings →" : "Connect your backend →"; accent: true; Layout.alignment: Qt.AlignHCenter; onClicked: settings.open() }
                             ActionButton { text: "Preview with sample data"; quiet: true; font.pixelSize: 11; Layout.alignment: Qt.AlignHCenter; onClicked: backend.preview(true) }
                         }
                     }
@@ -96,7 +96,7 @@ ApplicationWindow {
                         Text { text: "headroom"; font.pixelSize: 14; font.weight: Font.DemiBold; color: Theme.foreground }
                         Text {
                             Layout.fillWidth: true; elide: Text.ElideRight; font.pixelSize: 10
-                            text: window.state.demo ? "Preview · sample data" : window.state.status === "offline" ? "Offline" : window.state.loading ? "Refreshing…" : window.state.status === "ready" ? window.state.updated : "Not connected"
+                            text: window.state.demo ? "Preview · sample data" : window.state.status === "offline" ? (window.state.retrySeconds > 0 ? "Offline · retry in " + window.state.retrySeconds + "s" : "Offline · use Refresh to retry") : window.state.loading ? "Refreshing…" : window.state.status === "connecting" ? window.state.message : window.state.status === "ready" ? window.state.updated : "Not connected"
                             color: window.state.demo ? Theme.yellow : window.state.status === "offline" ? Theme.red : Theme.muted
                             HoverHandler { id: statusHover }
                             ToolTip.visible: statusHover.hovered

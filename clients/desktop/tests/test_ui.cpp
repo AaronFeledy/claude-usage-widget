@@ -125,6 +125,12 @@ private slots:
         QTest::qWait(150);
         auto save = findItem(window->contentItem(), "saveConnection"); QVERIFY(save);
         QVERIFY(save->isVisible());
+        auto localMode = findItem(window->contentItem(), "localMode");
+        auto remoteMode = findItem(window->contentItem(), "remoteMode");
+        QVERIFY(localMode); QVERIFY(remoteMode); QVERIFY(remoteMode->property("checked").toBool());
+        auto backendUrl = findItem(window->contentItem(), "backendUrl"); QVERIFY(backendUrl); QVERIFY(backendUrl->isVisible());
+        QVERIFY(localMode->setProperty("checked", true)); QTRY_VERIFY(!remoteMode->property("checked").toBool());
+        QTRY_VERIFY(!backendUrl->isVisible());
         QVERIFY(window->grabWindow().save(capture("headroom-settings.png")));
         auto settingsScroll = window->findChild<QObject *>("settingsScroll"); QVERIFY(settingsScroll);
         auto flickable = settingsScroll->property("contentItem").value<QObject *>(); QVERIFY(flickable);

@@ -15,11 +15,13 @@ Popup {
     Overlay.modal: Rectangle { color: Theme.overlay }
     onOpened: {
         startupService.refresh(); appInfo.refreshServer()
+        localMode.checked = backend.settings.mode === "local"
+        remoteMode.checked = !localMode.checked
         url.text = backend.settings.url; token.text = ""; forget.checked = false
         interval.currentIndex = [15, 30, 60, 120, 300].indexOf(backend.settings.interval)
         if (interval.currentIndex < 0) interval.currentIndex = 2
         notifications.checked = backend.settings.notifications; error.text = ""
-        url.forceActiveFocus()
+        if (remoteMode.checked) url.forceActiveFocus()
     }
     component Caption: Text { color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium }
     component Check: CheckBox {
@@ -54,13 +56,29 @@ Popup {
             Text { text: "Connect Headroom to your usage server."; color: Theme.muted; font.pixelSize: 13 }
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.selection; Layout.topMargin: 4; Layout.bottomMargin: 4 }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
+                Caption { text: "CONNECTION" }
+                ButtonGroup { id: connectionModes }
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 8
+                    RadioButton { id: localMode; objectName: "localMode"; text: "Local server"; ButtonGroup.group: connectionModes; Accessible.name: "Use local server" }
+                    RadioButton { id: remoteMode; objectName: "remoteMode"; text: "Remote server"; ButtonGroup.group: connectionModes; Accessible.name: "Use remote server" }
+                }
+                Text {
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11
+                    text: localMode.checked
+                        ? "Use the bundled server on 127.0.0.1:7823, or attach if a compatible server is already there."
+                        : "Connect to an existing usage server over HTTP or HTTPS."
+                }
+            }
+            ColumnLayout { Layout.fillWidth: true; spacing: 8
+                visible: remoteMode.checked
                 Caption { text: "BACKEND ADDRESS" }
                 Entry { id: url; objectName: "backendUrl"; placeholderText: "http://arrowone:7823"; Accessible.name: "Backend address" }
                 Text { text: "The base address of your existing usage API."; color: Theme.muted; font.pixelSize: 11 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 Caption { text: "BEARER TOKEN" }
-                Entry { id: token; objectName: "bearerToken"; echoMode: TextInput.Password; placeholderText: backend.settings.hasToken && url.text.trim() === backend.settings.url ? "Saved token · leave empty to keep" : "Enter token, if your server requires one"; Accessible.name: "Bearer token" }
+                Entry { id: token; objectName: "bearerToken"; echoMode: TextInput.Password; placeholderText: backend.settings.hasToken && (localMode.checked ? backend.settings.mode === "local" : backend.settings.mode === "remote" && url.text.trim() === backend.settings.url) ? "Saved token · leave empty to keep" : "Enter token, if your server requires one"; Accessible.name: "Bearer token" }
                 Text { text: "Stored locally in an owner-only settings file."; color: Theme.muted; font.pixelSize: 11 }
                 Check { id: forget; visible: backend.settings.hasToken; text: "Remove saved token"; palette.windowText: Theme.foreground; font.pixelSize: 12 }
             }
@@ -99,7 +117,7 @@ Popup {
                 ActionButton { text: "Cancel"; quiet: true; onClicked: panel.close() }
                 Item { Layout.fillWidth: true }
                 ActionButton { objectName: "saveConnection"; text: "Save & connect  →"; accent: true; onClicked: {
-                    error.text = backend.saveSettings(url.text, token.text, [15, 30, 60, 120, 300][interval.currentIndex], notifications.checked, backend.settings.primary, forget.checked)
+                    error.text = backend.saveSettings(localMode.checked ? "local" : "remote", url.text, token.text, [15, 30, 60, 120, 300][interval.currentIndex], notifications.checked, backend.settings.primary, forget.checked)
                     if (!error.text) { token.text = ""; panel.close() }
                 } }
             }

@@ -112,7 +112,9 @@ and isolated-config modes. On the first normal Windows launch, Headroom imports
 schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new
 settings file is absent. The legacy file remains untouched and a create-once
 backup is kept beside the new settings. Imported empty API addresses retain local
-mode; the managed local-server implementation is part of the next migration batch.
+mode. Local mode probes and attaches to a compatible server on `127.0.0.1:7823`,
+or starts an adjacent bundled `usage-server` executable with bounded readiness and
+restart handling. Headroom stops only a server process that it started.
 
 Settings shows the app version and checks the configured server's authenticated
 health/version endpoint. **Check for updates** reads the public project release

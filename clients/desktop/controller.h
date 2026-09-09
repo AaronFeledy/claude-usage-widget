@@ -9,6 +9,7 @@
 #include <QVariantList>
 #include <QSet>
 #include "settings.h"
+#include "managedserver.h"
 
 class Controller : public QObject {
     Q_OBJECT
@@ -18,7 +19,7 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
 public:
     explicit Controller(bool demo = false, const QString &configPath = {}, QObject *parent = nullptr,
-                        bool allowAutomaticMigration = true);
+                        bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {});
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -26,17 +27,19 @@ public:
     Q_INVOKABLE void clearDiagnostics();
     Q_INVOKABLE QString diagnosticText() const;
     // C++ integration only: the bearer token is never a QML property.
-    QString backendUrl() const { return m_url; }
+    QString backendUrl() const;
     QString backendToken() const { return m_token; }
     bool startupPreference() const { return m_settingsService.value().startup; }
     bool startupMigrationPending() const { return m_settingsService.value().startupMigrationPending; }
     QString settingsPath() const { return m_settingsService.path(); }
     QString saveStartupPreference(bool enabled);
     QString completeStartupMigration();
+    // C++ integration seam for update preparation; attached/remote servers are untouched.
+    void stopOwnedServer() { m_server.stopOwned(); }
     Q_INVOKABLE void refresh();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
-    Q_INVOKABLE QString saveSettings(QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken);
+    Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken);
     Q_INVOKABLE void preview(bool enabled);
     Q_INVOKABLE QVariantMap concern(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantList notches(const QString &provider, const QVariantMap &bucket) const;
@@ -60,7 +63,8 @@ private:
     void log(const QString &category, const QString &message);
     void resetRetry();
     void cancel();
-    QString writeSettings(const QString &url, const QString &token, int interval, bool notifications, const QString &primary);
+    void requestUsage();
+    QString writeSettings(const QString &mode, const QString &url, const QString &token, int interval, bool notifications, const QString &primary);
     QStringList m_order;
     SettingsService m_settingsService;
     QString m_mode = "remote", m_url, m_token, m_primary = "Claude", m_message, m_status = "setup";
@@ -68,12 +72,14 @@ private:
     QString m_errorKind;
     QVariantList m_diagnostics;
     bool m_notifications = true, m_demo = false, m_loading = false;
+    bool m_waitingForUsageRetry = false;
     qint64 m_lastGood = 0;
     QVariantList m_providers;
     using MeterKey = QPair<QString, QString>;
     QHash<MeterKey, Usage::WarningState> m_warningStates;
     QHash<MeterKey, QVariantMap> m_concerns;
     QNetworkAccessManager m_network;
+    ManagedServer m_server;
     QPointer<QNetworkReply> m_reply;
     QTimer m_poll, m_clock;
 };

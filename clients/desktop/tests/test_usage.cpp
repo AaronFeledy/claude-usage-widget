@@ -13,6 +13,10 @@
 class UsageTest : public QObject {
     Q_OBJECT
 private slots:
+    void cleanup() {
+        qunsetenv("HEADROOM_FIXTURE_MODE");
+        qunsetenv("HEADROOM_FIXTURE_RECORD");
+    }
     void parseContract() {
         QVariantList providers; QVERIFY(Usage::parse(Usage::demo(), providers)); QCOMPARE(providers.size(), 4);
         QCOMPARE(providers[0].toMap()["provider_name"].toString(), "Claude");
@@ -262,7 +266,7 @@ private slots:
         Controller controller(false, dir.filePath("settings.json"));
         QSignalSpy alerts(&controller, &Controller::usageAlert);
         const QString url = QString("http://127.0.0.1:%1").arg(server.serverPort());
-        QVERIFY(controller.saveSettings(url, "", 60, true, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
         auto concern = [&] { return controller.concern("Claude", QVariantMap{{"id", "session"}}); };
         QCOMPARE(concern()["severity"].toInt(), 0); QCOMPARE(alerts.size(), 0);
@@ -276,11 +280,11 @@ private slots:
             QCOMPARE(concern()["color"].toString(), controller.warningColor(step.severity));
             QCOMPARE(controller.concern("Claude", QVariantMap{{"id", "weekly"}})["severity"].toInt(), 0);
         }
-        QVERIFY(controller.saveSettings(url, "", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings("remote", url, "", 60, false, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool());
         used = 80; controller.refresh(); QTRY_VERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
-        QVERIFY(controller.saveSettings(url, "", 60, true, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings("remote", url, "", 60, true, "Claude", false).isEmpty());
         QTRY_VERIFY(!controller.state()["loading"].toBool()); QCOMPARE(alerts.size(), 3);
         httpStatus = 503; controller.refresh(); QTRY_COMPARE(controller.state()["status"].toString(), "offline");
         QCOMPARE(concern()["severity"].toInt(), 3); QCOMPARE(alerts.size(), 3);
@@ -311,7 +315,7 @@ private slots:
             });
         });
         Controller controller(false, path);
-        QVERIFY(controller.saveSettings(QString("http://127.0.0.1:%1/base/").arg(server.serverPort()), "test-secret", 60, false, "Claude", false).isEmpty());
+        QVERIFY(controller.saveSettings("remote", QString("http://127.0.0.1:%1/base/").arg(server.serverPort()), "test-secret", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), "ready");
         QVERIFY(received.startsWith("GET /base/api/v1/usage "));
         QVERIFY(HttpAssertions::hasHeader(received, "Authorization", "Bearer test-secret"));
@@ -363,6 +367,79 @@ private slots:
         for (int i = 0; i < 502; ++i) controller.moveProvider(i % 2 ? "Claude" : "Grok", i % 2 ? "Grok" : "Claude", false);
         QCOMPARE(controller.diagnostics().size(), 500);
         QVERIFY(!controller.diagnosticText().contains("test-secret"));
+    }
+    void localUsageTransportFailureKeepsBackoff() {
+        QTemporaryDir dir; QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
+        int healthRequests = 0, usageRequests = 0;
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            while (auto socket = server.nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                    if (socket->property("handled").toBool()) return;
+                    const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    if (!request.contains("\r\n\r\n")) return;
+                    socket->setProperty("handled", true);
+                    if (request.startsWith("GET /api/v1/health ")) {
+                        ++healthRequests;
+                        const QByteArray body = R"({"status":"ok","version":"fixture","providers":[]})";
+                        socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                            + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+                    } else if (request.startsWith("GET /api/v1/usage ")) ++usageRequests;
+                    socket->disconnectFromHost();
+                });
+                connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            }
+        });
+        ManagedServerOptions options; options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(server.serverPort()));
+        options.executablePath = dir.filePath("must-not-spawn"); options.probeTimeoutMs = 100;
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
+        QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
+        QVERIFY(usageRequests >= 1 && usageRequests <= 2); // Qt may transparently retry one idempotent GET.
+        QTRY_VERIFY(healthRequests >= 2);
+        QVERIFY(controller.state()["retrySeconds"].toInt() > 100);
+        QCOMPARE(controller.diagnosticText().count("Requesting usage snapshot."), 1);
+        const int stableHealth = healthRequests, stableUsage = usageRequests;
+        QTest::qWait(300);
+        QCOMPARE(usageRequests, stableUsage); QCOMPARE(healthRequests, stableHealth);
+        QCOMPARE(controller.diagnosticText().count("Requesting usage snapshot."), 1);
+        QCOMPARE(controller.state()["status"].toString(), QString("offline"));
+    }
+    void localModeIgnoresHiddenInvalidRemoteAddress() {
+        QTemporaryDir dir; ManagedServerOptions options;
+        options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(65534));
+        options.executablePath = dir.filePath("missing-server"); options.probeTimeoutMs = 50;
+        const QString path = dir.filePath("settings.json");
+        SettingsService service(path, false); auto saved = service.value();
+        saved.connectionMode = "remote"; saved.url = "https://example.test/base";
+        QVERIFY(service.save(saved, true).isEmpty());
+        Controller controller(false, path, nullptr, false, options);
+        QVERIFY(controller.saveSettings("local", "not a valid hidden URL", "", 60, false, "Claude", false).isEmpty());
+        QCOMPARE(controller.settings()["mode"].toString(), QString("local"));
+        QCOMPARE(controller.settings()["url"].toString(), QString("https://example.test/base"));
+        QCOMPARE(controller.backendUrl(), options.localUrl.toString());
+    }
+    void terminalLocalFailureCancelsStaleUsage() {
+        QTemporaryDir dir; const auto record = dir.filePath("record");
+        QTcpServer reservation; QVERIFY(reservation.listen(QHostAddress::LocalHost));
+        const quint16 port = reservation.serverPort(); reservation.close();
+        qputenv("HEADROOM_FIXTURE_MODE", "ready-crash"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
+        ManagedServerOptions options;
+        options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(port));
+        options.executablePath = QStringLiteral(MANAGED_FIXTURE_PATH);
+        options.probeTimeoutMs = 100; options.readinessIntervalMs = 25; options.readinessAttempts = 30; options.restartLimit = 2;
+        Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
+        QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(controller.state()["errorKind"].toString(), QString("restart"), 15000);
+        QCOMPARE(controller.state()["status"].toString(), QString("offline"));
+        QVERIFY(!controller.state()["loading"].toBool());
+        QCOMPARE(controller.state()["retrySeconds"].toInt(), 0);
+        QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll().count("start\n"), 3);
+        QTest::qWait(300);
+        QCOMPARE(controller.state()["status"].toString(), QString("offline"));
+        QVERIFY(!controller.state()["loading"].toBool());
+        file.seek(0); QCOMPARE(file.readAll().count("start\n"), 3);
+        qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
 };
 QTEST_GUILESS_MAIN(UsageTest)

@@ -28,7 +28,7 @@ endif()
 
 qt_add_library(headroom-core STATIC
     controller.cpp usage.cpp warning.cpp trayvisual.cpp startup.cpp appinfo.cpp popup.cpp
-    settings.cpp instance.cpp)
+    settings.cpp instance.cpp managedserver.cpp jobobject.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(headroom-core PUBLIC HEADROOM_VERSION="${PROJECT_VERSION}")
@@ -74,6 +74,12 @@ qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../share
 
 include(CTest)
 if(BUILD_TESTING)
+    qt_add_executable(headroom-managed-server-fixture tests/managed_server_fixture.cpp)
+    set_target_properties(headroom-managed-server-fixture PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-managed-server-fixture PRIVATE Qt6::Network)
+    qt_add_executable(headroom-managed-server-owner tests/managed_server_owner.cpp)
+    set_target_properties(headroom-managed-server-owner PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-managed-server-owner PRIVATE headroom-core)
     foreach(feature startup appinfo tray popup settings instance)
         qt_add_executable(headroom-${feature}-tests tests/test_${feature}.cpp)
         set_target_properties(headroom-${feature}-tests PROPERTIES WIN32_EXECUTABLE FALSE)
@@ -92,6 +98,9 @@ if(BUILD_TESTING)
     qt_add_executable(headroom-tests tests/test_usage.cpp)
     set_target_properties(headroom-tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-tests PRIVATE headroom-core Qt6::Test)
+    target_compile_definitions(headroom-tests PRIVATE
+        MANAGED_FIXTURE_PATH="$<TARGET_FILE:headroom-managed-server-fixture>")
+    add_dependencies(headroom-tests headroom-managed-server-fixture)
     qt_add_executable(headroom-ui-tests tests/test_ui.cpp)
     set_target_properties(headroom-ui-tests PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-ui-tests PRIVATE headroom-core Qt6::Test Qt6::Widgets Qt6::QuickControls2)
@@ -105,6 +114,16 @@ if(BUILD_TESTING)
     add_test(NAME headroom-tests COMMAND headroom-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-tests.xml,junitxml")
     set_tests_properties(headroom-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    qt_add_executable(headroom-managedserver-tests tests/test_managedserver.cpp)
+    set_target_properties(headroom-managedserver-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-managedserver-tests PRIVATE headroom-core Qt6::Test Qt6::Network)
+    target_compile_definitions(headroom-managedserver-tests PRIVATE
+        FIXTURE_PATH="$<TARGET_FILE:headroom-managed-server-fixture>"
+        OWNER_PATH="$<TARGET_FILE:headroom-managed-server-owner>")
+    add_dependencies(headroom-managedserver-tests headroom-managed-server-fixture headroom-managed-server-owner)
+    add_test(NAME headroom-managedserver-tests COMMAND headroom-managedserver-tests
+        -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-managedserver-tests.xml,junitxml")
+    set_tests_properties(headroom-managedserver-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 install(TARGETS headroom RUNTIME DESTINATION bin)
