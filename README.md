@@ -62,7 +62,7 @@ the same restart instruction and performs no activation attempt.
 ## Local and remote operation
 
 ```text
-Windows default or Linux Local mode
+Local mode (default on Windows and Linux)
 
   Headroom ── GET /api/v1/usage ──> usage-server on 127.0.0.1:7823
       │                                  │
@@ -82,11 +82,10 @@ and every remote server remain independently owned. The server binds to
 `127.0.0.1:7823` by default and refuses any non-loopback bind without a bearer
 token.
 
-Linux starts in Remote mode because provider credentials commonly live on a
-separate server or WSL deployment. Select Local in Connection settings to use an
-adjacent packaged server. Windows starts in Local mode. Either platform can use
-a normalized remote HTTP(S) base URL; browser credential forwarding to a remote
-server requires HTTPS.
+Windows and Linux start in Local mode at `http://127.0.0.1:7823`. To use another
+server, select Remote in Connection settings and enter its HTTP(S) base URL.
+Existing saved connection settings take precedence over the default. Browser
+credential forwarding to a remote server requires HTTPS.
 
 ## Migrate from Claude Usage Widget
 

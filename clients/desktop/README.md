@@ -56,8 +56,9 @@ verified per-user installer and stable launcher described in the repository
 
 ## Connect
 
-Windows starts in **Local** mode. Linux starts in **Remote** mode; choose Local
-to use an adjacent packaged or installed server. In Remote mode, enter the
+Windows and Linux start in **Local** mode at `http://127.0.0.1:7823`, attaching to
+an existing server or starting an adjacent packaged server. Saved connection
+settings take precedence. To override the default, choose **Remote**, enter the
 server's base HTTP(S) address and bearer token, then choose **Save & connect**.
 Reverse-proxy path prefixes are supported.
 The client polls `GET /api/v1/usage`; Refresh reads the server's current cache,

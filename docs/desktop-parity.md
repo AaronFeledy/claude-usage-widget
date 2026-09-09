@@ -19,10 +19,10 @@ and rollback implementation; differences below are intentional unless stated.
 | Diagnostics | Keeps 500 controlled session events with UTC timestamps; copy and clear are available; tokens, URLs, raw bodies, credentials, and account output are omitted |
 | Updates | Official packages make one delayed check, automatically download and verify newer native packages, and apply them transactionally on restart; exact-version repair is available for a trusted incomplete auxiliary component |
 
-Windows defaults to Local mode and can use the packaged current-user helper to
-forward supported Cursor and Grok browser cookies to loopback HTTP or remote
-HTTPS. Linux defaults to Remote mode and uses server-side credential files or
-the WSL sync helper; users can select Local mode when an adjacent server exists.
+Both platforms default to Local mode; saved remote settings override it. Windows
+can use the packaged current-user helper to forward supported Cursor and Grok
+browser cookies to loopback HTTP or remote HTTPS. Linux uses server-side
+credential files or the WSL sync helper.
 
 ## Tray and window behavior
 

@@ -26,9 +26,9 @@ and configuration name for ChatGPT remains `Codex`.
 
 ## Architecture and compatibility
 
-Windows defaults to Local mode. Headroom probes `127.0.0.1:7823`, attaches to a
-compatible server, or starts the adjacent `usage-server.exe`. Linux defaults to
-Remote mode but can select Local when an adjacent server exists. Headroom owns,
+Both platforms default to Local mode. Headroom probes `127.0.0.1:7823`, attaches
+to a compatible server, or starts the adjacent `usage-server` executable. A saved
+remote address overrides this default. Headroom owns,
 stops, or hands off only a server process it started. Remote mode accepts a
 normalized HTTP(S) base URL; nonempty bearer tokens are sent as
 `Authorization: Bearer <token>`.

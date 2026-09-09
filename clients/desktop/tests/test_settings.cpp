@@ -28,6 +28,36 @@ QJsonObject readObject(const QString &path)
 class SettingsTest : public QObject {
     Q_OBJECT
 private slots:
+    void defaultsToLocalAndPreservesOverrides_data()
+    {
+        QTest::addColumn<int>("platform");
+        QTest::newRow("linux") << int(SettingsService::Platform::Linux);
+        QTest::newRow("windows") << int(SettingsService::Platform::Windows);
+    }
+    void defaultsToLocalAndPreservesOverrides()
+    {
+        QFETCH(int, platform);
+        const auto targetPlatform = SettingsService::Platform(platform);
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath("settings.json");
+        SettingsService fresh(path, true, targetPlatform);
+        QCOMPARE(fresh.value().connectionMode, QString("local"));
+        QVERIFY(fresh.value().url.isEmpty());
+        QVERIFY(fresh.value().token.isEmpty());
+        QVERIFY(!QFileInfo::exists(path));
+
+        // A pre-mode settings file with a saved URL is already an override.
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"url\":\"https://usage.example.test/base\",\"token\":\"fixture-token\"}")));
+        SettingsService existing(path, true, targetPlatform);
+        QCOMPARE(existing.value().connectionMode, QString("remote"));
+        QCOMPARE(existing.value().url, QString("https://usage.example.test/base"));
+        QCOMPARE(existing.value().token, QString("fixture-token"));
+        SettingsService reopened(path, true, targetPlatform);
+        QCOMPARE(reopened.value().connectionMode, QString("remote"));
+        QCOMPARE(reopened.value().url, existing.value().url);
+        QCOMPARE(reopened.value().token, existing.value().token);
+    }
+
     void importsLegacySchemas_data()
     {
         QTest::addColumn<int>("schema");
@@ -76,8 +106,8 @@ private slots:
         const QString linuxPath = dir.filePath("linux/settings.json");
         QVERIFY(writeFile(linuxPath, QByteArrayLiteral("{\"url\":\"\",\"token\":\"\",\"interval\":60}")));
         SettingsService linuxSettings(linuxPath, true, SettingsService::Platform::Linux);
-        QCOMPARE(linuxSettings.value().connectionMode, QString("remote"));
-        QCOMPARE(readObject(linuxPath).value("connectionMode").toString(), QString("remote"));
+        QCOMPARE(linuxSettings.value().connectionMode, QString("local"));
+        QCOMPARE(readObject(linuxPath).value("connectionMode").toString(), QString("local"));
         QCOMPARE(readFile(linuxPath + ".bak"), QByteArrayLiteral("{\"url\":\"\",\"token\":\"\",\"interval\":60}"));
 #ifndef Q_OS_WIN
         QVERIFY(!(QFile::permissions(linuxPath + ".bak") &

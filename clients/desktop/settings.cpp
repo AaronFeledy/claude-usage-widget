@@ -77,7 +77,6 @@ SettingsService::SettingsService(QString path, bool allowAutomaticMigration,
       m_legacyBackupPath(m_path + ".legacy.bak"),
       m_allowAutomaticMigration(allowAutomaticMigration)
 {
-    m_value.connectionMode = isWindows() ? "local" : "remote";
     m_value.order = normalizeOrder({}, m_value.primary);
     if (QFileInfo::exists(m_path)) {
         loadHeadroom();
@@ -166,7 +165,7 @@ bool SettingsService::loadHeadroom()
     const QString url = rawUrl.trimmed();
     QString mode = readString(m_document, "connectionMode");
     const bool needsMode = mode != "local" && mode != "remote";
-    if (needsMode) mode = isWindows() && rawUrl.isEmpty() ? "local" : "remote";
+    if (needsMode) mode = url.isEmpty() ? "local" : "remote";
     m_value.connectionMode = mode;
     m_value.url = url;
     m_value.token = rawToken.trimmed();

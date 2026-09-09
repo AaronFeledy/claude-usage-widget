@@ -91,7 +91,7 @@ private slots:
         QCOMPARE(rows[3].toMap()["status_text"].toString(), QString("On-demand enabled"));
     }
     void endpoints() {
-        QCOMPARE(Usage::endpoint("http://arrowone:7823/").toString(), "http://arrowone:7823/api/v1/usage");
+        QCOMPARE(Usage::endpoint("http://usage.example.test:7823/").toString(), "http://usage.example.test:7823/api/v1/usage");
         QCOMPARE(Usage::endpoint("https://example.org/prefix/").toString(), "https://example.org/prefix/api/v1/usage");
         for (auto url : {"ftp://example.org", "http://user:secret@server", "http://", "https://server/?token=x", "https://server/#x"}) QVERIFY(Usage::endpoint(url).isEmpty());
     }
@@ -398,7 +398,7 @@ private slots:
         QCOMPARE(controller.diagnostics().size(), 500);
         QVERIFY(!controller.diagnosticText().contains("test-secret"));
     }
-    void localUsageTransportFailureKeepsBackoff() {
+    void defaultLocalUsageTransportFailureKeepsBackoff() {
         QTemporaryDir dir; QTcpServer server; QVERIFY(server.listen(QHostAddress::LocalHost));
         int healthRequests = 0, usageRequests = 0;
         connect(&server, &QTcpServer::newConnection, this, [&] {
@@ -423,7 +423,8 @@ private slots:
         ManagedServerOptions options; options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(server.serverPort()));
         options.executablePath = dir.filePath("must-not-spawn"); options.probeTimeoutMs = 1000;
         Controller controller(false, dir.filePath("settings.json"), nullptr, false, options, disabledCredentials());
-        QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
+        QCOMPARE(controller.settings()["mode"].toString(), QString("local"));
+        QCOMPARE(controller.backendUrl(), options.localUrl.toString());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(usageRequests >= 1 && usageRequests <= 2); // Qt may transparently retry one idempotent GET.
         QTRY_VERIFY(healthRequests >= 2);

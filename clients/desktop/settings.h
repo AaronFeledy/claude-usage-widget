@@ -5,7 +5,7 @@
 #include <QStringList>
 
 struct DesktopSettings {
-    QString connectionMode = "remote";
+    QString connectionMode = "local";
     QString url;
     QString token;
     int interval = 60;

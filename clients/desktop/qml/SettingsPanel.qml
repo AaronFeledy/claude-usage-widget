@@ -88,7 +88,7 @@ Popup {
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 visible: remoteMode.checked
                 Caption { text: "BACKEND ADDRESS" }
-                Entry { id: url; objectName: "backendUrl"; placeholderText: "http://arrowone:7823"; Accessible.name: "Backend address" }
+                Entry { id: url; objectName: "backendUrl"; placeholderText: "http://localhost:7823"; Accessible.name: "Backend address" }
                 Text { text: "The base address of your existing usage API."; color: Theme.muted; font.pixelSize: 11 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
