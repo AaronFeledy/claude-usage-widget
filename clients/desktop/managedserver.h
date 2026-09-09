@@ -9,7 +9,8 @@
 struct ManagedServerOptions {
     QUrl localUrl = QUrl(QStringLiteral("http://127.0.0.1:7823/"));
     QString executablePath;
-    int probeTimeoutMs = 1500;
+    int probeTimeoutMs = 3000;
+    int readinessProbeTimeoutMs = 1000;
     int readinessIntervalMs = 100;
     int readinessAttempts = 40;
     int restartLimit = 3;

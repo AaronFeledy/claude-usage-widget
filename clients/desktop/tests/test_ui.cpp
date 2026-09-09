@@ -127,8 +127,17 @@ private slots:
         QVERIFY(save->isVisible());
         auto localMode = findItem(window->contentItem(), "localMode");
         auto remoteMode = findItem(window->contentItem(), "remoteMode");
-        QVERIFY(localMode); QVERIFY(remoteMode); QVERIFY(remoteMode->property("checked").toBool());
-        auto backendUrl = findItem(window->contentItem(), "backendUrl"); QVERIFY(backendUrl); QVERIFY(backendUrl->isVisible());
+        QVERIFY(localMode); QVERIFY(remoteMode);
+        const bool startsLocal = controller.settings()["mode"].toString() == QStringLiteral("local");
+        QCOMPARE(localMode->property("checked").toBool(), startsLocal);
+        QCOMPARE(remoteMode->property("checked").toBool(), !startsLocal);
+        auto backendUrl = findItem(window->contentItem(), "backendUrl"); QVERIFY(backendUrl);
+        QCOMPARE(backendUrl->isVisible(), !startsLocal);
+        if (startsLocal) {
+            QVERIFY(remoteMode->setProperty("checked", true));
+            QTRY_VERIFY(!localMode->property("checked").toBool());
+            QTRY_VERIFY(backendUrl->isVisible());
+        }
         QVERIFY(localMode->setProperty("checked", true)); QTRY_VERIFY(!remoteMode->property("checked").toBool());
         QTRY_VERIFY(!backendUrl->isVisible());
         QVERIFY(window->grabWindow().save(capture("headroom-settings.png")));

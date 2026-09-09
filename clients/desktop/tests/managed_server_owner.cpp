@@ -11,9 +11,10 @@ int main(int argc, char **argv)
     ManagedServerOptions options;
     options.executablePath = app.arguments().at(1);
     options.localUrl = QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(app.arguments().at(2)));
-    options.probeTimeoutMs = 250;
-    options.readinessIntervalMs = 25;
-    options.readinessAttempts = 20;
+    options.probeTimeoutMs = 3000;
+    options.readinessProbeTimeoutMs = 750;
+    options.readinessIntervalMs = 50;
+    options.readinessAttempts = 30;
     ManagedServer server(options);
     QObject::connect(&server, &ManagedServer::available, &app, [&] {
         QFile marker(app.arguments().at(3));

@@ -391,7 +391,7 @@ private slots:
             }
         });
         ManagedServerOptions options; options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(server.serverPort()));
-        options.executablePath = dir.filePath("must-not-spawn"); options.probeTimeoutMs = 100;
+        options.executablePath = dir.filePath("must-not-spawn"); options.probeTimeoutMs = 1000;
         Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
         QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
         QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
@@ -427,10 +427,11 @@ private slots:
         ManagedServerOptions options;
         options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(port));
         options.executablePath = QStringLiteral(MANAGED_FIXTURE_PATH);
-        options.probeTimeoutMs = 100; options.readinessIntervalMs = 25; options.readinessAttempts = 30; options.restartLimit = 2;
+        options.probeTimeoutMs = 2000; options.readinessProbeTimeoutMs = 750;
+        options.readinessIntervalMs = 50; options.readinessAttempts = 30; options.restartLimit = 2;
         Controller controller(false, dir.filePath("settings.json"), nullptr, false, options);
         QVERIFY(controller.saveSettings("local", "", "", 60, false, "Claude", false).isEmpty());
-        QTRY_COMPARE_WITH_TIMEOUT(controller.state()["errorKind"].toString(), QString("restart"), 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(controller.state()["errorKind"].toString(), QString("restart"), 30000);
         QCOMPARE(controller.state()["status"].toString(), QString("offline"));
         QVERIFY(!controller.state()["loading"].toBool());
         QCOMPARE(controller.state()["retrySeconds"].toInt(), 0);

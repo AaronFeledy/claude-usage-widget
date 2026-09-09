@@ -78,7 +78,7 @@ jobs:
           if ($testExit -ne 0) {
             $log = "clients/desktop/build-ci/Testing/Temporary/LastTest.log"
             if (Test-Path $log) { Get-Content -Raw $log }
-            Get-ChildItem "clients/desktop/build-ci" -Filter "headroom-*-tests.xml" | ForEach-Object {
+            Get-ChildItem "clients/desktop/build-ci" -Filter "headroom*tests.xml" | ForEach-Object {
               Write-Host "===== $($_.Name) ====="
               Get-Content -Raw $_.FullName
             }

@@ -154,12 +154,14 @@ void ManagedServer::cancelAsync()
 void ManagedServer::probe(ProbePurpose purpose)
 {
     if (m_mode != QStringLiteral("local") || m_probe) return;
+    const int timeoutMs = purpose == ProbePurpose::Initial
+        ? m_options.probeTimeoutMs : m_options.readinessProbeTimeoutMs;
     QUrl endpoint = m_options.localUrl.resolved(QUrl(QStringLiteral("api/v1/health")));
     QNetworkRequest request(endpoint);
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("User-Agent", "Headroom/" HEADROOM_VERSION);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-    request.setTransferTimeout(m_options.probeTimeoutMs);
+    request.setTransferTimeout(timeoutMs);
     if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
     const quint64 generation = m_generation;
     auto reply = m_network.get(request);
@@ -171,7 +173,7 @@ void ManagedServer::probe(ProbePurpose purpose)
         reply->setProperty("headroomTimedOut", true);
         if (!reply->isFinished()) reply->abort();
     });
-    timeout->start(m_options.probeTimeoutMs);
+    timeout->start(timeoutMs);
     connect(reply, &QIODevice::readyRead, reply, [reply] {
         if (reply->bytesAvailable() > maximumHealthBytes) reply->abort();
     });
@@ -179,7 +181,7 @@ void ManagedServer::probe(ProbePurpose purpose)
         if (m_probe == reply) m_probe.clear();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const auto error = reply->error();
-        const QByteArray body = reply->readAll();
+        const QByteArray body = reply->isOpen() ? reply->readAll() : QByteArray();
         ProbeResult result = ProbeResult::NetworkFailure;
         if (reply->property("headroomTimedOut").toBool()) result = ProbeResult::TimedOut;
         else if (status == 401 || status == 403) result = ProbeResult::AuthRejected;

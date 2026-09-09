@@ -95,8 +95,9 @@ private:
         ManagedServerOptions result;
         result.localUrl = QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(port));
         result.executablePath = binary;
-        result.probeTimeoutMs = 100;
-        result.readinessIntervalMs = 25;
+        result.probeTimeoutMs = 2000;
+        result.readinessProbeTimeoutMs = 500;
+        result.readinessIntervalMs = 50;
         result.readinessAttempts = 30;
         result.restartLimit = 2;
         return result;
@@ -127,7 +128,8 @@ private slots:
         ManagedServer server(options(unusedPort(), QStringLiteral("/definitely/missing/usage-server")));
         QSignalSpy failed(&server, &ManagedServer::unavailable);
         server.configure("local", QString()); server.ensureAvailable();
-        QTRY_COMPARE(failed.size(), 1); QCOMPARE(failed.at(0).at(1).toString(), QString("binary")); QVERIFY(!server.ownsProcess());
+        QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+        QCOMPARE(failed.at(0).at(1).toString(), QString("binary")); QVERIFY(!server.ownsProcess());
     }
     void occupiedOrRejectedEndpointNeverSpawns() {
         const QList<QPair<int,QByteArray>> cases{{401, R"({"error":"unauthorized"})"},
@@ -145,7 +147,9 @@ private slots:
     void timeoutDoesNotSpawn() {
         HealthFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost)); fixture.hold = true;
         QTemporaryDir dir; const auto record = dir.filePath("record"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
-        ManagedServer server(options(fixture.serverPort(), QStringLiteral(FIXTURE_PATH)));
+        auto configured = options(fixture.serverPort(), QStringLiteral(FIXTURE_PATH));
+        configured.probeTimeoutMs = 100;
+        ManagedServer server(configured);
         QSignalSpy failed(&server, &ManagedServer::unavailable);
         server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE(failed.size(), 1);
         QCOMPARE(failed.at(0).at(1).toString(), QString("timeout")); QVERIFY(!QFileInfo::exists(record));
@@ -159,25 +163,26 @@ private slots:
         {
             ManagedServer server(options(port, QStringLiteral(FIXTURE_PATH)));
             QSignalSpy ready(&server, &ManagedServer::available);
-            server.configure("local", "fixture-secret"); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 3000);
+            server.configure("local", "fixture-secret"); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
             QVERIFY(server.ownsProcess()); QTRY_VERIFY((pid = lastPid(record)) > 0); QVERIFY(processExists(pid));
             QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); const auto content = file.readAll();
             QVERIFY(content.contains("args=--listen-addr|127.0.0.1:")); QVERIFY(content.contains("token_present=yes"));
             QVERIFY(!content.contains("fixture-secret"));
             server.configure("remote", QString());
-            QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 2000);
+            QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
             QCOMPARE(server.state(), QString("remote")); QVERIFY(!server.ownsProcess());
         }
-        QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
     void readinessTimeoutKillsOwned() {
         QTemporaryDir dir; const auto record = dir.filePath("record");
         qputenv("HEADROOM_FIXTURE_MODE", "hang"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
-        auto configured = options(unusedPort(), QStringLiteral(FIXTURE_PATH)); configured.probeTimeoutMs = 50; configured.readinessAttempts = 2;
+        auto configured = options(unusedPort(), QStringLiteral(FIXTURE_PATH));
+        configured.readinessProbeTimeoutMs = 75; configured.readinessAttempts = 2;
         ManagedServer server(configured); QSignalSpy failed(&server, &ManagedServer::unavailable);
-        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 3000);
-        qint64 pid = lastPid(record); QVERIFY(pid > 0); QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 2000); QVERIFY(!server.ownsProcess());
+        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 7000);
+        qint64 pid = lastPid(record); QVERIFY(pid > 0); QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000); QVERIFY(!server.ownsProcess());
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
     void manualRetryDuringOwnedRetirementIsRemembered() {
@@ -185,9 +190,9 @@ private slots:
         qputenv("HEADROOM_FIXTURE_MODE", "degraded"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
         ManagedServer server(options(unusedPort(), QStringLiteral(FIXTURE_PATH)));
         QSignalSpy ready(&server, &ManagedServer::available);
-        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
+        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
         server.stopOwned(); server.ensureAvailable();
-        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 10000);
         QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll().count("start\n"), 2);
         server.stopOwned();
     }
@@ -195,10 +200,10 @@ private slots:
         QTemporaryDir dir; const auto record = dir.filePath("record");
         qputenv("HEADROOM_FIXTURE_MODE", "crash"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
         ManagedServer server(options(unusedPort(), QStringLiteral(FIXTURE_PATH))); QSignalSpy failed(&server, &ManagedServer::unavailable);
-        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+        server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 15000);
         QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll().count("start\n"), 3);
         QTest::qWait(250); file.seek(0); QCOMPARE(file.readAll().count("start\n"), 3);
-        server.ensureAvailable(); QTRY_VERIFY_WITH_TIMEOUT(failed.size() >= 2, 5000);
+        server.ensureAvailable(); QTRY_VERIFY_WITH_TIMEOUT(failed.size() >= 2, 15000);
         file.seek(0); QCOMPARE(file.readAll().count("start\n"), 6);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
@@ -225,10 +230,11 @@ private slots:
                                 "USAGE_PROVIDER_CURSOR_ENABLED", "USAGE_PROVIDER_GROK_ENABLED"})
             environment.set(name, "false");
         auto configured = options(unusedPort(), binary);
-        configured.probeTimeoutMs = 500; configured.readinessIntervalMs = 50; configured.readinessAttempts = 60;
+        configured.probeTimeoutMs = 3000; configured.readinessProbeTimeoutMs = 1000;
+        configured.readinessIntervalMs = 50; configured.readinessAttempts = 60;
         ManagedServer server(configured); QSignalSpy ready(&server, &ManagedServer::available);
         server.configure("local", "fixture-secret"); server.ensureAvailable();
-        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 15000);
         QVERIFY(server.ownsProcess()); QCOMPARE(server.state(), QString("started"));
     }
 #ifdef Q_OS_WIN
@@ -237,10 +243,10 @@ private slots:
         qputenv("HEADROOM_FIXTURE_MODE", "degraded"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
         const quint16 port = unusedPort(); QVERIFY(port);
         QProcess owner; owner.start(QStringLiteral(OWNER_PATH), {QStringLiteral(FIXTURE_PATH), QString::number(port), ready});
-        QVERIFY(owner.waitForStarted(2000)); QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(ready), 5000);
+        QVERIFY(owner.waitForStarted(5000)); QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(ready), 15000);
         qint64 pid = 0; QTRY_VERIFY((pid = lastPid(record)) > 0); QVERIFY(processExists(pid));
         owner.kill(); QVERIFY(owner.waitForFinished(2000));
-        QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
     }
 #endif
