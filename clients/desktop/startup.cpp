@@ -6,9 +6,14 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QSettings>
+#include <QSet>
 #include <QRegularExpression>
+#include <algorithm>
 
 namespace {
+const QRegularExpression safeVersion(
+    QStringLiteral("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"));
+
 QString configDirectory()
 {
     const QString configured = qEnvironmentVariable("XDG_CONFIG_HOME");
@@ -33,6 +38,57 @@ QString windowsCommand(const QString &path)
 {
     return QStringLiteral("\"") + QDir::toNativeSeparators(path) + "\" --background";
 }
+
+bool samePath(const QString &left, const QString &right)
+{
+#ifdef Q_OS_WIN
+    return QString::compare(left, right, Qt::CaseInsensitive) == 0;
+#else
+    return left == right;
+#endif
+}
+
+QString cleanAbsolute(const QString &path)
+{
+    if (path.isEmpty() || path.contains('\n') || path.contains('\r') || path.contains(QChar::Null)) return {};
+    const QString native = QDir::fromNativeSeparators(path);
+    if (!QDir::isAbsolutePath(native) || QDir::cleanPath(native) != native) return {};
+    return QFileInfo(native).absoluteFilePath();
+}
+
+QStringList installedApplications(const QString &root, const QString &exactVersion = {})
+{
+#ifdef Q_OS_WIN
+    const QString appName = QStringLiteral("headroom.exe");
+#else
+    const QString appName = QStringLiteral("headroom");
+#endif
+    QStringList result;
+    const QFileInfo rootInfo(root);
+    const QString canonicalRoot = rootInfo.canonicalFilePath();
+    if (!rootInfo.isDir() || rootInfo.isSymLink() || canonicalRoot.isEmpty() || !samePath(canonicalRoot, root)) return result;
+    const QFileInfo versionsInfo(QDir(root).filePath(QStringLiteral("versions")));
+    if (!versionsInfo.isDir() || versionsInfo.isSymLink()
+        || !samePath(versionsInfo.canonicalFilePath(), QDir(root).filePath(QStringLiteral("versions")))) return result;
+    const QFileInfoList generations = QDir(versionsInfo.absoluteFilePath())
+        .entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    if (generations.size() > 2048) return result;
+    static const QRegularExpression suffix(QStringLiteral("^(.*)\\.generation-[0-9a-f]{16}-[0-9a-f]{16}$"));
+    for (const QFileInfo &generation : generations) {
+        if (generation.isSymLink()) continue;
+        QString version = generation.fileName();
+        const auto match = suffix.match(version);
+        if (match.hasMatch()) version = match.captured(1);
+        if (!safeVersion.match(version).hasMatch() || (!exactVersion.isEmpty() && version != exactVersion)) continue;
+        if (!samePath(generation.canonicalFilePath(), generation.absoluteFilePath())) continue;
+        const QFileInfo bin(QDir(generation.absoluteFilePath()).filePath(QStringLiteral("bin")));
+        if (!bin.isDir() || bin.isSymLink() || !samePath(bin.canonicalFilePath(), bin.absoluteFilePath())) continue;
+        const QFileInfo application(QDir(bin.absoluteFilePath()).filePath(appName));
+        if (application.isFile() && !application.isSymLink()
+            && samePath(application.canonicalFilePath(), application.absoluteFilePath())) result.append(application.absoluteFilePath());
+    }
+    return result;
+}
 }
 
 QString StartupService::defaultExecutablePath()
@@ -42,30 +98,30 @@ QString StartupService::defaultExecutablePath()
 
 QString StartupService::packagedExecutablePath(const QString &applicationPath)
 {
-    const QString application = QFileInfo(applicationPath).absoluteFilePath();
-    const QString root = qEnvironmentVariable("HEADROOM_INSTALL_ROOT");
-    const QString launcher = qEnvironmentVariable("HEADROOM_LAUNCHER_PATH");
+    const QString application = cleanAbsolute(applicationPath);
+    const QString root = cleanAbsolute(qEnvironmentVariable("HEADROOM_INSTALL_ROOT"));
+    const QString launcher = cleanAbsolute(qEnvironmentVariable("HEADROOM_LAUNCHER_PATH"));
     const QString version = qEnvironmentVariable("HEADROOM_PACKAGE_VERSION");
-    static const QRegularExpression safeVersion(
-        QStringLiteral("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"));
-    if (QDir::isAbsolutePath(root) && QDir::isAbsolutePath(launcher)
-        && safeVersion.match(version).hasMatch() && QFileInfo(launcher).isFile()) {
-        const QString expected = QFileInfo(QDir(root).filePath(QStringLiteral("versions/%1/bin/%2")
-            .arg(version,
-#ifdef Q_OS_WIN
-                 QStringLiteral("headroom.exe")
-#else
-                 QStringLiteral("headroom")
-#endif
-            ))).absoluteFilePath();
-#ifdef Q_OS_WIN
-        if (QString::compare(application, expected, Qt::CaseInsensitive) == 0)
-#else
-        if (application == expected)
-#endif
-            return QFileInfo(launcher).absoluteFilePath();
+    if (!application.isEmpty() && !root.isEmpty() && !launcher.isEmpty() && safeVersion.match(version).hasMatch()) {
+        const QFileInfo rootInfo(root), launcherInfo(launcher), applicationInfo(application);
+        const QFileInfo associationInfo(launcher + QStringLiteral(".root"));
+        const QByteArray expectedAssociation = QDir::toNativeSeparators(root).toUtf8() + '\n';
+        bool trustedAssociation = false;
+        if (associationInfo.isFile() && !associationInfo.isSymLink()) {
+            QFile association(associationInfo.absoluteFilePath());
+            trustedAssociation = association.open(QIODevice::ReadOnly) && association.size() <= 4096
+                && association.readAll() == expectedAssociation;
+        }
+        const QStringList applications = installedApplications(root, version);
+        const bool matchesApplication = std::any_of(applications.cbegin(), applications.cend(), [&](const QString &candidate) {
+            return samePath(application, candidate);
+        });
+        if (rootInfo.isDir() && !rootInfo.isSymLink()
+            && launcherInfo.isFile() && !launcherInfo.isSymLink() && applicationInfo.isFile() && !applicationInfo.isSymLink()
+            && associationInfo.isFile() && !associationInfo.isSymLink() && trustedAssociation && matchesApplication)
+            return launcher;
     }
-    return application;
+    return application.isEmpty() ? applicationPath : application;
 }
 
 StartupService::StartupService(QString configHome, QString executable, bool allowChanges, QObject *parent,
@@ -73,7 +129,7 @@ StartupService::StartupService(QString configHome, QString executable, bool allo
     : QObject(parent),
       m_entryPath(QDir(configHome.isEmpty() ? configDirectory() : configHome)
                       .filePath("autostart/headroom.desktop")),
-      m_executable(executable.isEmpty() ? defaultExecutablePath() : executable),
+      m_executable(packagedExecutablePath(executable.isEmpty() ? QCoreApplication::applicationFilePath() : executable)),
       m_registryPath(registryPath.isEmpty()
           ? QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run")
           : std::move(registryPath)),
@@ -84,7 +140,72 @@ StartupService::StartupService(QString configHome, QString executable, bool allo
 #endif
       )
 {
+    const QString application = cleanAbsolute(executable.isEmpty() ? QCoreApplication::applicationFilePath() : executable);
+    if (m_allowChanges && !application.isEmpty() && !samePath(application, m_executable))
+        repairPackagedRegistration();
     refresh();
+}
+
+void StartupService::repairPackagedRegistration()
+{
+    const QString root = cleanAbsolute(qEnvironmentVariable("HEADROOM_INSTALL_ROOT"));
+    if (root.isEmpty()) return;
+    const QStringList candidates = installedApplications(root);
+    if (m_windows) {
+        QSettings registry(m_registryPath, QSettings::NativeFormat);
+        const QString command = registry.value(QStringLiteral("Headroom")).toString();
+        if (std::none_of(candidates.cbegin(), candidates.cend(), [&](const QString &candidate) {
+                return command == windowsCommand(candidate);
+            })) return;
+        registry.setValue(QStringLiteral("Headroom"), windowsCommand(m_executable));
+        registry.sync();
+        if (registry.status() != QSettings::NoError
+            || registry.value(QStringLiteral("Headroom")).toString() != windowsCommand(m_executable))
+            m_error = tr("Could not repair the Headroom startup entry.");
+        return;
+    }
+    const QFileInfo entryInfo(m_entryPath);
+    if (!entryInfo.isFile() || entryInfo.isSymLink() || entryInfo.size() > 64 * 1024) return;
+    QFile entry(m_entryPath);
+    if (!entry.open(QIODevice::ReadOnly)) return;
+    const QByteArray original = entry.readAll();
+    QList<QByteArray> lines = original.split('\n');
+    bool inGroup = false, application = false, hidden = false, disabled = false;
+    int matchingExec = -1, execCount = 0, desktopGroups = 0;
+    QSet<QByteArray> seen;
+    for (int i = 0; i < lines.size(); ++i) {
+        const QByteArray line = lines.at(i).trimmed();
+        if (line.startsWith('[')) {
+            inGroup = line == QByteArrayLiteral("[Desktop Entry]");
+            if (inGroup && ++desktopGroups != 1) return;
+            continue;
+        }
+        if (!inGroup || line.startsWith('#')) continue;
+        const int separator = line.indexOf('=');
+        if (separator < 0) continue;
+        const QByteArray key = line.left(separator).trimmed(), value = line.mid(separator + 1).trimmed();
+        if (key == "Type" || key == "Hidden" || key == "X-GNOME-Autostart-enabled" || key == "Exec") {
+            if (seen.contains(key)) return;
+            seen.insert(key);
+        }
+        if (key == "Type") application = value == "Application";
+        if (key == "Hidden") hidden = value == "true";
+        if (key == "X-GNOME-Autostart-enabled") disabled = value == "false";
+        if (key == "Exec") {
+            ++execCount;
+            if (std::any_of(candidates.cbegin(), candidates.cend(), [&](const QString &candidate) {
+                    return value == quotedExecutable(candidate).toUtf8() + QByteArrayLiteral(" --background");
+                })) matchingExec = i;
+        }
+    }
+    if (!application || hidden || disabled || execCount != 1 || matchingExec < 0) return;
+    lines[matchingExec] = QByteArrayLiteral("Exec=") + quotedExecutable(m_executable).toUtf8() + QByteArrayLiteral(" --background");
+    const QByteArray contents = lines.join('\n');
+    QSaveFile replacement(m_entryPath);
+    if (!replacement.open(QIODevice::WriteOnly) || !replacement.setPermissions(entryInfo.permissions())
+        || replacement.write(contents) != contents.size()
+        || !replacement.commit())
+        m_error = tr("Could not repair the Headroom startup entry.");
 }
 
 void StartupService::refresh()

@@ -64,6 +64,12 @@ If the legacy settings are malformed, use an unsupported schema, or cannot be
 backed up, Headroom reports the problem and leaves the source intact. Startup
 migration failures are shown in settings and remain retryable on a later launch.
 
+For existing Headroom installs, normal launch also repairs an enabled startup
+entry that points directly at an older installed version: it switches that exact
+Headroom command to the stable launcher for the same installation. This ensures
+future sign-ins follow updates. Disabled entries, preview sessions, and custom
+or unrelated startup commands are left alone.
+
 ## Existing servers and credentials
 
 Changing the frontend does not require moving or renaming an independently
