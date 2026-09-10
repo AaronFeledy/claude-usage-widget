@@ -212,6 +212,9 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 	}
 	journalPath := filepath.Join(backup, InstallJournalName)
 	if err = writeDurableJSON(journalPath, journal); err != nil {
+		// No journal exists yet, so recovery cannot reclaim these; remove them here.
+		_ = os.RemoveAll(generation)
+		_ = os.RemoveAll(backup)
 		return InstallState{}, err
 	}
 	if err = prepareBootstrapBackup(installRoot, entryPath, backup); err != nil {

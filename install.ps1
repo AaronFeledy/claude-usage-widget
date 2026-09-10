@@ -92,11 +92,12 @@ $privateRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('.headroom-install-'
 New-Item -ItemType Directory -Path $privateRoot | Out-Null
 try {
     $localManifest = Join-Path $privateRoot 'release.json'
+    if ([bool]$PackagePath -ne [bool]$ReleaseManifestPath) {
+        throw '-PackagePath and -ReleaseManifestPath must be supplied together.'
+    }
     if ($ReleaseManifestPath) {
         if ((Get-Item -LiteralPath $ReleaseManifestPath).Length -gt 4MB) { throw 'Release manifest is too large.' }
         Copy-Item -LiteralPath $ReleaseManifestPath -Destination $localManifest
-    } elseif ($PackagePath) {
-        throw '-ReleaseManifestPath is required with -PackagePath.'
     } else {
         $releasePath = Join-Path $privateRoot 'github-release.json'
         Save-HeadroomFile ([uri]"https://api.github.com/repos/$repo/releases/latest") $releasePath
