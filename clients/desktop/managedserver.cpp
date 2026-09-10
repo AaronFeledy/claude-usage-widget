@@ -13,6 +13,7 @@
 #include <QProcessEnvironment>
 #include <QRandomGenerator>
 #include <QSet>
+#include <QSignalBlocker>
 #include <cctype>
 #include <utility>
 #ifdef Q_OS_LINUX
@@ -145,6 +146,11 @@ ManagedServer::~ManagedServer()
         if (retiring->state() != QProcess::NotRunning) retiring->waitForFinished(1000);
         delete retiring;
     }
+    // Every other teardown path scrubs the session material; the destructor must too.
+    // Signals stay blocked: connectionChanged() here would reach slots whose objects
+    // are already destroyed.
+    const QSignalBlocker blocker(this);
+    clearSession();
 }
 
 void ManagedServer::configure(const QString &mode, const QString &token)
