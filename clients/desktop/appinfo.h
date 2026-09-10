@@ -5,6 +5,7 @@
 #include <QNetworkReply>
 #include <QUrl>
 #include <QSslCertificate>
+#include "sshnetwork.h"
 
 class AppInfo : public QObject {
     Q_OBJECT
@@ -13,7 +14,7 @@ class AppInfo : public QObject {
     Q_PROPERTY(QString serverStatus READ serverStatus NOTIFY changed)
     Q_PROPERTY(bool checkingServer READ checkingServer NOTIFY changed)
 public:
-    explicit AppInfo(QObject *parent = nullptr, int timeoutMs = 8000);
+    explicit AppInfo(QObject *parent = nullptr, int timeoutMs = 8000, SshOptions sshOptions = {});
     ~AppInfo() override;
     QString applicationVersion() const;
     QString serverVersion() const { return m_serverVersion; }
@@ -29,6 +30,7 @@ private:
     QNetworkReply *request(const QUrl &url, const QByteArray &token, const QSslCertificate &certificate);
     QNetworkAccessManager m_network;
     QNetworkAccessManager m_localNetwork;
+    SshNetworkAccessManager m_sshNetwork;
     QPointer<QNetworkReply> m_healthReply;
     QUrl m_healthUrl;
     QByteArray m_token;

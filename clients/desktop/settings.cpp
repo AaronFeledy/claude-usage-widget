@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "sshnetwork.h"
 
 #include <QDir>
 #include <QFile>
@@ -162,13 +163,15 @@ bool SettingsService::loadHeadroom()
     m_document = document.object();
     const QString rawUrl = readString(m_document, "url");
     const QString rawToken = readString(m_document, "token");
+    const QString rawSshUrl = readString(m_document, "sshUrl");
     const QString url = rawUrl.trimmed();
     QString mode = readString(m_document, "connectionMode");
-    const bool needsMode = mode != "local" && mode != "remote";
+    const bool needsMode = mode != "local" && mode != "remote" && mode != "ssh";
     if (needsMode) mode = url.isEmpty() ? "local" : "remote";
     m_value.connectionMode = mode;
     m_value.url = url;
     m_value.token = rawToken.trimmed();
+    m_value.sshUrl = rawSshUrl.trimmed();
     m_value.interval = qBound(15, readInt(m_document, "interval", 60), 900);
     m_value.notifications = readBool(m_document, "notifications", true);
     m_value.primary = normalizeProvider(readString(m_document, "primary", "Claude"));
@@ -176,11 +179,14 @@ bool SettingsService::loadHeadroom()
     m_value.primary = m_value.order.first();
     m_value.startup = readBool(m_document, "startup", false);
     m_value.startupMigrationPending = readBool(m_document, "startupMigrationPending", false);
-    if (!validRemoteUrl(url) || !validToken(rawToken)) {
+    const bool invalidSsh = !m_value.sshUrl.isEmpty() && !SshTransport::parseAddress(m_value.sshUrl);
+    if (invalidSsh && mode != QStringLiteral("ssh")) m_value.sshUrl.clear();
+    if (!validRemoteUrl(url) || !validToken(rawToken) || (invalidSsh && mode == QStringLiteral("ssh"))) {
         m_loadError = "Settings contain an invalid backend address or token and were not changed.";
         m_blockImplicitWrites = true;
         m_value.url.clear();
         m_value.token.clear();
+        m_value.sshUrl.clear();
         return false;
     }
     const bool needsSchema = readInt(m_document, "schemaVersion", 0) < CurrentSchemaVersion;
@@ -268,6 +274,7 @@ QJsonObject SettingsService::serialized(const DesktopSettings &settings) const
     result["connectionMode"] = settings.connectionMode;
     result["url"] = settings.url;
     result["token"] = settings.token;
+    result["sshUrl"] = settings.sshUrl;
     result["interval"] = settings.interval;
     result["notifications"] = settings.notifications;
     result["primary"] = settings.primary;
@@ -298,12 +305,16 @@ QString SettingsService::save(const DesktopSettings &settings, bool explicitUser
 {
     if (m_blockImplicitWrites && !explicitUserSave) return m_loadError;
     DesktopSettings normalized = settings;
-    normalized.connectionMode = normalized.connectionMode == "local" ? "local" : "remote";
+    if (normalized.connectionMode != "local" && normalized.connectionMode != "remote" && normalized.connectionMode != "ssh")
+        normalized.connectionMode = "remote";
     normalized.url = normalized.url.trimmed();
     normalized.token = normalized.token.trimmed();
+    normalized.sshUrl = normalized.sshUrl.trimmed();
     if (!validToken(settings.token)) return "The bearer token must be a single line.";
     if (normalized.connectionMode == "remote" && !validRemoteUrl(normalized.url))
         return "Use an HTTP or HTTPS address without credentials, a query, or a fragment.";
+    if (normalized.connectionMode == "ssh" && !SshTransport::parseAddress(normalized.sshUrl))
+        return "Use ssh://[user@]host[:port] without a password, path, query, or fragment.";
     normalized.interval = qBound(15, normalized.interval, 900);
     normalized.order = normalizeOrder(normalized.order, normalized.primary);
     normalized.primary = normalized.order.first();

@@ -110,6 +110,34 @@ func Test_Load_applies_precedence_flags_over_env_over_yaml_over_defaults(t *test
 	}
 }
 
+func Test_Load_applies_SSH_access_precedence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("ssh_access: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fromYAML, err := config.Load(context.Background(), config.LoadOptions{Args: []string{"-config", path}})
+	if err != nil || !fromYAML.SSHAccess {
+		t.Fatalf("YAML SSHAccess = %v, err=%v", fromYAML.SSHAccess, err)
+	}
+	fromEnv, err := config.Load(context.Background(), config.LoadOptions{Args: []string{"-config", path}, Env: []string{"USAGE_SSH_ACCESS=false"}})
+	if err != nil || fromEnv.SSHAccess {
+		t.Fatalf("env SSHAccess = %v, err=%v", fromEnv.SSHAccess, err)
+	}
+	fromFlag, err := config.Load(context.Background(), config.LoadOptions{Args: []string{"-config", path, "-ssh-access=false"}, Env: []string{"USAGE_SSH_ACCESS=true"}})
+	if err != nil || fromFlag.SSHAccess {
+		t.Fatalf("flag SSHAccess = %v, err=%v", fromFlag.SSHAccess, err)
+	}
+}
+
+func Test_Load_rejects_invalid_SSH_access_env(t *testing.T) {
+	_, err := config.Load(context.Background(), config.LoadOptions{
+		Args: []string{"-config", filepath.Join(t.TempDir(), "missing.yaml")}, Env: []string{"USAGE_SSH_ACCESS=maybe"},
+	})
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("Load error = %v, want ErrInvalidConfig", err)
+	}
+}
+
 func Test_Load_does_not_cache_values_between_calls(t *testing.T) {
 	// Given
 	path := filepath.Join(t.TempDir(), "missing.yaml")

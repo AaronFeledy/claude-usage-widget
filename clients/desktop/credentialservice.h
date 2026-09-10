@@ -11,12 +11,14 @@
 #include <memory>
 
 #include "serverconnection.h"
+#include "sshnetwork.h"
 
 struct CredentialServiceOptions {
     QString helperPath;
     int helperTimeoutMs = 5000;
     int requestTimeoutMs = 12000;
     int retryCooldownMs = 5 * 60 * 1000;
+    SshOptions sshOptions;
 #ifdef Q_OS_WIN
     bool enabled = true;
 #else
@@ -57,6 +59,7 @@ private:
     QUrl credentialEndpoint(const QString &provider) const;
     QString helperPath() const;
 
+    SshNetworkAccessManager m_sshNetwork;
     CredentialServiceOptions m_options;
     QNetworkAccessManager m_remoteNetwork;
     QNetworkAccessManager m_localNetwork;

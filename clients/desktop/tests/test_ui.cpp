@@ -30,6 +30,8 @@ private slots:
     void dragReordersAndDrivesTray() {
         QTemporaryDir dir;
         const auto capture = [&](const QString &name) {
+            const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+            if (!requested.isEmpty()) { QDir().mkpath(requested); return QDir(requested).filePath(name); }
             return dir.filePath(name);
         };
         CredentialServiceOptions credentialOptions; credentialOptions.enabled = false;
@@ -153,11 +155,14 @@ private slots:
         QVERIFY(save->isVisible());
         auto localMode = findItem(window->contentItem(), "localMode");
         auto remoteMode = findItem(window->contentItem(), "remoteMode");
-        QVERIFY(localMode); QVERIFY(remoteMode);
+        auto sshMode = findItem(window->contentItem(), "sshMode");
+        QVERIFY(localMode); QVERIFY(remoteMode); QVERIFY(sshMode);
         const bool startsLocal = controller.settings()["mode"].toString() == QStringLiteral("local");
         QCOMPARE(localMode->property("checked").toBool(), startsLocal);
         QCOMPARE(remoteMode->property("checked").toBool(), !startsLocal);
         auto backendUrl = findItem(window->contentItem(), "backendUrl"); QVERIFY(backendUrl);
+        auto sshUrl = findItem(window->contentItem(), "sshUrl"); QVERIFY(sshUrl);
+        QVERIFY(!sshUrl->isVisible());
         QCOMPARE(backendUrl->isVisible(), !startsLocal);
         if (startsLocal) {
             QVERIFY(remoteMode->setProperty("checked", true));
@@ -166,6 +171,12 @@ private slots:
         }
         QVERIFY(localMode->setProperty("checked", true)); QTRY_VERIFY(!remoteMode->property("checked").toBool());
         QTRY_VERIFY(!backendUrl->isVisible());
+        QVERIFY(sshMode->setProperty("checked", true));
+        QTRY_VERIFY(sshUrl->isVisible()); QTRY_VERIFY(!backendUrl->isVisible());
+        QVERIFY(sshUrl->setProperty("text", QStringLiteral("ssh://user@example.test:2222")));
+        QVERIFY(window->grabWindow().save(capture("headroom-settings-ssh.png")));
+        QVERIFY(localMode->setProperty("checked", true));
+        QTRY_VERIFY(!sshUrl->isVisible());
         QVERIFY(window->grabWindow().save(capture("headroom-settings.png")));
         auto settingsScroll = window->findChild<QObject *>("settingsScroll"); QVERIFY(settingsScroll);
         auto flickable = settingsScroll->property("contentItem").value<QObject *>(); QVERIFY(flickable);

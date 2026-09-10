@@ -48,7 +48,7 @@ bool recoveryResolved(const QString &provider, const QVariantMap &usage)
 }
 
 CredentialService::CredentialService(CredentialServiceOptions options, QObject *parent)
-    : QObject(parent), m_options(std::move(options))
+    : QObject(parent), m_sshNetwork(options.sshOptions), m_options(std::move(options))
 {
     m_localNetwork.setProxy(QNetworkProxy::NoProxy);
     m_helperDeadline.setSingleShot(true);
@@ -86,13 +86,15 @@ CredentialService::~CredentialService()
 void CredentialService::configure(const QString &mode, const QString &baseUrl, const QString &token,
                                   const QSslCertificate &certificate)
 {
-    const QString normalizedMode = mode == QStringLiteral("local") ? QStringLiteral("local") : QStringLiteral("remote");
-    if (normalizedMode == m_mode && baseUrl == m_baseUrl && token == m_token && certificate == m_certificate) return;
+    const QString normalizedMode = mode == QStringLiteral("local") ? QStringLiteral("local")
+        : mode == QStringLiteral("ssh") ? QStringLiteral("ssh") : QStringLiteral("remote");
+    const QString effectiveToken = normalizedMode == QStringLiteral("ssh") ? QString() : token;
+    if (normalizedMode == m_mode && baseUrl == m_baseUrl && effectiveToken == m_token && certificate == m_certificate) return;
     cancel();
     m_localNetwork.clearConnectionCache();
     m_mode = normalizedMode;
     m_baseUrl = baseUrl;
-    m_token = token;
+    m_token = effectiveToken;
     m_certificate = certificate;
     m_attempts.clear();
 }
@@ -189,12 +191,17 @@ void CredentialService::resolvePolicy(const QString &provider)
 {
     const QUrl endpoint = credentialEndpoint(provider);
     if (endpoint.isEmpty()) { continueQueue(); return; }
+    if ((m_mode == QStringLiteral("ssh")) != (endpoint.scheme() == QStringLiteral("ssh"))) {
+        emit event(QStringLiteral("Browser credential forwarding was skipped because the selected connection transport is invalid."));
+        continueQueue();
+        return;
+    }
     if (hasControl(m_token)) {
         emit event(QStringLiteral("Browser credential forwarding was skipped because the configured token is invalid."));
         continueQueue();
         return;
     }
-    if (endpoint.scheme() == QStringLiteral("https")) {
+    if (endpoint.scheme() == QStringLiteral("https") || endpoint.scheme() == QStringLiteral("ssh")) {
         if (m_mode == QStringLiteral("local") && m_certificate.isNull()) {
             emit event(QStringLiteral("Browser credential forwarding requires Headroom's verified private local connection."));
             continueQueue();
@@ -319,19 +326,21 @@ void CredentialService::submit(const QString &provider, QByteArray cookie, const
     request.setRawHeader("User-Agent", "Headroom/0.1");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(m_options.requestTimeoutMs);
-    if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+    if (m_mode != QStringLiteral("ssh") && !m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
     if (localNoProxy) ServerTransport::secureRequest(request, m_certificate);
     const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("cookie"), QString::fromUtf8(cookie)}}).toJson(QJsonDocument::Compact);
     cookie.fill('\0');
     m_activeProvider = provider;
-    auto reply = (localNoProxy ? &m_localNetwork : &m_remoteNetwork)->put(request, body);
+    QNetworkAccessManager *network = m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork)
+        : localNoProxy ? &m_localNetwork : &m_remoteNetwork;
+    auto reply = network->put(request, body);
     if (localNoProxy) ServerTransport::requirePinnedPeer(reply, m_certificate);
     m_reply = reply;
     const quint64 operation = ++m_operation;
     auto deadline = new QTimer(reply);
     deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
-    deadline->start(m_options.requestTimeoutMs);
+    deadline->start(m_mode == QStringLiteral("ssh") ? qMax(m_options.requestTimeoutMs, 27000) : m_options.requestTimeoutMs);
     connect(reply, &QNetworkReply::readyRead, this, [this, reply, operation] {
         if (m_reply == reply && m_operation == operation && reply->bytesAvailable() > maximumResponseBytes) reply->abort();
     });

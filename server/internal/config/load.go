@@ -17,6 +17,7 @@ type rawConfig struct {
 	ListenAddr   *string                      `yaml:"listen_addr"`
 	AuthToken    *string                      `yaml:"auth_token"`
 	PollInterval *string                      `yaml:"poll_interval"`
+	SSHAccess    *bool                        `yaml:"ssh_access"`
 	Providers    map[string]rawProviderConfig `yaml:"providers"`
 }
 
@@ -31,6 +32,7 @@ type flagValues struct {
 	AuthToken      string
 	PollInterval   string
 	DesktopSession bool
+	SSHAccess      bool
 	Set            map[string]bool
 }
 
@@ -72,6 +74,7 @@ func parseFlags(args []string) (flagValues, error) {
 	fs.StringVar(&values.AuthToken, "auth-token", "", "optional bearer token")
 	fs.StringVar(&values.PollInterval, "poll-interval", "", "provider poll interval")
 	fs.BoolVar(&values.DesktopSession, "desktop-session", false, "start a private desktop TLS session")
+	fs.BoolVar(&values.SSHAccess, "ssh-access", false, "enable access through the private SSH Unix socket")
 	if err := fs.Parse(args); err != nil {
 		return flagValues{}, fmt.Errorf("parse flags: %w", err)
 	}
@@ -122,6 +125,9 @@ func applyRaw(raw rawConfig, cfg *Config) error {
 		}
 		cfg.PollInterval = duration
 	}
+	if raw.SSHAccess != nil {
+		cfg.SSHAccess = *raw.SSHAccess
+	}
 	for name, provider := range raw.Providers {
 		applyProvider(strings.ToLower(name), provider, cfg)
 	}
@@ -153,6 +159,13 @@ func applyEnv(env map[string]string, cfg *Config) error {
 		}
 		cfg.PollInterval = duration
 	}
+	if value, ok := env["USAGE_SSH_ACCESS"]; ok && value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("USAGE_SSH_ACCESS %q: %w", value, errors.Join(ErrInvalidConfig, err))
+		}
+		cfg.SSHAccess = enabled
+	}
 	return applyProviderEnv(env, cfg)
 }
 
@@ -181,6 +194,9 @@ func applyProviderEnv(env map[string]string, cfg *Config) error {
 func applyFlags(flags flagValues, cfg *Config) error {
 	if flags.Set["desktop-session"] {
 		cfg.DesktopSession = flags.DesktopSession
+	}
+	if flags.Set["ssh-access"] {
+		cfg.SSHAccess = flags.SSHAccess
 	}
 	if flags.Set["listen-addr"] {
 		cfg.ListenAddr = flags.ListenAddr

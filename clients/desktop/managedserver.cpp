@@ -363,7 +363,8 @@ void ManagedServer::spawn()
     m_stopping = false;
     process->setProgram(path);
     process->setArguments({QStringLiteral("--listen-addr"),
-        QStringLiteral("127.0.0.1:%1").arg(m_options.localUrl.port(7823)), QStringLiteral("--desktop-session")});
+        QStringLiteral("127.0.0.1:%1").arg(m_options.localUrl.port(7823)), QStringLiteral("--desktop-session"),
+        QStringLiteral("--ssh-access=false")});
     auto environment = QProcessEnvironment::systemEnvironment();
     environment.remove(QStringLiteral("USAGE_AUTH_TOKEN"));
     process->setProcessEnvironment(environment);

@@ -37,6 +37,16 @@ Headroom owns, stops, or hands off only a server process it started. Remote mode
 accepts a normalized HTTP(S) base URL; nonempty bearer tokens are sent as
 `Authorization: Bearer <token>`.
 
+SSH mode uses system OpenSSH and a separate saved SSH address. It requires
+trusted host keys and key/agent authentication; never weaken host-key checking
+or expose cookies in arguments. Linux/WSL standalone servers opt in with
+`--ssh-access`, `ssh_access`, or `USAGE_SSH_ACCESS`. The fixed
+`usage-server --ssh-stdio` receiver connects to the existing server through an
+owner-only per-account Unix socket and validates the peer UID. It never creates
+another provider poller or falls back to TCP. Native Windows receivers are not
+supported; Windows and Linux desktop clients can use Linux/WSL receivers.
+Keep usage, version, and credential requests on the same selected transport.
+
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
 
@@ -134,3 +144,8 @@ that an external reinstall requires quitting and reopening an already-running
 Qt app until that lifecycle is changed. Keep bearer tokens, provider credentials,
 browser cookies, URLs containing secrets, and live account output redacted.
 Never stage `.omo/**`; it contains task-local caches and evidence only.
+
+The optional `packaging/tests/ssh_server_smoke.py` requires Linux/OpenSSH and
+uses disposable test keys and a provider-disabled backend. It reserves the
+current account's fixed SSH socket and refuses to run if that socket exists.
+Never run it against an account already serving SSH access or reuse live keys.

@@ -12,9 +12,9 @@ Popup {
         return seconds + " seconds"
     }
     function saveAndConnect() {
-        error.text = backend.saveSettings(localMode.checked ? "local" : "remote", url.text, token.text,
+        error.text = backend.saveSettings(localMode.checked ? "local" : (sshMode.checked ? "ssh" : "remote"), url.text, token.text,
                                           panel.selectedInterval, notifications.checked,
-                                          backend.settings.primary, forget.checked)
+                                          backend.settings.primary, forget.checked, sshUrl.text)
         if (!error.text) { token.text = ""; panel.close() }
     }
     signal diagnosticsRequested()
@@ -29,16 +29,31 @@ Popup {
     onOpened: {
         startupService.refresh(); appInfo.refreshServer()
         localMode.checked = backend.settings.mode === "local"
-        remoteMode.checked = !localMode.checked
+        remoteMode.checked = backend.settings.mode === "remote"
+        sshMode.checked = backend.settings.mode === "ssh"
         url.text = backend.settings.url; token.text = ""; forget.checked = false
+        sshUrl.text = backend.settings.sshUrl
         selectedInterval = backend.settings.interval
         intervalValues = [15, 30, 60, 120, 300]
         if (intervalValues.indexOf(selectedInterval) < 0) intervalValues = intervalValues.concat([selectedInterval])
         interval.currentIndex = intervalValues.indexOf(selectedInterval)
         notifications.checked = backend.settings.notifications; error.text = ""
         if (remoteMode.checked) url.forceActiveFocus()
+        else if (sshMode.checked) sshUrl.forceActiveFocus()
     }
     component Caption: Text { color: Theme.foreground; font.pixelSize: 12; font.weight: Font.Medium }
+    component ConnectionMode: RadioButton {
+        id: choice
+        implicitHeight: 32; font.pixelSize: 12
+        indicator: Rectangle {
+            x: 0; y: (choice.height - height) / 2; width: 20; height: 20; radius: 10
+            color: Theme.inset
+            border.color: choice.checked || choice.activeFocus ? Theme.purple : Theme.muted
+            border.width: choice.activeFocus ? 2 : 1
+            Rectangle { anchors.centerIn: parent; width: 10; height: 10; radius: 5; color: Theme.purple; visible: choice.checked }
+        }
+        contentItem: Text { text: choice.text; font: choice.font; color: Theme.foreground; leftPadding: 28; verticalAlignment: Text.AlignVCenter }
+    }
     component Check: CheckBox {
         id: check
         implicitHeight: 32; font.pixelSize: 12
@@ -75,15 +90,24 @@ Popup {
                 ButtonGroup { id: connectionModes }
                 RowLayout {
                     Layout.fillWidth: true; spacing: 8
-                    RadioButton { id: localMode; objectName: "localMode"; text: "Local server"; ButtonGroup.group: connectionModes; Accessible.name: "Use local server" }
-                    RadioButton { id: remoteMode; objectName: "remoteMode"; text: "Remote server"; ButtonGroup.group: connectionModes; Accessible.name: "Use remote server" }
+                    ConnectionMode { id: localMode; objectName: "localMode"; text: "Local"; ButtonGroup.group: connectionModes; Accessible.name: "Use local server" }
+                    ConnectionMode { id: remoteMode; objectName: "remoteMode"; text: "Remote"; ButtonGroup.group: connectionModes; Accessible.name: "Use remote server" }
+                    ConnectionMode { id: sshMode; objectName: "sshMode"; text: "SSH"; ButtonGroup.group: connectionModes; Accessible.name: "Use SSH" }
                 }
                 Text {
                     Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11
                     text: localMode.checked
-                        ? "Use the bundled server or an existing server on this computer. Choose Remote server to enter an address or token."
-                        : "Connect to an existing usage server over HTTP or HTTPS."
+                        ? "Use the bundled server or an existing server on this computer."
+                        : sshMode.checked
+                            ? "Connect with your existing OpenSSH keys or agent and trusted host keys. The server must enable SSH access."
+                            : "Connect to an existing usage server over HTTP or HTTPS."
                 }
+            }
+            ColumnLayout { Layout.fillWidth: true; spacing: 8
+                visible: sshMode.checked
+                Caption { text: "SSH ADDRESS" }
+                Entry { id: sshUrl; objectName: "sshUrl"; placeholderText: "ssh://user@server.example:2222"; Accessible.name: "SSH address" }
+                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Uses your existing OpenSSH configuration, keys or agent, and trusted host keys."; color: Theme.muted; font.pixelSize: 11 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 visible: remoteMode.checked

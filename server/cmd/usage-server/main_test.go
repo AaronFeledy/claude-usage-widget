@@ -1,16 +1,50 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/api"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/config"
 )
+
+func Test_Run_rejects_conflicting_private_modes_before_provider_construction(t *testing.T) {
+	err := runContext(context.Background(), []string{
+		"-config", filepath.Join(t.TempDir(), "missing.yaml"), "-desktop-session", "-ssh-access",
+	}, []string{"USAGE_PROVIDER_UNKNOWN_ENABLED=true"}, discardLogger(), desktopSessionOptions{})
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Fatalf("error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func Test_Run_SSHStdio_is_exclusive_and_skips_config_loading(t *testing.T) {
+	var output bytes.Buffer
+	err := runContext(context.Background(), []string{"--ssh-stdio"}, []string{
+		"USAGE_CONFIG=/definitely/not/read", "USAGE_PROVIDER_UNKNOWN_ENABLED=true",
+	}, discardLogger(), desktopSessionOptions{input: bytes.NewBufferString("{}\n{}\n"), output: &output, homeDir: filepath.Join(t.TempDir(), "home")})
+	if runtime.GOOS != "linux" {
+		if err == nil {
+			t.Fatal("stdio mode accepted on unsupported platform")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("stdio mode: %v", err)
+	}
+	if output.Len() == 0 {
+		t.Fatal("stdio mode wrote no response")
+	}
+	if err := runContext(context.Background(), []string{"--ssh-stdio", "-config", "missing"}, nil, discardLogger(), desktopSessionOptions{}); err == nil {
+		t.Fatal("combined ssh-stdio arguments were accepted")
+	}
+}
 
 func Test_Run_rejects_off_loopback_empty_auth_before_provider_construction(t *testing.T) {
 	// Given

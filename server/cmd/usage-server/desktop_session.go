@@ -49,6 +49,7 @@ type desktopSessionOptions struct {
 	now     func() time.Time
 	timeout time.Duration
 	listen  func(string, string) (net.Listener, error)
+	homeDir string
 }
 
 type preparedDesktopSession struct {
