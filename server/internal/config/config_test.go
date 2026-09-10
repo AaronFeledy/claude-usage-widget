@@ -28,6 +28,9 @@ func Test_Load_returns_defaults_when_config_file_missing(t *testing.T) {
 	if cfg.AuthToken != "" {
 		t.Fatalf("AuthToken = %q, want empty", cfg.AuthToken)
 	}
+	if cfg.DesktopSession {
+		t.Fatal("DesktopSession = true by default")
+	}
 	if cfg.PollInterval != 60*time.Second {
 		t.Fatalf("PollInterval = %s, want 60s", cfg.PollInterval)
 	}
@@ -35,6 +38,33 @@ func Test_Load_returns_defaults_when_config_file_missing(t *testing.T) {
 		if got := cfg.Providers[name].Enabled; !got {
 			t.Fatalf("%s provider enabled = %v, want true", name, got)
 		}
+	}
+}
+
+func Test_Load_enables_desktop_session_only_from_CLI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("desktop_session: true\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	fromFileAndEnv, err := config.Load(context.Background(), config.LoadOptions{
+		Args: []string{"-config", path}, Env: []string{"USAGE_DESKTOP_SESSION=true"},
+	})
+	if err != nil {
+		t.Fatalf("Load file/env: %v", err)
+	}
+	if fromFileAndEnv.DesktopSession {
+		t.Fatal("desktop session was enabled outside the CLI")
+	}
+	fromCLI, err := config.Load(context.Background(), config.LoadOptions{
+		Args: []string{"-config", path, "-desktop-session"}, Env: []string{"USAGE_DESKTOP_SESSION=false"},
+	})
+	if err != nil {
+		t.Fatalf("Load CLI: %v", err)
+	}
+	if !fromCLI.DesktopSession {
+		t.Fatal("desktop session CLI flag was ignored")
 	}
 }
 

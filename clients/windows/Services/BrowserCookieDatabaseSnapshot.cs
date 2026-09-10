@@ -21,13 +21,15 @@ public sealed class BrowserCookieDatabaseSnapshot : IDisposable
     public string DirectoryPath { get; }
     public string DatabasePath { get; }
 
-    public static BrowserCookieDatabaseSnapshot Create(string sourceDatabasePath)
+    public static BrowserCookieDatabaseSnapshot Create(string sourceDatabasePath, string? temporaryRoot = null)
     {
         if (!File.Exists(sourceDatabasePath))
         {
             throw new FileNotFoundException("Browser cookie database not found.", sourceDatabasePath);
         }
-        var directoryPath = Directory.CreateTempSubdirectory(SnapshotPrefix).FullName;
+        var directoryPath = temporaryRoot == null
+            ? Directory.CreateTempSubdirectory(SnapshotPrefix).FullName
+            : CreateSnapshotDirectory(temporaryRoot);
         Track(directoryPath);
         try
         {
@@ -39,10 +41,27 @@ public sealed class BrowserCookieDatabaseSnapshot : IDisposable
         }
         catch
         {
-            Untrack(directoryPath);
-            DeleteDirectory(directoryPath);
+            if (DeleteDirectory(directoryPath)) Untrack(directoryPath);
             throw;
         }
+    }
+
+    private static string CreateSnapshotDirectory(string temporaryRoot)
+    {
+        Directory.CreateDirectory(temporaryRoot);
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var path = Path.Combine(temporaryRoot, SnapshotPrefix + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(path);
+                return path;
+            }
+            catch (IOException) when (Directory.Exists(path))
+            {
+            }
+        }
+        throw new IOException("Could not create a browser cookie snapshot directory.");
     }
 
     public void Dispose()
@@ -52,8 +71,7 @@ public sealed class BrowserCookieDatabaseSnapshot : IDisposable
             return;
         }
         _disposed = true;
-        Untrack(DirectoryPath);
-        DeleteDirectory(DirectoryPath);
+        if (DeleteDirectory(DirectoryPath)) Untrack(DirectoryPath);
     }
 
     private static void Track(string directoryPath)
@@ -98,7 +116,7 @@ public sealed class BrowserCookieDatabaseSnapshot : IDisposable
         target.Flush(flushToDisk: true);
     }
 
-    private static void DeleteDirectory(string directoryPath)
+    private static bool DeleteDirectory(string directoryPath)
     {
         try
         {
@@ -106,9 +124,11 @@ public sealed class BrowserCookieDatabaseSnapshot : IDisposable
             {
                 Directory.Delete(directoryPath, recursive: true);
             }
+            return !Directory.Exists(directoryPath);
         }
         catch
         {
+            return false;
         }
     }
 }

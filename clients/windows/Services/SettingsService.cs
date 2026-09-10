@@ -10,13 +10,14 @@ namespace ClaudeUsageWidget.Services;
 /// </summary>
 public class AppSettings
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int RefreshIntervalSeconds { get; set; } = 60;
     public bool StartWithWindows { get; set; } = false;
     public bool NotificationsEnabled { get; set; } = true;
     public bool DebugMode { get; set; } = false;
     public string PrimaryProvider { get; set; } = "Claude";
+    public List<string> ProviderOrder { get; set; } = new();
     public string ApiUrl { get; set; } = string.Empty;
     public string ApiToken { get; set; } = string.Empty;
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
@@ -148,8 +149,30 @@ public class SettingsService
 
     public void SetPrimaryProvider(string? providerName)
     {
-        _settings.PrimaryProvider = NormalizeProviderName(providerName);
+        var primary = NormalizeProviderName(providerName);
+        SetProviderOrder(new[] { primary }.Concat(_settings.ProviderOrder));
+    }
+
+    public void SetProviderOrder(IEnumerable<string> providerNames)
+    {
+        _settings.ProviderOrder = NormalizeProviderOrder(providerNames, _settings.PrimaryProvider);
+        _settings.PrimaryProvider = _settings.ProviderOrder[0];
         Save();
+    }
+
+    public static List<string> NormalizeProviderOrder(IEnumerable<string>? providerNames, string? legacyPrimary = null)
+    {
+        var defaults = new[] { "Claude", "Codex", "Cursor", "Grok" };
+        var order = new List<string>();
+        foreach (var name in providerNames ?? Array.Empty<string>())
+        {
+            var canonical = defaults.FirstOrDefault(value => value.Equals(name?.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (canonical != null && !order.Contains(canonical)) order.Add(canonical);
+        }
+        // Preserve the chosen tray provider when migrating an old settings file.
+        if (order.Count == 0) order.Add(NormalizeProviderName(legacyPrimary));
+        order.AddRange(defaults.Where(name => !order.Contains(name)));
+        return order;
     }
 
     public static string NormalizeProviderName(string? providerName)
@@ -165,7 +188,8 @@ public class SettingsService
 
     private void NormalizeLoadedSettings()
     {
-        _settings.PrimaryProvider = NormalizeProviderName(_settings.PrimaryProvider);
+        _settings.ProviderOrder = NormalizeProviderOrder(_settings.ProviderOrder, _settings.PrimaryProvider);
+        _settings.PrimaryProvider = _settings.ProviderOrder[0];
         _settings.ApiUrl = _settings.ApiUrl ?? string.Empty;
         _settings.ApiToken = _settings.ApiToken?.Trim() ?? string.Empty;
         _settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
@@ -176,6 +200,7 @@ public class SettingsService
         return !root.TryGetProperty(nameof(AppSettings.SchemaVersion), out var schema)
             || schema.ValueKind != JsonValueKind.Number
             || schema.GetInt32() < AppSettings.CurrentSchemaVersion
+            || !root.TryGetProperty(nameof(AppSettings.ProviderOrder), out _)
             || !root.TryGetProperty(nameof(AppSettings.ApiUrl), out _)
             || !root.TryGetProperty(nameof(AppSettings.ApiToken), out _);
     }

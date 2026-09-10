@@ -180,17 +180,8 @@ public partial class UsagePopup
             panel.SetProminent(panel.ProviderName == primaryProvider);
         }
 
-        var orderedPanels = panels
-            .OrderByDescending(panel => panel.ProviderName == primaryProvider)
-            .ThenBy(panel => panel.ProviderName switch
-            {
-                "Claude" => 0,
-                "Codex" => 1,
-                "Cursor" => 2,
-                "Grok" => 3,
-                _ => 4
-            })
-            .ToArray();
+        var order = SettingsService.NormalizeProviderOrder(_settingsService?.Settings.ProviderOrder, primaryProvider);
+        var orderedPanels = panels.OrderBy(panel => order.IndexOf(panel.ProviderName)).ToArray();
 
         for (var i = 0; i < orderedPanels.Length; i++)
         {

@@ -34,6 +34,13 @@ internal static class WindowsHarnessRunner
         var snapshotTests = new BrowserCookieSnapshotTests();
         await snapshotTests.Test_SnapshotCopiesWalDatabaseAndCleansArtifacts();
         await snapshotTests.Test_SnapshotCleansArtifactsWhenOpenFails();
+        await snapshotTests.Test_ReaderUsesDomainBoundaryExpiryAndProfilePriority();
+        await snapshotTests.Test_ReaderUsesFirefoxWalSnapshotAndDeterministicProfiles();
+        await snapshotTests.Test_ReaderSkipsUnsupportedAndMalformedEncryption();
+        await snapshotTests.Test_ReaderContinuesAfterMalformedProfile();
+        await snapshotTests.Test_ReaderDiscoversFirefoxProfilesLazily();
+        await snapshotTests.Test_HelperProtocolAcceptsOnlyKnownProviderAndBoundsOutput();
+        await snapshotTests.Test_ReaderDecryptsNativeDpapiAndAesFixturesOnWindows();
         var iconOwnershipTests = new IconOwnershipTests();
         await iconOwnershipTests.Test_NativeIconLeaseDisposesHandleExactlyOnce();
         Console.WriteLine("ServerProcessManager tests passed");

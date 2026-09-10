@@ -4,16 +4,11 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-
-      - name: Build
-        run: dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release
+  headroom:
+    uses: ./.github/workflows/headroom-packages.yml
+    with:
+      version: ${{ format('0.1.0+pr.{0}.{1}', github.event.pull_request.number, github.run_attempt) }}

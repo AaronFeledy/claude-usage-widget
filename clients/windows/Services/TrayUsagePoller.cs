@@ -22,12 +22,6 @@ public sealed record TrayUsageSnapshot(
     public bool IsStale => State != TrayApiState.Ready && LastGoodAt != null;
 }
 
-public interface IProviderCookieReader
-{
-    string? ReadCursorCookieHeader();
-    string? ReadGrokCookieHeader();
-}
-
 public sealed class TrayUsagePoller
 {
     private readonly ApiClient _apiClient;

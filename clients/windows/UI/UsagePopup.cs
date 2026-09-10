@@ -93,6 +93,7 @@ public partial class UsagePopup : Form
         _providerList.Controls.Add(_cursorPanel);
         _providerList.Controls.Add(_grokPanel);
         Controls.Add(_providerList);
+        EnableProviderReordering();
 
         _settingsPanel = new Panel
         {
@@ -220,6 +221,7 @@ public partial class UsagePopup : Form
 
         Deactivate += (_, _) =>
         {
+            if (_draggingProvider) return;
             HideSettings();
             Hide();
         };

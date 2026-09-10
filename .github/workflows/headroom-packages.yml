@@ -1,0 +1,643 @@
+name: Headroom package matrix
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Stable Headroom SemVer used by every packaged component
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  HEADROOM_QT_VERSION: 6.8.3
+  HEADROOM_PACKAGE_VERSION: ${{ inputs.version }}
+  HEADROOM_WINDOWS_ARM64_QT_ARCH: win64_msvc2022_arm64
+
+jobs:
+  validate-version:
+    runs-on: ubuntu-22.04
+    outputs:
+      numeric_version: ${{ steps.version.outputs.numeric_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate shared package version
+        id: version
+        run: python3 packaging/validate_version.py "$HEADROOM_PACKAGE_VERSION" --github-output "$GITHUB_OUTPUT"
+      - name: Test release version, retry, attribution, and installer helpers
+        run: python3 -m unittest discover -s packaging/tests -p 'test_*.py'
+
+  server-validation:
+    needs: validate-version
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache: true
+          cache-dependency-path: server/go.sum
+      - name: Check formatting
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then printf '%s\n' "$files"; exit 1; fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test with race detector
+        run: go test -race ./...
+      - name: Build packages
+        run: go build ./...
+
+  server-docker:
+    needs: validate-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build cache-only multi-architecture image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=cacheonly
+          tags: usage-server:ci
+          cache-from: type=gha,scope=usage-server
+          cache-to: type=gha,scope=usage-server,mode=max
+
+  legacy-windows:
+    needs: validate-version
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - name: Build legacy client
+        run: dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release
+      - name: Run retained Windows lifecycle and browser fixtures
+        run: dotnet run --project tests/windows/ServerProcessManagerTests.csproj -c Release
+      - name: Publish Headroom credential helpers
+        shell: pwsh
+        run: |
+          dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r win-x64 -o "$env:RUNNER_TEMP/helper-x64"
+          dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r win-arm64 -o "$env:RUNNER_TEMP/helper-arm64"
+          if (!(Test-Path "$env:RUNNER_TEMP/helper-x64/headroom-credential-helper.exe")) { exit 1 }
+          if (!(Test-Path "$env:RUNNER_TEMP/helper-arm64/headroom-credential-helper.exe")) { exit 1 }
+          & "$env:RUNNER_TEMP/helper-x64/headroom-credential-helper.exe" unknown
+          if ($LASTEXITCODE -ne 2) { exit 1 }
+          $global:LASTEXITCODE = 0
+      - name: Run native credential crypto fixtures
+        run: dotnet run --project tests/windows/HeadroomCredentialHelperNativeTests.csproj -c Release
+
+  desktop-linux:
+    needs: validate-version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test WSL request safety with isolated HTTP fixtures
+        run: python3 -m unittest discover -s server/deploy/wsl -p 'test_*.py'
+      - name: Test installer streaming download bounds without network
+        run: bash packaging/tests/test-install-download.sh
+      - name: Install Qt runtime build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build xvfb libgl1-mesa-dev libxkbcommon-x11-0
+      - uses: jurplel/install-qt-action@v4.3.0
+        with:
+          version: ${{ env.HEADROOM_QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtshadertools
+          cache: true
+      - name: Configure shared desktop client
+        run: >-
+          cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DHEADROOM_WITH_KDE_TRAY=OFF
+          -DHEADROOM_WITH_LAYER_SHELL=OFF
+      - name: Build
+        run: cmake --build clients/desktop/build-ci --parallel
+      - name: Test
+        run: ctest --test-dir clients/desktop/build-ci --output-on-failure
+      - name: Exercise QML menus and focus on xcb
+        timeout-minutes: 2
+        run: >-
+          timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software
+          clients/desktop/build-ci/headroom-ui-tests
+          dragReordersAndDrivesTray preservesAndDisplaysCustomInterval
+      - name: Load QML and capture demo
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: |
+          clients/desktop/build-ci/headroom --demo --screenshot "$RUNNER_TEMP/headroom-linux.png"
+          test -s "$RUNNER_TEMP/headroom-linux.png"
+
+  desktop-windows-x64:
+    needs: validate-version
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: jurplel/install-qt-action@v4.3.0
+        with:
+          version: ${{ env.HEADROOM_QT_VERSION }}
+          arch: win64_msvc2022_64
+          modules: qtshadertools
+          cache: true
+      - name: Configure shared desktop client
+        run: cmake -S clients/desktop -B clients/desktop/build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        id: windows-build
+        run: cmake --build clients/desktop/build-ci --parallel
+      - name: Diagnose native loopback refusal
+        shell: pwsh
+        env:
+          HEADROOM_NATIVE_NETWORK_DIAGNOSTIC: 1
+        run: |
+          $diagnostic = "clients/desktop/build-ci/headroom-network-diagnostic.txt"
+          & "clients/desktop/build-ci/headroom-managedserver-tests.exe" nativeLoopbackRefusalDiagnostic -o "$diagnostic,txt"
+          $diagnosticExit = $LASTEXITCODE
+          if (Test-Path $diagnostic) { Get-Content -Raw $diagnostic }
+          if ($diagnosticExit -ne 0) { exit $diagnosticExit }
+      - name: Test
+        shell: pwsh
+        env:
+          QT_QPA_FONTDIR: C:/Windows/Fonts
+        run: |
+          ctest --test-dir clients/desktop/build-ci --output-on-failure
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            $log = "clients/desktop/build-ci/Testing/Temporary/LastTest.log"
+            if (Test-Path $log) { Get-Content -Raw $log }
+            Get-ChildItem "clients/desktop/build-ci" -Filter "headroom*tests.xml" | ForEach-Object {
+              Write-Host "===== $($_.Name) ====="
+              Get-Content -Raw $_.FullName
+            }
+            exit $testExit
+          }
+      - name: Exercise QML menus and focus on native Windows QPA
+        timeout-minutes: 2
+        shell: pwsh
+        env:
+          QT_QPA_FONTDIR: C:/Windows/Fonts
+        run: |
+          $result = Join-Path $env:RUNNER_TEMP "headroom-native-ui.txt"
+          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom-ui-tests.exe" -ArgumentList @('dragReordersAndDrivesTray', 'preservesAndDisplaysCustomInterval', '-o', "$result,txt") -PassThru
+          $timedOut = !$process.WaitForExit(90000)
+          if ($timedOut) { $process.Kill(); $process.WaitForExit() }
+          if (Test-Path $result) { Get-Content -Raw $result }
+          if ($timedOut) { throw 'Native QML UI test timed out.' }
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+      - name: Load QML and capture demo
+        if: ${{ always() && steps.windows-build.outcome == 'success' }}
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: C:/Windows/Fonts
+          QT_QUICK_BACKEND: software
+        run: |
+          $image = Join-Path $env:RUNNER_TEMP "headroom-windows.png"
+          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom.exe" -ArgumentList "--demo", "--screenshot", $image -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or !(Test-Path $image) -or (Get-Item $image).Length -eq 0) { exit 1 }
+
+  qt-attribution-sources:
+    needs: validate-version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fetch and verify official Qt source archives
+        run: python3 packaging/qt_attributions.py fetch --source-cache "$RUNNER_TEMP/qt-sources"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qt-attribution-sources-6.8.3
+          path: ${{ runner.temp }}/qt-sources/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  standalone-server-assets:
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: windows, goarch: amd64, asset: usage-server-win-x64.exe}
+          - {goos: windows, goarch: arm64, asset: usage-server-win-arm64.exe}
+          - {goos: linux, goarch: amd64, asset: usage-server-linux-amd64}
+          - {goos: linux, goarch: arm64, asset: usage-server-linux-arm64}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache: true
+          cache-dependency-path: server/go.sum
+      - name: Build versioned standalone usage server
+        working-directory: server
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -ldflags="-s -w -buildid= -X main.version=$HEADROOM_PACKAGE_VERSION" -o "${{ runner.temp }}/${{ matrix.asset }}" ./cmd/usage-server
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ runner.temp }}/${{ matrix.asset }}
+          if-no-files-found: error
+
+  package-linux-x64:
+    needs: [validate-version, qt-attribution-sources]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.25.x', cache: false }
+      - name: Install package build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build patchelf libgl1-mesa-dev libwayland-dev libxkbcommon-x11-0
+      - uses: jurplel/install-qt-action@v4.3.0
+        with:
+          version: ${{ env.HEADROOM_QT_VERSION }}
+          arch: linux_gcc_64
+          modules: qtshadertools
+          cache: true
+      - uses: actions/download-artifact@v8
+        with: {name: qt-attribution-sources-6.8.3, path: '${{ runner.temp }}/qt-sources'}
+      - name: Build complete package inputs
+        run: |
+          cmake -S clients/desktop -B "$RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_WITH_KDE_TRAY=OFF -DHEADROOM_WITH_LAYER_SHELL=OFF -DHEADROOM_VERSION="$HEADROOM_PACKAGE_VERSION"
+          cmake --build "$RUNNER_TEMP/desktop-package" --parallel
+          (cd server && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
+          (cd packaging/headroom-manager && go test ./... && go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-package" ./cmd/headroom-manager)
+          cp "$RUNNER_TEMP/headroom-package" "$RUNNER_TEMP/headroom"
+          packaging/package-linux.sh "$HEADROOM_PACKAGE_VERSION" "$RUNNER_TEMP/desktop-package" "$RUNNER_TEMP/package-work" "$RUNNER_TEMP/package-output" "$RUNNER_TEMP/usage-server" "$RUNNER_TEMP/headroom" "$RUNNER_TEMP/headroom-package" "$QT_ROOT_DIR" "$RUNNER_TEMP/qt-sources"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-linux-x64-package
+          path: ${{ runner.temp }}/package-output/Headroom-v${{ env.HEADROOM_PACKAGE_VERSION }}-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  package-windows:
+    needs: [validate-version, qt-attribution-sources]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            architecture: x86_64
+            msvc: x64
+            qt_host: windows
+            qt_arch: win64_msvc2022_64
+            rid: win-x64
+            artifact: headroom-windows-x64-package
+          - runner: windows-11-arm
+            architecture: arm64
+            msvc: arm64
+            qt_host: windows_arm64
+            qt_arch: win64_msvc2022_arm64
+            rid: win-arm64
+            artifact: headroom-windows-arm64-package
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.25.x', cache: false }
+      - uses: actions/setup-dotnet@v6
+        with: { dotnet-version: 8.0.x }
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: '${{ matrix.msvc }}' }
+      - uses: jurplel/install-qt-action@v4.3.0
+        with:
+          version: ${{ env.HEADROOM_QT_VERSION }}
+          host: ${{ matrix.qt_host }}
+          arch: ${{ matrix.qt_arch }}
+          modules: qtshadertools
+          cache: true
+      - uses: actions/download-artifact@v8
+        with: {name: qt-attribution-sources-6.8.3, path: '${{ runner.temp }}/qt-sources'}
+      - name: Build complete package inputs
+        shell: pwsh
+        run: |
+          cmake -S clients/desktop -B "$env:RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_VERSION="$env:HEADROOM_PACKAGE_VERSION"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build "$env:RUNNER_TEMP/desktop-package" --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location server
+          go build -trimpath -ldflags "-s -w -X main.version=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/usage-server.exe" ./cmd/usage-server
+          Pop-Location
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Push-Location packaging/headroom-manager
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags "-s -w -X main.buildVersion=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/headroom-package.exe" ./cmd/headroom-manager
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.buildVersion=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/headroom.exe" ./cmd/headroom-manager
+          Pop-Location
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r ${{ matrix.rid }} -p:Version=$env:HEADROOM_PACKAGE_VERSION -p:AssemblyVersion=${{ needs.validate-version.outputs.numeric_version }}.0 -p:FileVersion=${{ needs.validate-version.outputs.numeric_version }}.0 -p:InformationalVersion=$env:HEADROOM_PACKAGE_VERSION -p:IncludeSourceRevisionInInformationalVersion=false -o "$env:RUNNER_TEMP/helper"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $helperVersion = (Get-Item "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe").VersionInfo
+          if ($helperVersion.FileVersion -cne '${{ needs.validate-version.outputs.numeric_version }}.0' -or $helperVersion.ProductVersion -cne $env:HEADROOM_PACKAGE_VERSION) { throw 'Credential helper version metadata does not match the package version.' }
+          ./packaging/package-windows.ps1 -Version $env:HEADROOM_PACKAGE_VERSION -Architecture ${{ matrix.architecture }} -BuildDir "$env:RUNNER_TEMP/desktop-package" -WorkDir "$env:RUNNER_TEMP/package-work" -OutputDir "$env:RUNNER_TEMP/package-output" -Server "$env:RUNNER_TEMP/usage-server.exe" -CredentialHelper "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe" -Launcher "$env:RUNNER_TEMP/headroom.exe" -Manager "$env:RUNNER_TEMP/headroom-package.exe" -QtRoot $env:QT_ROOT_DIR -QtSourceCache "$env:RUNNER_TEMP/qt-sources" -ProjectAssets "clients/windows/Headroom.CredentialHelper/obj/project.assets.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/package-output/Headroom-v${{ env.HEADROOM_PACKAGE_VERSION }}-windows-*.zip
+          if-no-files-found: error
+
+  smoke-linux-package:
+    needs: package-linux-x64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with: { name: headroom-linux-x64-package, path: '${{ runner.temp }}/package' }
+      - name: Install and render downloaded bundle without a Qt SDK
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update && sudo apt-get install -y xvfb libegl1 libgl1 libglx0 libopengl0 libdbus-1-3 libdrm2 libgbm1 libfontconfig1 libfreetype6 libglib2.0-0 libgssapi-krb5-2 libssl3 libwayland-client0 libwayland-cursor0 libwayland-egl1 libx11-6 libx11-xcb1 libxkbcommon0 libxkbcommon-x11-0 libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xkb1 zlib1g libzstd1
+          archive="$RUNNER_TEMP/package/Headroom-v$HEADROOM_PACKAGE_VERSION-linux-x86_64.tar.gz"
+          root="Headroom-v$HEADROOM_PACKAGE_VERSION-linux-x86_64"
+          tar -xOzf "$archive" "$root/bootstrap/headroom-package" > "$RUNNER_TEMP/headroom-package"
+          chmod 0700 "$RUNNER_TEMP/headroom-package"
+          "$RUNNER_TEMP/headroom-package" install --archive "$archive" --install-root "$RUNNER_TEMP/install with spaces" --entry-path "$RUNNER_TEMP/bin with spaces/headroom" --version "$HEADROOM_PACKAGE_VERSION" --platform linux --arch x86_64 --asset "$(basename "$archive")"
+          mkdir -m 0700 "$RUNNER_TEMP/runtime"
+          ready="$RUNNER_TEMP/headroom-clean-linux-ready.json"
+          nonce=0123456789abcdef0123456789abcdef0123456789abcdef
+          env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
+            HEADROOM_READY_NONCE="$nonce" timeout 30s xvfb-run -a env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --headroom-ready-file "$ready" --screenshot "$RUNNER_TEMP/headroom-clean-linux-xcb.png"
+          env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
+            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-clean-linux-offscreen.png"
+          HEADROOM_INSTALL_ROOT="$RUNNER_TEMP/obsolete install" HEADROOM_LAUNCHER_PATH="$RUNNER_TEMP/obsolete launcher" HEADROOM_PACKAGE_VERSION=9.9.9 \
+            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
+          test -s "$RUNNER_TEMP/headroom-clean-linux-xcb.png" && test -s "$RUNNER_TEMP/headroom-clean-linux-offscreen.png" && test -s "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
+          version_path="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version_path"])' "$RUNNER_TEMP/install with spaces/install-state.json")"
+          python3 - "$ready" "$RUNNER_TEMP/install with spaces/$version_path/bin/headroom" "$HEADROOM_PACKAGE_VERSION" "$nonce" <<'PY'
+          import json, os, sys
+          value=json.load(open(sys.argv[1], encoding='utf-8'))
+          assert value['nonce'] == sys.argv[4] and value['version'] == sys.argv[3] and value['pid'] > 0
+          assert os.path.realpath(value['executable']) == os.path.realpath(sys.argv[2])
+          PY
+          python3 packaging/tests/package_server_smoke.py --server "$RUNNER_TEMP/install with spaces/$version_path/bin/usage-server"
+          find "$RUNNER_TEMP/install with spaces/$version_path" -type f -printf '%P\n' | sort > "$RUNNER_TEMP/linux-package-inventory.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-linux-x64-smoke-evidence
+          path: |
+            ${{ runner.temp }}/headroom-clean-linux-*.png
+            ${{ runner.temp }}/headroom-dirty-environment-linux.png
+            ${{ runner.temp }}/linux-package-inventory.txt
+
+  smoke-windows-package:
+    needs: package-windows
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            arch: x64
+            contract_arch: x86_64
+            artifact: headroom-windows-x64-package
+          - runner: windows-11-arm
+            arch: arm64
+            contract_arch: arm64
+            artifact: headroom-windows-arm64-package
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with: { dotnet-version: 8.0.x }
+      - uses: actions/download-artifact@v8
+        with: { name: '${{ matrix.artifact }}', path: '${{ runner.temp }}/package' }
+      - name: Install and render downloaded bundle without a Qt SDK
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $asset = "Headroom-v$env:HEADROOM_PACKAGE_VERSION-windows-${{ matrix.arch }}.zip"
+          $archivePath = Join-Path "$env:RUNNER_TEMP/package" $asset
+          $root = [IO.Path]::GetFileNameWithoutExtension($asset)
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+          try {
+            $entry = @($zip.Entries | Where-Object FullName -CEQ "$root/bootstrap/headroom-package.exe")
+            if ($entry.Count -ne 1 -or $entry[0].Length -gt 64MB) { exit 1 }
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry[0], "$env:RUNNER_TEMP/headroom-package.exe")
+          } finally { $zip.Dispose() }
+          $install = "$env:RUNNER_TEMP/install with spaces"
+          $stable = "$env:RUNNER_TEMP/bin with spaces/headroom.exe"
+          $version = $env:HEADROOM_PACKAGE_VERSION
+          & "$env:RUNNER_TEMP/headroom-package.exe" install --archive $archivePath --install-root $install --entry-path $stable --version $env:HEADROOM_PACKAGE_VERSION --platform windows --arch ${{ matrix.contract_arch }} --asset $asset
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $versionPath = (Get-Content -Raw "$install/install-state.json" | ConvertFrom-Json).version_path
+          if (!(Test-Path "$install/$versionPath/bin/msvcp140.dll") -or !(Test-Path "$install/$versionPath/bin/vcruntime140.dll")) { exit 1 }
+          Get-ChildItem Env: | Where-Object { $_.Name -like 'QT_*' -or $_.Name -like 'QML*' } | Remove-Item
+          Remove-Item Env:HEADROOM_INSTALL_ROOT, Env:HEADROOM_LAUNCHER_PATH, Env:HEADROOM_PACKAGE_VERSION -ErrorAction SilentlyContinue
+          function Invoke-Smoke([string]$Image, [string]$Platform) {
+            if ($Platform) {
+              $env:QT_QPA_PLATFORM = $Platform
+              $env:QT_QPA_FONTDIR = Join-Path $env:WINDIR 'Fonts'
+            } else {
+              Remove-Item Env:QT_QPA_PLATFORM, Env:QT_QPA_FONTDIR -ErrorAction SilentlyContinue
+            }
+            $ready = "$Image.ready.json"
+            $nonce = [guid]::NewGuid().ToString('N')
+            $env:HEADROOM_READY_NONCE = $nonce
+            $process = Start-Process -FilePath $stable -ArgumentList '--demo','--headroom-ready-file',$ready,'--screenshot',$Image -PassThru
+            Remove-Item Env:HEADROOM_READY_NONCE
+            if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'Headroom package smoke timed out.' }
+            if ($process.ExitCode -ne 0) { throw 'Headroom package launcher failed.' }
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            while ([DateTime]::UtcNow -lt $deadline -and (!(Test-Path $Image) -or (Get-Item $Image).Length -eq 0)) {
+              Start-Sleep -Milliseconds 100
+            }
+            if (!(Test-Path $Image) -or (Get-Item $Image).Length -eq 0) { throw 'Headroom package screenshot timed out.' }
+            if (!(Test-Path $ready)) { throw 'Headroom readiness marker is missing.' }
+            $marker = Get-Content -LiteralPath $ready -Raw | ConvertFrom-Json
+            $expected = [IO.Path]::GetFullPath("$install/$versionPath/bin/headroom.exe")
+            if ($marker.nonce -cne $nonce -or $marker.version -cne $version -or [int64]$marker.pid -le 0 -or
+                [IO.Path]::GetFullPath([string]$marker.executable) -ine $expected) { throw 'Headroom readiness identity did not match the installed generation.' }
+          }
+          Invoke-Smoke "$env:RUNNER_TEMP/headroom-clean-windows-native.png" ''
+          $env:QT_QUICK_BACKEND = 'software'
+          Invoke-Smoke "$env:RUNNER_TEMP/headroom-clean-windows-offscreen.png" 'offscreen'
+          $env:HEADROOM_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP 'obsolete install'
+          $env:HEADROOM_LAUNCHER_PATH = Join-Path $env:RUNNER_TEMP 'obsolete launcher.exe'
+          $env:HEADROOM_PACKAGE_VERSION = '9.9.9'
+          Invoke-Smoke "$env:RUNNER_TEMP/headroom-dirty-environment-windows.png" 'offscreen'
+          python packaging/tests/package_server_smoke.py --server "$install/$versionPath/bin/usage-server.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
+            throw 'Browser-profile quarantine is permitted only on a disposable GitHub-hosted runner.'
+          }
+          $localData = [Environment]::GetFolderPath('LocalApplicationData')
+          $roamingData = [Environment]::GetFolderPath('ApplicationData')
+          $profileRoots = @(
+            (Join-Path $localData 'Google/Chrome/User Data'),
+            (Join-Path $localData 'Microsoft/Edge/User Data'),
+            (Join-Path $localData 'BraveSoftware/Brave-Browser/User Data'),
+            (Join-Path $roamingData 'Mozilla/Firefox/Profiles')
+          )
+          $quarantineSuffix = '.headroom-fixture-' + [guid]::NewGuid().ToString('N')
+          $movedProfiles = @()
+          $preparedRoots = @()
+          try {
+            for ($index = 0; $index -lt $profileRoots.Count; $index++) {
+              $source = $profileRoots[$index]
+              if (Test-Path -LiteralPath $source) {
+                $destination = $source + $quarantineSuffix
+                [IO.Directory]::Move($source, $destination)
+                $movedProfiles += [pscustomobject]@{ Source = $source; Destination = $destination }
+              }
+              $preparedRoots += $source
+            }
+            dotnet run --project tests/windows/PackagedCredentialHelperTests.csproj -c Release -r win-${{ matrix.arch }} -- "$install/$versionPath/bin/headroom-credential-helper.exe"
+            if ($LASTEXITCODE -ne 0) { throw "Packaged credential helper fixture failed with exit code $LASTEXITCODE." }
+          } finally {
+            foreach ($profileRoot in $preparedRoots) {
+              if (Test-Path -LiteralPath $profileRoot) { Remove-Item -LiteralPath $profileRoot -Recurse -Force }
+            }
+            foreach ($moved in $movedProfiles) {
+              New-Item -ItemType Directory -Path (Split-Path -Parent $moved.Source) -Force | Out-Null
+              [IO.Directory]::Move($moved.Destination, $moved.Source)
+            }
+          }
+          dotnet run --project tests/windows/HeadroomCredentialHelperNativeTests.csproj -c Release -r win-${{ matrix.arch }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem "$install/$versionPath" -Recurse -File | ForEach-Object { $_.FullName.Substring($install.Length + 1) } | Sort-Object | Set-Content "$env:RUNNER_TEMP/windows-package-inventory.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-windows-${{ matrix.arch }}-smoke-evidence
+          path: |
+            ${{ runner.temp }}/headroom-clean-windows-*.png
+            ${{ runner.temp }}/headroom-dirty-environment-windows.png
+            ${{ runner.temp }}/windows-package-inventory.txt
+
+  package-release-manifest:
+    needs: [package-linux-x64, package-windows, smoke-linux-package, smoke-windows-package]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.25.x', cache: false }
+      - uses: actions/download-artifact@v8
+        with: { pattern: 'headroom-*-package', path: '${{ runner.temp }}/packages', merge-multiple: true }
+      - name: Verify matrix and create release manifest
+        run: |
+          cd packaging/headroom-manager
+          go run ./cmd/headroom-manager create-release --version "$HEADROOM_PACKAGE_VERSION" --output "$RUNNER_TEMP/packages/Headroom-v$HEADROOM_PACKAGE_VERSION-release.json" \
+            --package "$RUNNER_TEMP/packages/Headroom-v$HEADROOM_PACKAGE_VERSION-windows-x64.zip" \
+            --package "$RUNNER_TEMP/packages/Headroom-v$HEADROOM_PACKAGE_VERSION-windows-arm64.zip" \
+            --package "$RUNNER_TEMP/packages/Headroom-v$HEADROOM_PACKAGE_VERSION-linux-x86_64.tar.gz"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-release-manifest
+          path: ${{ runner.temp }}/packages/Headroom-v${{ env.HEADROOM_PACKAGE_VERSION }}-release.json
+          if-no-files-found: error
+
+  installer-fixtures:
+    needs: package-release-manifest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            package_artifact: headroom-linux-x64-package
+            asset: linux-x86_64.tar.gz
+          - runner: windows-2022
+            package_artifact: headroom-windows-x64-package
+            asset: windows-x64.zip
+          - runner: windows-11-arm
+            package_artifact: headroom-windows-arm64-package
+            asset: windows-arm64.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with: { name: '${{ matrix.package_artifact }}', path: '${{ runner.temp }}/fixture' }
+      - uses: actions/download-artifact@v8
+        with: { name: headroom-release-manifest, path: '${{ runner.temp }}/fixture' }
+      - name: Exercise Linux per-user installer in isolated roots
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          XDG_DATA_HOME="$RUNNER_TEMP/user data" HOME="$RUNNER_TEMP/home with spaces" ./install.sh --package "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}" --release-manifest "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-release.json" --install-root "$RUNNER_TEMP/installed with spaces" --entry-path "$RUNNER_TEMP/entries with spaces/headroom" --no-launch
+          test -x "$RUNNER_TEMP/entries with spaces/headroom" && test -f "$RUNNER_TEMP/entries with spaces/headroom.root"
+          grep -F 'Exec="' "$RUNNER_TEMP/user data/applications/headroom.desktop"
+          python3 - "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-release.json" "$RUNNER_TEMP/oversized-release.json" <<'PY'
+          import json, sys
+          value=json.load(open(sys.argv[1], encoding='utf-8'))
+          for package in value['packages']: package['size']=2147483649
+          json.dump(value, open(sys.argv[2], 'w', encoding='utf-8'))
+          PY
+          if XDG_DATA_HOME="$RUNNER_TEMP/invalid user data" HOME="$RUNNER_TEMP/invalid home" ./install.sh --package "$RUNNER_TEMP/fixture/Headroom-v$HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}" --release-manifest "$RUNNER_TEMP/oversized-release.json" --install-root "$RUNNER_TEMP/invalid install" --entry-path "$RUNNER_TEMP/invalid entry/headroom" --no-launch; then exit 1; fi
+          test ! -e "$RUNNER_TEMP/invalid install"
+          ./install.sh --dry-run --install-root "$RUNNER_TEMP/dry run" --entry-path "$RUNNER_TEMP/dry entry/headroom"
+          test ! -e "$RUNNER_TEMP/dry run"
+      - name: Exercise PowerShell installer in isolated roots
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP/local app data"
+          $env:APPDATA = "$env:RUNNER_TEMP/roaming app data"
+          $asset = "Headroom-v$env:HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}"
+          ./install.ps1 -PackagePath "$env:RUNNER_TEMP/fixture/$asset" -ReleaseManifestPath "$env:RUNNER_TEMP/fixture/Headroom-v$env:HEADROOM_PACKAGE_VERSION-release.json" -InstallRoot "$env:RUNNER_TEMP/installed with spaces" -EntryPath "$env:RUNNER_TEMP/entries with spaces/headroom.exe" -NoLaunch
+          if (!(Test-Path "$env:RUNNER_TEMP/entries with spaces/headroom.exe") -or !(Test-Path "$env:RUNNER_TEMP/entries with spaces/headroom.exe.root")) { exit 1 }
+          $badManifest = Get-Content -LiteralPath "$env:RUNNER_TEMP/fixture/Headroom-v$env:HEADROOM_PACKAGE_VERSION-release.json" -Raw | ConvertFrom-Json
+          $badManifest.packages | ForEach-Object { $_.size = [int64]2147483649 }
+          $badManifest | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath "$env:RUNNER_TEMP/oversized-release.json" -Encoding UTF8
+          try {
+            ./install.ps1 -PackagePath "$env:RUNNER_TEMP/fixture/$asset" -ReleaseManifestPath "$env:RUNNER_TEMP/oversized-release.json" -InstallRoot "$env:RUNNER_TEMP/invalid install" -EntryPath "$env:RUNNER_TEMP/invalid entry/headroom.exe" -NoLaunch
+            throw 'Malformed release manifest was accepted.'
+          } catch {
+            if ($_.Exception.Message -eq 'Malformed release manifest was accepted.') { throw }
+          }
+          if (Test-Path "$env:RUNNER_TEMP/invalid install") { exit 1 }
+          ./install.ps1 -WhatIf -InstallRoot "$env:RUNNER_TEMP/dry run" -EntryPath "$env:RUNNER_TEMP/dry entry/headroom.exe"
+          if (Test-Path "$env:RUNNER_TEMP/dry run") { exit 1 }
+      - name: Exercise Windows PowerShell 5.1 and piped WhatIf invocation
+        if: matrix.runner == 'windows-2022'
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP/ps51 local app data"
+          $env:APPDATA = "$env:RUNNER_TEMP/ps51 roaming app data"
+          $asset = "Headroom-v$env:HEADROOM_PACKAGE_VERSION-${{ matrix.asset }}"
+          & .\install.ps1 -PackagePath "$env:RUNNER_TEMP/fixture/$asset" -ReleaseManifestPath "$env:RUNNER_TEMP/fixture/Headroom-v$env:HEADROOM_PACKAGE_VERSION-release.json" -InstallRoot "$env:RUNNER_TEMP/ps51 installed" -EntryPath "$env:RUNNER_TEMP/ps51 entries/headroom.exe" -NoLaunch
+          if (!(Test-Path "$env:RUNNER_TEMP/ps51 entries/headroom.exe.root")) { exit 1 }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP/piped local app data"
+          $env:APPDATA = "$env:RUNNER_TEMP/piped roaming app data"
+          $WhatIfPreference = $true
+          Get-Content -LiteralPath .\install.ps1 -Raw | Invoke-Expression
+          if (Test-Path "$env:LOCALAPPDATA/Headroom") { exit 1 }
+
+  release-assets:
+    needs: [installer-fixtures, standalone-server-assets, server-validation, server-docker]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with: {pattern: 'headroom-*-package', path: '${{ runner.temp }}/release', merge-multiple: true}
+      - uses: actions/download-artifact@v8
+        with: {name: headroom-release-manifest, path: '${{ runner.temp }}/release'}
+      - uses: actions/download-artifact@v8
+        with: {pattern: 'usage-server-*', path: '${{ runner.temp }}/release', merge-multiple: true}
+      - name: Assemble reviewable release assets
+        run: |
+          cp install.sh install.ps1 "$RUNNER_TEMP/release/"
+          cd "$RUNNER_TEMP/release"
+          expected="Headroom-v$HEADROOM_PACKAGE_VERSION-linux-x86_64.tar.gz Headroom-v$HEADROOM_PACKAGE_VERSION-windows-arm64.zip Headroom-v$HEADROOM_PACKAGE_VERSION-windows-x64.zip Headroom-v$HEADROOM_PACKAGE_VERSION-release.json install.ps1 install.sh usage-server-linux-amd64 usage-server-linux-arm64 usage-server-win-arm64.exe usage-server-win-x64.exe"
+          for asset in $expected; do test -s "$asset"; done
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 10
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-release-assets
+          path: ${{ runner.temp }}/release/*
+          if-no-files-found: error

@@ -26,11 +26,12 @@ type rawProviderConfig struct {
 }
 
 type flagValues struct {
-	ConfigPath   string
-	ListenAddr   string
-	AuthToken    string
-	PollInterval string
-	Set          map[string]bool
+	ConfigPath     string
+	ListenAddr     string
+	AuthToken      string
+	PollInterval   string
+	DesktopSession bool
+	Set            map[string]bool
 }
 
 func Load(ctx context.Context, opts LoadOptions) (Config, error) {
@@ -70,6 +71,7 @@ func parseFlags(args []string) (flagValues, error) {
 	fs.StringVar(&values.ListenAddr, "listen-addr", "", "address for the HTTP server")
 	fs.StringVar(&values.AuthToken, "auth-token", "", "optional bearer token")
 	fs.StringVar(&values.PollInterval, "poll-interval", "", "provider poll interval")
+	fs.BoolVar(&values.DesktopSession, "desktop-session", false, "start a private desktop TLS session")
 	if err := fs.Parse(args); err != nil {
 		return flagValues{}, fmt.Errorf("parse flags: %w", err)
 	}
@@ -177,6 +179,9 @@ func applyProviderEnv(env map[string]string, cfg *Config) error {
 }
 
 func applyFlags(flags flagValues, cfg *Config) error {
+	if flags.Set["desktop-session"] {
+		cfg.DesktopSession = flags.DesktopSession
+	}
 	if flags.Set["listen-addr"] {
 		cfg.ListenAddr = flags.ListenAddr
 	}

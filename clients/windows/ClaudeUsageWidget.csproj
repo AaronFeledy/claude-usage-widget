@@ -31,7 +31,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The headless helper is a separate executable, not a second entry point. -->
+    <Compile Remove="Headroom.CredentialHelper/**/*.cs" />
     <Content Include="app.ico" />
+    <EmbeddedResource Include="../shared/provider-icons/*.png" LogicalName="ProviderIcons.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

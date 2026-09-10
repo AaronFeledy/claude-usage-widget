@@ -214,6 +214,10 @@ func Test_Client_handles_api_key_missing_account_rate_limit_server_error_and_can
 func Test_Client_reloads_credentials_instead_of_refreshing_when_mtime_changes_before_401_refresh(t *testing.T) {
 	// Given
 	path := writeAuth(t, `{"tokens":{"access_token":"old","refresh_token":"old-refresh"},"last_refresh":"2026-07-12T00:00:00Z"}`)
+	oldTime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
 	var usageCalls atomic.Int32
 	var refreshCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -225,6 +229,10 @@ func Test_Client_reloads_credentials_instead_of_refreshing_when_mtime_changes_be
 		call := usageCalls.Add(1)
 		if call == 1 {
 			writeFile(t, path, `{"tokens":{"access_token":"external","refresh_token":"external-refresh"}}`)
+			newTime := oldTime.Add(2 * time.Second)
+			if err := os.Chtimes(path, newTime, newTime); err != nil {
+				t.Fatal(err)
+			}
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

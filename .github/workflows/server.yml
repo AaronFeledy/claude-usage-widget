@@ -13,6 +13,9 @@ on:
       - '.github/workflows/server.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test
@@ -21,8 +24,8 @@ jobs:
       run:
         working-directory: server
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
           cache: true
@@ -64,8 +67,8 @@ jobs:
             output: usage-server-linux-arm64
             asset: usage-server-linux-arm64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: server/go.mod
           cache: true
@@ -77,7 +80,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
         run: go build -trimpath -ldflags='-s -w -buildid=' -o "${{ runner.temp }}/${{ matrix.output }}" ./cmd/usage-server
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: ${{ runner.temp }}/${{ matrix.output }}
@@ -88,7 +91,7 @@ jobs:
     name: Docker multi-arch
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Build image
         uses: docker/build-push-action@v7

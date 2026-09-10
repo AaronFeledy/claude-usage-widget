@@ -1,6 +1,8 @@
 # Home Assistant REST Sensor
 
-Use Home Assistant's REST sensor to read the Claude Usage Widget server API. This is a plain `configuration.yaml` example; a Home Assistant add-on is future work and does not exist in this repository yet.
+Use Home Assistant's REST sensor to read the Headroom usage-server API. This is
+a plain `configuration.yaml` example. This repository does not contain a Home
+Assistant add-on.
 
 The server default `127.0.0.1:7823` only works when Home Assistant runs on the same host namespace as the server. For a Raspberry Pi, NAS, or Docker host, run `usage-server` with a non-loopback bind and a bearer token:
 
@@ -17,7 +19,11 @@ claude_usage_widget_auth: Bearer replace-with-a-long-random-token
 
 ## REST Sensors
 
-The server endpoint is `GET /api/v1/usage`. It returns one array entry per enabled provider, sorted by provider name. With all four providers enabled, the order is `Claude`, `Codex`, `Cursor`, then `Grok`.
+The server endpoint is `GET /api/v1/usage`. It returns one array entry per
+enabled provider, sorted by provider name. With all four providers enabled, the
+order is `Claude`, `Codex`, `Cursor`, then `Grok`. `Codex` is the compatible API
+name for the provider Headroom displays as ChatGPT, so existing sensor names and
+indexes do not change.
 
 The `current` and `weekly` sensors below are unchanged and remain valid: keep any existing configuration exactly as it is. `buckets` is a new, additive array field added alongside them, described in [Returned Fields](#returned-fields).
 

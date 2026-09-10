@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Update Headroom</title>
+<style>body{max-width:760px;margin:60px auto;padding:0 24px;background:#282a36;color:#f8f8f2;font:17px/1.7 system-ui}h1,h2{color:#bd93f9}a{color:#8be9fd}pre{padding:20px;background:#21222c;border-radius:12px;overflow:auto;font-size:14px}code{color:#f1fa8c}</style>
+<h1>Update Headroom</h1>
+<p>This guide is installed for source and system-managed builds. Official per-user packages check once after normal startup, automatically download and verify a newer native package, and offer <strong>Restart to apply</strong> only after a complete stage is ready.</p>
+<h2>Source installation</h2>
+<p>Use the checkout that contains <code>clients/desktop</code>. Review incoming changes and preserve any local work before changing the checkout. Headroom does not update a source checkout or run code fetched by this guide.</p>
+<p>Run these commands from the repository root:</p>
+<pre><code>cmake -S clients/desktop -B clients/desktop/build -DCMAKE_BUILD_TYPE=Release
+cmake --build clients/desktop/build --parallel
+ctest --test-dir clients/desktop/build --output-on-failure</code></pre>
+<p>On Windows, use the same CMake source with an architecture-matching Qt kit and Visual Studio developer shell. See the <a href="https://github.com/AaronFeledy/claude-usage-widget/tree/main/clients/desktop#build-and-run">Windows source instructions</a> for the native configure and test commands.</p>
+<p>On Linux, after the build and tests succeed, choose <strong>Quit Headroom</strong>, install with the same prefix used previously, and reopen it:</p>
+<pre><code>cmake --install clients/desktop/build --prefix "$HOME/.local"
+"$HOME/.local/bin/headroom"</code></pre>
+<p>The install changes application files only. Connection settings, provider order, and any saved bearer token remain in the current-user settings file.</p>
+<h2>System-managed installation</h2>
+<p>Use the update command and repository configured by your operating system or package administrator, then quit and reopen Headroom. A system-managed build does not download public Headroom release assets or write into the per-user package root.</p>
+<h2>External per-user reinstall</h2>
+<p>If you rerun an official installer while Headroom is already open, quit and reopen the app after installation. The verified files are replaced on disk, but a launcher invocation may activate the existing primary process until it exits.</p>
+<h2>Source requirements</h2>
+<p>CMake 3.21+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2, Widgets, Network, SVG, and Test. Linux package builds also use Qt WaylandClient. Tests bind isolated loopback fixtures and render Qt offscreen.</p>
+<p><a href="https://github.com/AaronFeledy/claude-usage-widget/releases">Project releases</a> · <a href="https://github.com/AaronFeledy/claude-usage-widget">Source repository</a></p>
+</html>

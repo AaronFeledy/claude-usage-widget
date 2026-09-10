@@ -1,0 +1,6 @@
+{
+  "product": "Headroom",
+  "version": "@HEADROOM_VERSION@",
+  "numeric_version": "@HEADROOM_NUMERIC_VERSION@",
+  "qt_version": "@Qt6_VERSION@"
+}

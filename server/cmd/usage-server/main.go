@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -37,12 +36,19 @@ func main() {
 func run(args []string, env []string, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return runContext(ctx, args, env, logger, desktopSessionOptions{input: os.Stdin, output: os.Stdout})
+}
+
+func runContext(ctx context.Context, args []string, env []string, logger *slog.Logger, desktopOptions desktopSessionOptions) error {
 	cfg, err := config.Load(ctx, config.LoadOptions{Args: args, Env: env})
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
+	}
+	if cfg.DesktopSession {
+		return runDesktopSession(ctx, cfg, logger, desktopOptions)
 	}
 	if err := api.ValidateStartup(cfg.ListenAddr, cfg.AuthToken); err != nil {
 		return err
@@ -61,11 +67,42 @@ func run(args []string, env []string, logger *slog.Logger) error {
 		Version:       version,
 		ProviderNames: names,
 	})
-	listener, err := net.Listen("tcp", cfg.ListenAddr)
+	listener, err := desktopOptions.withDefaults().listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return err
 	}
 	return runServerAndPoller(ctx, appRuntime{server: server.RunOptions{Listener: listener, Handler: handler, Logger: logger}, poller: providerPoller, interval: cfg.PollInterval})
+}
+
+func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions) error {
+	prepared, err := prepareDesktopSession(ctx, cfg.ListenAddr, options)
+	if err != nil {
+		return err
+	}
+	defer prepared.listener.Close()
+	cfg.AuthToken = prepared.request.Token
+	providerPoller, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	if err != nil {
+		return err
+	}
+	handler := api.NewHandler(api.Options{
+		Cache:         providerPoller,
+		Cursor:        cursorClient,
+		Grok:          grokProvider,
+		Poller:        providerPoller,
+		Logger:        logger,
+		AuthToken:     cfg.AuthToken,
+		Version:       version,
+		ProviderNames: names,
+	})
+	if err := prepared.publishIdentity(); err != nil {
+		return err
+	}
+	return runServerAndPoller(ctx, appRuntime{
+		server:   server.RunOptions{Listener: prepared.listener, Handler: handler, Logger: logger},
+		poller:   providerPoller,
+		interval: cfg.PollInterval,
+	})
 }
 
 type appRuntime struct {
