@@ -13,7 +13,7 @@ and rollback implementation; differences below are intentional unless stated.
 | Pacing | Uses five-hour, weekly, Cursor 30-day, and Grok calendar-month estimates when reset data permits; dashboard, tray, attention count, and notifications share one warning state |
 | Warning transitions | Applies pace pressure, capacity guards, hysteresis, and session-local baselines; alerts only on upward Warning or Critical transitions |
 | Polling | Retains last good data on failure, distinguishes setup/auth/network/provider states, backs off to five minutes or the configured interval, and lets manual Refresh bypass the delay |
-| Local mode | Probes `127.0.0.1:7823`, attaches to a compatible server, or starts the adjacent bundle; Headroom owns and stops only the process it starts |
+| Local mode | Probes `127.0.0.1:7823` without secrets; attaches without saved auth, or starts the adjacent bundle with a private, verified TLS session; owns and stops only its child |
 | Remote mode | Accepts normalized HTTP(S) base URLs and bearer auth; the server still requires authentication for non-loopback binds |
 | Startup | Registers the stable package launcher, or the current executable for a source/system build, with `--background` |
 | Diagnostics | Keeps 500 controlled session events with UTC timestamps; copy and clear are available; tokens, URLs, raw bodies, credentials, and account output are omitted |
@@ -21,8 +21,10 @@ and rollback implementation; differences below are intentional unless stated.
 
 Both platforms default to Local mode; saved remote settings override it. Windows
 can use the packaged current-user helper to forward supported Cursor and Grok
-browser cookies to loopback HTTP or remote HTTPS. Linux uses server-side
-credential files or the WSL sync helper.
+browser cookies to its verified bundled server session or configured HTTPS.
+Unlike the retained Windows implementation, Headroom does not send browser
+cookies or saved tokens to an unverified attached localhost HTTP listener.
+Linux uses server-side credential files or the WSL sync helper.
 
 ## Tray and window behavior
 

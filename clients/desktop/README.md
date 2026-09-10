@@ -61,6 +61,15 @@ an existing server or starting an adjacent packaged server. Saved connection
 settings take precedence. To override the default, choose **Remote**, enter the
 server's base HTTP(S) address and bearer token, then choose **Save & connect**.
 Reverse-proxy path prefixes are supported.
+
+Local discovery and attached plain HTTP servers receive no saved bearer tokens
+or browser cookies. A bundled server uses a fresh TLS certificate and session
+token exchanged through private process pipes. Health, usage, version, and
+credential requests all verify that server identity. The session is discarded
+when the child exits or connection settings change. To use authentication with
+an independently managed server, configure it explicitly in Remote settings;
+browser credential forwarding requires HTTPS.
+
 The client polls `GET /api/v1/usage`; Refresh reads the server's current cache,
 not a forced provider refresh. Polling defaults to 60 seconds and can be adjusted
 in settings. Requests time out, refuse redirects, and retain last
@@ -178,10 +187,11 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
   clients/desktop/build/headroom --demo --screenshot /tmp/headroom.png
 ```
 
-Tests cover API parsing, legacy bucket fallback, URL handling, local HTTP/Bearer
-requests, offline data retention, settings permissions, order persistence, and
-actual pointer-driven drag and drop in the QML window. Tests bind a loopback
-socket and need permission to do so. UI tests render the desktop, settings, and
+Tests cover API parsing, legacy bucket fallback, URL handling, authenticated
+requests, secret-free localhost discovery, offline data retention, settings
+permissions, order persistence, and actual pointer-driven drag and drop in the
+QML window. Tests bind a loopback socket and need permission to do so. UI tests
+render the desktop, settings, and
 compact views with Qt's software renderer. Desktop tray integration still
 requires a real desktop session.
 
@@ -217,9 +227,10 @@ return different buckets. Both clients retain pacing and provider ordering.
 Headroom supports both remote connections and an owned local usage server on
 Windows and Linux. Windows can forward supported Cursor and Grok browser cookies
 from Chrome, Edge, Brave, and Firefox through the bundled helper, but only to
-loopback HTTP or remote HTTPS. The helper uses the current Windows user's browser
-encryption context; it cannot read other users' profiles or bypass unsupported
-newer encrypted values, and Linux has no browser helper. Official per-user packages
+the verified bundled server session or a configured HTTPS server. The helper
+uses the current Windows user's browser encryption context; it cannot read other
+users' profiles or bypass unsupported newer encrypted values, and Linux has no
+browser helper. Official per-user packages
 share the verified update flow described above. The WSL service remains a
 separately managed deployment documented in
 [the server deployment notes](../../server/deploy/wsl/README.md).

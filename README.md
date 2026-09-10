@@ -64,7 +64,7 @@ the same restart instruction and performs no activation attempt.
 ```text
 Local mode (default on Windows and Linux)
 
-  Headroom ── GET /api/v1/usage ──> usage-server on 127.0.0.1:7823
+  Headroom ── verified TLS when bundled ──> usage-server on localhost
       │                                  │
       │ starts and owns it only          └── provider credential files/APIs
       │ when no compatible server exists
@@ -76,11 +76,20 @@ Remote mode
       usage-server on WSL, a LAN host, NAS, Raspberry Pi, or container
 ```
 
-Headroom probes the local endpoint before starting the adjacent bundled server.
-It stops or hands off only a server process it started; an attached local server
-and every remote server remain independently owned. The server binds to
+Headroom probes the local endpoint without sending saved tokens. When it starts
+the bundled server, the two processes establish a private session with a fresh
+TLS certificate and bearer token. Headroom verifies that certificate on every
+connection before sending authenticated requests or browser cookies. Session
+secrets stay in memory and travel between parent and child through private pipes.
+An existing plain HTTP server can supply usage without receiving a saved token
+or browser cookies. To connect to an independently managed server that requires
+a token, configure it explicitly in Remote settings; browser recovery requires
+HTTPS.
+
+Headroom stops or hands off only a server process it started; attached and remote
+servers remain independently owned. The standalone server binds to
 `127.0.0.1:7823` by default and refuses any non-loopback bind without a bearer
-token.
+token. Its existing HTTP API and configuration remain compatible.
 
 Windows and Linux start in Local mode at `http://127.0.0.1:7823`. To use another
 server, select Remote in Connection settings and enter its HTTP(S) base URL.
@@ -148,9 +157,9 @@ and Grok browser cookies from supported Chrome, Edge, Brave, and Firefox
 profiles. It uses the current Windows user's browser encryption context and
 returns only the requested cookie over a bounded private child-process channel.
 It cannot read another user's profile or bypass unsupported newer encrypted
-values. Headroom forwards a result only to loopback HTTP or remote HTTPS and
-never persists it. Linux does not include this helper; use server-side credential
-files or the documented [WSL credential sync](server/deploy/wsl/README.md).
+values. Headroom forwards a result only to its verified bundled server session
+or a configured HTTPS server and never persists it. Linux does not include this
+helper; use server-side credential files or the documented [WSL credential sync](server/deploy/wsl/README.md).
 
 ## Interface behavior
 

@@ -78,7 +78,8 @@ int main(int argc, char **argv) {
         startup.setAllowChanges(!controller.isDemo() && !capture && !isolated);
         updateService.setPublicTrafficAllowed(!controller.isDemo());
         appInfo.setBackend(controller.isDemo() ? QString() : controller.backendUrl(),
-                           controller.isDemo() ? QString() : controller.backendToken());
+                           controller.isDemo() ? QString() : controller.backendToken(),
+                           controller.isDemo() ? QSslCertificate() : controller.backendCertificate());
     };
     QObject::connect(&controller, &Controller::settingsChanged, &app, syncServices);
     QObject::connect(&controller, &Controller::changed, &app, syncServices);

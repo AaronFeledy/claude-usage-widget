@@ -3,8 +3,11 @@
 #include <QNetworkAccessManager>
 #include <QPointer>
 #include <QProcess>
+#include <QSslCertificate>
 #include <QTimer>
 #include <QUrl>
+
+#include "serverconnection.h"
 
 struct ManagedServerOptions {
     QUrl localUrl = QUrl(QStringLiteral("http://127.0.0.1:7823/"));
@@ -16,6 +19,7 @@ struct ManagedServerOptions {
     int readinessIntervalMs = 100;
     int readinessAttempts = 40;
     int restartLimit = 3;
+    int sessionHandshakeTimeoutMs = 8000;
 };
 
 class ManagedServer : public QObject {
@@ -36,11 +40,13 @@ public:
     QString state() const { return m_state; }
     QString message() const { return m_message; }
     QUrl localUrl() const { return m_options.localUrl; }
+    ServerConnection connection() const;
 
 signals:
     void available();
     void unavailable(const QString &message, const QString &kind);
     void stateChanged();
+    void connectionChanged();
 
 private:
     enum class ProbePurpose { Initial, Readiness };
@@ -50,6 +56,10 @@ private:
     void probe(ProbePurpose purpose);
     void handleProbe(ProbePurpose purpose, ProbeResult result);
     void spawn();
+    void collectIdentity();
+    void finishIdentity();
+    void clearSession();
+    void failOwnedStartup(const QString &message, const QString &kind);
     void beginReadiness();
     void setAvailable(bool owned, const QString &state);
     void setFailure(const QString &message, const QString &kind);
@@ -65,10 +75,16 @@ private:
     QPointer<QProcess> m_retiringProcess;
     QTimer m_readinessTimer;
     QTimer m_restartTimer;
+    QTimer m_identityTimer;
     QString m_mode = QStringLiteral("remote");
     QString m_token;
     QString m_state = QStringLiteral("remote");
     QString m_message;
+    QByteArray m_identityOutput;
+    QByteArray m_sessionNonce;
+    QByteArray m_sessionToken;
+    QSslCertificate m_sessionCertificate;
+    QUrl m_sessionUrl;
     quint64 m_generation = 0;
     int m_readinessAttempt = 0;
     int m_restartCount = 0;

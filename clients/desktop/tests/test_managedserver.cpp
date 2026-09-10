@@ -43,6 +43,7 @@ public:
     bool hold = false;
     int connections = 0;
     int requests = 0;
+    QList<QByteArray> received;
     HealthFixture() {
         connect(this, &QTcpServer::newConnection, this, [this] {
             while (auto socket = nextPendingConnection()) {
@@ -52,6 +53,7 @@ public:
                     socket->setProperty("request", request);
                     if (!request.contains("\r\n\r\n")) return;
                     ++requests;
+                    received.append(request);
                     if (hold) return;
                     socket->write("HTTP/1.1 " + QByteArray::number(status) + " Fixture\r\nContent-Type: application/json\r\nContent-Length: "
                         + QByteArray::number(response.size()) + "\r\nConnection: close\r\n\r\n" + response);
@@ -189,6 +191,17 @@ private slots:
             server.stopOwned(); QVERIFY(fixture.isListening());
         }
     }
+    void initialLocalProbeDoesNotDiscloseSavedToken() {
+        HealthFixture impostor; QVERIFY(impostor.listen(QHostAddress::LocalHost));
+        ManagedServer server(options(impostor.serverPort(), QStringLiteral("/missing/unused")));
+        QSignalSpy ready(&server, &ManagedServer::available);
+        server.configure("local", "private-saved-token"); server.ensureAvailable();
+        QTRY_COMPARE(ready.size(), 1);
+        QVERIFY(server.isAttached());
+        QCOMPARE(impostor.received.size(), 1);
+        QVERIFY(!impostor.received.first().toLower().contains("authorization:"));
+        QVERIFY(!impostor.received.first().contains("private-saved-token"));
+    }
     void absentBinaryIsControlled() {
         ManagedServer server(options(unusedPort(), QStringLiteral("/definitely/missing/usage-server")));
         QSignalSpy failed(&server, &ManagedServer::unavailable);
@@ -228,10 +241,14 @@ private slots:
         {
             ManagedServer server(options(port, QStringLiteral(FIXTURE_PATH)));
             QSignalSpy ready(&server, &ManagedServer::available);
-            server.configure("local", "fixture-secret"); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
+            server.configure("local", "fixture-secret"); server.ensureAvailable();
+            QTRY_VERIFY2_WITH_TIMEOUT(ready.size() == 1, qPrintable(server.state() + ": " + server.message()), 10000);
             QVERIFY(server.ownsProcess()); QTRY_VERIFY((pid = lastPid(record)) > 0); QVERIFY(processExists(pid));
             QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly)); const auto content = file.readAll();
-            QVERIFY(content.contains("args=--listen-addr|127.0.0.1:")); QVERIFY(content.contains("token_present=yes"));
+            QVERIFY(content.contains("args=--listen-addr|127.0.0.1:"));
+            QVERIFY(content.contains("--desktop-session"));
+            QVERIFY(content.contains("token_present=no"));
+            QVERIFY(content.contains("desktop_session=yes"));
             QVERIFY(!content.contains("fixture-secret"));
             server.configure("remote", QString());
             QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
@@ -249,6 +266,41 @@ private slots:
         server.configure("local", QString()); server.ensureAvailable(); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 15000);
         qint64 pid = lastPid(record); QVERIFY(pid > 0); QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000); QVERIFY(!server.ownsProcess());
         qunsetenv("HEADROOM_FIXTURE_MODE"); qunsetenv("HEADROOM_FIXTURE_RECORD");
+    }
+    void rejectsMalformedOrUnverifiablePrivateIdentity() {
+        for (const QByteArray mode : {QByteArray("bad-nonce"), QByteArray("escaped-duplicate"),
+                                      QByteArray("trailing-cert"), QByteArray("extra-output"),
+                                      QByteArray("wrong-cert"), QByteArray("identity-hang")}) {
+            QTemporaryDir dir; const auto record = dir.filePath(QString::fromLatin1(mode));
+            qputenv("HEADROOM_FIXTURE_MODE", mode); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
+            auto configured = options(unusedPort(), QStringLiteral(FIXTURE_PATH));
+            configured.sessionHandshakeTimeoutMs = mode == QByteArray("identity-hang") ? 150 : 5000;
+            configured.readinessProbeTimeoutMs = 100;
+            configured.readinessAttempts = 2;
+            ManagedServer server(configured);
+            QSignalSpy ready(&server, &ManagedServer::available), failed(&server, &ManagedServer::unavailable);
+            server.configure("local", QString()); server.ensureAvailable();
+            QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
+            QCOMPARE(ready.size(), 0);
+            QVERIFY(!server.ownsProcess());
+            QFile file(record); QVERIFY(file.open(QIODevice::ReadOnly));
+            QVERIFY2(!file.readAll().contains("http_request=yes"), mode.constData());
+        }
+    }
+    void modeSwitchCancelsPrivateIdentityHandshake() {
+        QTemporaryDir dir; const auto record = dir.filePath("record");
+        qputenv("HEADROOM_FIXTURE_MODE", "identity-hang"); qputenv("HEADROOM_FIXTURE_RECORD", record.toUtf8());
+        auto configured = options(unusedPort(), QStringLiteral(FIXTURE_PATH));
+        configured.sessionHandshakeTimeoutMs = 5000;
+        ManagedServer server(configured);
+        QSignalSpy ready(&server, &ManagedServer::available), failed(&server, &ManagedServer::unavailable);
+        server.configure("local", QString()); server.ensureAvailable();
+        QTRY_VERIFY_WITH_TIMEOUT(lastPid(record) > 0, 10000);
+        const qint64 pid = lastPid(record);
+        server.configure("remote", QString());
+        QTRY_VERIFY_WITH_TIMEOUT(!processExists(pid), 5000);
+        QCOMPARE(ready.size(), 0); QCOMPARE(failed.size(), 0);
+        QCOMPARE(server.state(), QString("remote"));
     }
     void manualRetryDuringOwnedRetirementIsRemembered() {
         QTemporaryDir dir; const auto record = dir.filePath("record");

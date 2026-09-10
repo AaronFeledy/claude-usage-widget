@@ -71,6 +71,12 @@ CLI flags:
 - `--listen-addr <host:port>` - HTTP listen address.
 - `--auth-token <token>` - bearer token.
 - `--poll-interval <duration>` - Go duration such as `30s`, `1m`, or `5m`.
+- `--desktop-session` - reserved for the bundled Headroom child process; requires
+  a numeric loopback bind and a bounded private stdin handshake. It uses a fresh
+  in-memory TLS identity and session bearer token instead of the configured
+  token, and publishes only the public certificate and listener identity on
+  stdout. It has no YAML or environment equivalent. Standalone services should
+  omit this flag and retain their normal HTTP/reverse-proxy configuration.
 
 Environment variables:
 

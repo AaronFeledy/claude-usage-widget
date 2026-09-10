@@ -1,7 +1,8 @@
 #include "credentialservice.h"
 #include "http_assertions.h"
+#include "tls_fixture.h"
 #include <QtTest>
-#include <QTcpServer>
+#include <QSslServer>
 #include <QTcpSocket>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -9,7 +10,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
-class CredentialHttpFixture : public QTcpServer {
+class CredentialHttpFixture : public QSslServer {
 public:
     int status = 200;
     QByteArray headers;
@@ -18,12 +19,14 @@ public:
     bool holdResponse = false;
     QPointer<QTcpSocket> heldSocket;
 
-    CredentialHttpFixture() {
-        connect(this, &QTcpServer::newConnection, this, [this] {
+    explicit CredentialHttpFixture(bool replacement = false) {
+        setSslConfiguration(replacement ? TlsFixture::replacementServerConfiguration()
+                                        : TlsFixture::serverConfiguration());
+        connect(this, &QTcpServer::pendingConnectionAvailable, this, [this] {
             while (hasPendingConnections()) {
                 auto socket = nextPendingConnection();
                 connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
-                connect(socket, &QTcpSocket::readyRead, socket, [this, socket] {
+                const auto readRequest = [this, socket] {
                     QByteArray bytes = socket->property("bytes").toByteArray() + socket->readAll();
                     socket->setProperty("bytes", bytes);
                     const qsizetype headersEnd = bytes.indexOf("\r\n\r\n");
@@ -37,7 +40,9 @@ public:
                     requests.append(bytes);
                     if (holdResponse) { heldSocket = socket; return; }
                     respond(socket);
-                });
+                };
+                connect(socket, &QTcpSocket::readyRead, socket, readRequest);
+                QMetaObject::invokeMethod(socket, readRequest, Qt::QueuedConnection);
             }
         });
     }
@@ -46,7 +51,7 @@ public:
                         + QByteArray::number(body.size()) + "\r\nConnection: close\r\n" + headers + "\r\n" + body);
                     socket->disconnectFromHost();
     }
-    QString url(const QString &host = QStringLiteral("127.0.0.1")) const { return QString("http://%1:%2").arg(host).arg(serverPort()); }
+    QString url(const QString &host = QStringLiteral("127.0.0.1")) const { return QString("https://%1:%2").arg(host).arg(serverPort()); }
     static QByteArray response(const QString &provider) {
         QJsonObject usage{{"provider_name", provider}, {"primary_label", "Current"}, {"secondary_label", "Weekly"},
             {"show_secondary", true}, {"subtitle", QJsonValue::Null}, {"primary_status_text", QJsonValue::Null},
@@ -101,11 +106,33 @@ private slots:
         QVERIFY(!QFileInfo::exists(m_record));
         QVERIFY(!service.busy());
     }
+    void unownedLocalServerNeverReadsBrowserOrSendsSecrets() {
+        CredentialHttpFixture impostor; QVERIFY(impostor.listen(QHostAddress::LocalHost));
+        CredentialService service(options()); QSignalSpy events(&service, &CredentialService::event);
+        service.configure("local", QString("http://127.0.0.1:%1").arg(impostor.serverPort()), "fixture-bearer");
+        service.consider({cursorFailure()});
+        QTRY_VERIFY(!service.busy());
+        QVERIFY(!QFileInfo::exists(m_record));
+        QCOMPARE(impostor.requests.size(), 0);
+        QCOMPARE(events.size(), 1);
+        QVERIFY(events.first().first().toString().contains("verified private local connection"));
+    }
+    void losingLocalOwnershipStopsAnInFlightAttempt() {
+        CredentialHttpFixture server; QVERIFY(server.listen(QHostAddress::LocalHost)); server.holdResponse = true;
+        CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
+        service.configure("local", server.url(), "fixture-bearer", TlsFixture::certificate());
+        service.consider({cursorFailure()});
+        QTRY_COMPARE(server.requests.size(), 1); QVERIFY(service.busy());
+        service.configure("local", server.url(), "", QSslCertificate());
+        QTRY_VERIFY(!service.busy());
+        if (server.heldSocket) server.respond(server.heldSocket);
+        QTest::qWait(80); QCOMPARE(recovered.size(), 0); QCOMPARE(server.requests.size(), 1);
+    }
     void loopbackRecoversAndKeepsSecretsOutOfEvents() {
         CredentialHttpFixture server; QVERIFY(server.listen(QHostAddress::LocalHost));
         CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
         QSignalSpy events(&service, &CredentialService::event);
-        service.configure("local", server.url(), "fixture-bearer");
+        service.configure("local", server.url(), "fixture-bearer", TlsFixture::certificate());
         service.consider({cursorFailure()});
         QTRY_COMPARE(recovered.size(), 1); QCOMPARE(server.requests.size(), 1);
         QVERIFY(server.requests.first().startsWith("PUT /api/v1/providers/cursor/credentials "));
@@ -123,7 +150,7 @@ private slots:
     void grokOnlyRunsWithoutWeekly() {
         CredentialHttpFixture server; QVERIFY(server.listen(QHostAddress::LocalHost)); server.body = CredentialHttpFixture::response("Grok");
         CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
-        service.configure("remote", server.url(), "");
+        service.configure("local", server.url(), "", TlsFixture::certificate());
         QVariantMap withWeekly = grokWithoutWeekly();
         withWeekly["buckets"] = QVariantList{QVariantMap{{"id", "weekly"}}};
         service.consider({withWeekly}); QTest::qWait(80); QVERIFY(!QFileInfo::exists(m_record));
@@ -135,21 +162,21 @@ private slots:
         QVERIFY(origin.listen(QHostAddress::LocalHost)); QVERIFY(destination.listen(QHostAddress::LocalHost));
         origin.status = 302; origin.headers = "Location: " + destination.url().toUtf8() + "/target\r\n";
         CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
-        service.configure("local", origin.url(), "fixture-bearer"); service.consider({cursorFailure()});
+        service.configure("local", origin.url(), "fixture-bearer", TlsFixture::certificate()); service.consider({cursorFailure()});
         QTRY_VERIFY(!service.busy()); QCOMPARE(recovered.size(), 0); QCOMPARE(origin.requests.size(), 1); QCOMPARE(destination.requests.size(), 0);
     }
     void refusesSameOriginRedirect() {
         CredentialHttpFixture origin; QVERIFY(origin.listen(QHostAddress::LocalHost));
         origin.status = 302; origin.headers = "Location: /target\r\n";
         CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
-        service.configure("local", origin.url(), "fixture-bearer"); service.consider({cursorFailure()});
+        service.configure("local", origin.url(), "fixture-bearer", TlsFixture::certificate()); service.consider({cursorFailure()});
         QTRY_VERIFY(!service.busy()); QCOMPARE(recovered.size(), 0); QCOMPARE(origin.requests.size(), 1);
         QVERIFY(origin.requests.first().startsWith("PUT /api/v1/providers/cursor/credentials "));
     }
     void endpointChangeKillsHelperAndRemovesOwnedSnapshots() {
         qputenv("HEADROOM_CREDENTIAL_FIXTURE_MODE", "hang");
         CredentialService service(options(40, 5000));
-        service.configure("local", "http://127.0.0.1:65530", ""); service.consider({cursorFailure()});
+        service.configure("local", "https://127.0.0.1:65530", "", TlsFixture::certificate()); service.consider({cursorFailure()});
         QTRY_VERIFY(QFileInfo::exists(m_record));
         QFile record(m_record); QVERIFY(record.open(QIODevice::ReadOnly));
         QTRY_VERIFY(record.size() > 8); record.seek(0);
@@ -161,20 +188,30 @@ private slots:
     void oversizedHelperOutputIsBounded() {
         qputenv("HEADROOM_CREDENTIAL_FIXTURE_MODE", "oversized");
         CredentialService service(options());
-        service.configure("local", "http://127.0.0.1:65530", ""); service.consider({cursorFailure()});
+        service.configure("local", "https://127.0.0.1:65530", "", TlsFixture::certificate()); service.consider({cursorFailure()});
         QTRY_VERIFY(!service.busy()); QVERIFY(QFileInfo::exists(m_record));
     }
-    void localhostRequiresNumericLoopbackAlternative() {
+    void localTlsRequiresPinnedCertificate() {
         CredentialHttpFixture server; QVERIFY(server.listen(QHostAddress::Any));
         CredentialService service(options()); QSignalSpy events(&service, &CredentialService::event);
         service.configure("local", server.url("localhost"), ""); service.consider({cursorFailure()});
         QTRY_COMPARE(events.size(), 1); QCOMPARE(server.requests.size(), 0); QVERIFY(!QFileInfo::exists(m_record));
-        QVERIFY(events.first().first().toString().contains("127.0.0.1"));
+        QVERIFY(events.first().first().toString().contains("verified private local connection"));
+    }
+    void replacementCertificateReceivesNoCredentialOrBearer() {
+        CredentialHttpFixture attacker(true); QVERIFY(attacker.listen(QHostAddress::LocalHost));
+        CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
+        service.configure("local", attacker.url(), "fixture-bearer", TlsFixture::certificate());
+        service.consider({cursorFailure()});
+        QTRY_VERIFY(!service.busy());
+        QVERIFY(QFileInfo::exists(m_record));
+        QCOMPARE(attacker.requests.size(), 0);
+        QCOMPARE(recovered.size(), 0);
     }
     void newerHealthySnapshotCancelsHeldRecovery() {
         CredentialHttpFixture server; QVERIFY(server.listen(QHostAddress::LocalHost)); server.holdResponse = true;
         CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
-        service.configure("local", server.url(), ""); service.consider({cursorFailure()});
+        service.configure("local", server.url(), "", TlsFixture::certificate()); service.consider({cursorFailure()});
         QTRY_COMPARE(server.requests.size(), 1); QVERIFY(service.busy());
         QVariantMap healthy = cursorFailure(); healthy["is_success"] = true; healthy["needs_reauth"] = false;
         healthy["error"] = QVariant(); healthy["buckets"] = QVariantList{QVariantMap{{"id", "weekly"}}};
@@ -190,7 +227,7 @@ private slots:
             {"utilization", 5}, {"resets_at", QJsonValue::Null}, {"status_text", QJsonValue::Null}}};
         object["usage"] = usage; server.body = QJsonDocument(object).toJson(QJsonDocument::Compact);
         CredentialService service(options()); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
-        service.configure("local", server.url(), ""); service.consider({grokWithoutWeekly()});
+        service.configure("local", server.url(), "", TlsFixture::certificate()); service.consider({grokWithoutWeekly()});
         QTRY_VERIFY(!service.busy()); QCOMPARE(recovered.size(), 0); QCOMPARE(server.requests.size(), 1);
         QTest::qWait(60); service.consider({grokWithoutWeekly()}); QTRY_COMPARE(server.requests.size(), 2);
     }

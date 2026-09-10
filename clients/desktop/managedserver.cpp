@@ -11,6 +11,9 @@
 #include <QNetworkProxy>
 #include <QNetworkRequest>
 #include <QProcessEnvironment>
+#include <QRandomGenerator>
+#include <QSet>
+#include <cctype>
 #include <utility>
 #ifdef Q_OS_LINUX
 #include <signal.h>
@@ -20,6 +23,52 @@
 
 namespace {
 constexpr qsizetype maximumHealthBytes = 1024 * 1024;
+constexpr qsizetype maximumIdentityBytes = 8 * 1024;
+
+QByteArray randomHex(int words)
+{
+    QByteArray result;
+    result.reserve(words * 16);
+    auto generator = QRandomGenerator::system();
+    for (int i = 0; i < words; ++i)
+        result += QByteArray::number(generator->generate64(), 16).rightJustified(16, '0');
+    return result;
+}
+
+bool exactTopLevelKeys(const QByteArray &json, const QSet<QString> &expected)
+{
+    QSet<QString> found;
+    int objectDepth = 0;
+    int arrayDepth = 0;
+    for (qsizetype index = 0; index < json.size(); ++index) {
+        const char character = json.at(index);
+        if (character == '{') { ++objectDepth; continue; }
+        if (character == '}') { --objectDepth; continue; }
+        if (character == '[') { ++arrayDepth; continue; }
+        if (character == ']') { --arrayDepth; continue; }
+        if (character != '"') continue;
+        const qsizetype start = index++;
+        bool escaped = false;
+        while (index < json.size()) {
+            const char current = json.at(index);
+            if (!escaped && current == '"') break;
+            if (!escaped && current == '\\') escaped = true;
+            else escaped = false;
+            ++index;
+        }
+        if (index >= json.size()) return false;
+        qsizetype next = index + 1;
+        while (next < json.size() && std::isspace(static_cast<unsigned char>(json.at(next)))) ++next;
+        if (objectDepth != 1 || arrayDepth != 0 || next >= json.size() || json.at(next) != ':') continue;
+        const QByteArray encoded = '[' + json.mid(start, index - start + 1) + ']';
+        const auto decoded = QJsonDocument::fromJson(encoded).array();
+        if (decoded.size() != 1 || !decoded.first().isString()) return false;
+        const QString key = decoded.first().toString();
+        if (found.contains(key)) return false;
+        found.insert(key);
+    }
+    return found == expected;
+}
 
 bool validLocalEndpoint(const QUrl &url)
 {
@@ -59,8 +108,19 @@ ManagedServer::ManagedServer(ManagedServerOptions options, QObject *parent)
     m_network.setProxy(QNetworkProxy::NoProxy);
     m_readinessTimer.setSingleShot(true);
     m_restartTimer.setSingleShot(true);
+    m_identityTimer.setSingleShot(true);
     connect(&m_readinessTimer, &QTimer::timeout, this, [this] { probe(ProbePurpose::Readiness); });
     connect(&m_restartTimer, &QTimer::timeout, this, [this] { probe(ProbePurpose::Initial); });
+    connect(&m_identityTimer, &QTimer::timeout, this, [this] {
+        failOwnedStartup(QStringLiteral("The bundled usage server did not establish a private connection in time."),
+                         QStringLiteral("identity"));
+    });
+}
+
+ServerConnection ManagedServer::connection() const
+{
+    if (!m_sessionCertificate.isNull()) return {m_sessionUrl, m_sessionToken, m_sessionCertificate};
+    return {m_options.localUrl, QByteArray(), QSslCertificate()};
 }
 
 ManagedServer::~ManagedServer()
@@ -103,6 +163,7 @@ void ManagedServer::configure(const QString &mode, const QString &token)
     m_restartCount = 0;
     m_state = m_mode == QStringLiteral("local") ? QStringLiteral("idle") : QStringLiteral("remote");
     m_message.clear();
+    clearSession();
     emit stateChanged();
 }
 
@@ -117,8 +178,8 @@ void ManagedServer::ensureAvailable()
         m_ensureAfterRetire = true;
         return;
     }
-    if (m_probe || m_readinessTimer.isActive() || m_restartTimer.isActive()
-        || (m_process && m_process->state() == QProcess::Starting)) return;
+    if (m_probe || m_readinessTimer.isActive() || m_restartTimer.isActive() || m_identityTimer.isActive()
+        || (m_process && m_process->state() != QProcess::NotRunning)) return;
     if (m_state == QStringLiteral("failed")) m_restartCount = 0;
     m_readinessAttempt = 0;
     m_state = QStringLiteral("probing");
@@ -158,6 +219,7 @@ void ManagedServer::cancelAsync()
 {
     m_readinessTimer.stop();
     m_restartTimer.stop();
+    m_identityTimer.stop();
     if (m_probe) {
         auto reply = m_probe;
         m_probe.clear();
@@ -170,6 +232,11 @@ void ManagedServer::cancelAsync()
 void ManagedServer::probe(ProbePurpose purpose)
 {
     if (m_mode != QStringLiteral("local") || m_probe) return;
+    if (purpose == ProbePurpose::Readiness && m_sessionCertificate.isNull()) {
+        failOwnedStartup(QStringLiteral("The bundled usage server did not establish a verified private connection."),
+                         QStringLiteral("identity"));
+        return;
+    }
     if (!validLocalEndpoint(m_options.localUrl)) {
         handleProbe(purpose, ProbeResult::NetworkFailure);
         return;
@@ -182,9 +249,16 @@ void ManagedServer::probe(ProbePurpose purpose)
     request.setRawHeader("User-Agent", "Headroom/" HEADROOM_VERSION);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(timeoutMs);
-    if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+    const ServerConnection transport = connection();
+    if (purpose == ProbePurpose::Readiness && transport.isPinned()) {
+        request.setUrl(transport.url.resolved(QUrl(QStringLiteral("api/v1/health"))));
+        request.setRawHeader("Authorization", "Bearer " + transport.token);
+        ServerTransport::secureRequest(request, transport.certificate);
+    }
     const quint64 generation = m_generation;
     auto reply = m_network.get(request);
+    if (purpose == ProbePurpose::Readiness && transport.isPinned())
+        ServerTransport::requirePinnedPeer(reply, transport.certificate);
     m_probe = reply;
     reply->setReadBufferSize(maximumHealthBytes + 1);
     auto timeout = new QTimer(reply);
@@ -239,7 +313,9 @@ void ManagedServer::handleProbe(ProbePurpose purpose, ProbeResult result)
     }
     switch (result) {
     case ProbeResult::AuthRejected:
-        setFailure(QStringLiteral("The local server rejected the saved bearer token."), QStringLiteral("auth")); break;
+        setFailure(purpose == ProbePurpose::Initial
+            ? QStringLiteral("The local server requires explicit configuration. Add it as a Remote connection.")
+            : QStringLiteral("The bundled usage server rejected its private session token."), QStringLiteral("auth")); break;
     case ProbeResult::Redirected:
     case ProbeResult::Malformed:
         setFailure(QStringLiteral("Port 7823 is occupied by an incompatible local service."), QStringLiteral("local-service")); break;
@@ -281,11 +357,11 @@ void ManagedServer::spawn()
     m_stopping = false;
     process->setProgram(path);
     process->setArguments({QStringLiteral("--listen-addr"),
-        QStringLiteral("127.0.0.1:%1").arg(m_options.localUrl.port(7823))});
+        QStringLiteral("127.0.0.1:%1").arg(m_options.localUrl.port(7823)), QStringLiteral("--desktop-session")});
     auto environment = QProcessEnvironment::systemEnvironment();
-    if (!m_token.isEmpty()) environment.insert(QStringLiteral("USAGE_AUTH_TOKEN"), m_token);
+    environment.remove(QStringLiteral("USAGE_AUTH_TOKEN"));
     process->setProcessEnvironment(environment);
-    process->setStandardOutputFile(QProcess::nullDevice());
+    process->setProcessChannelMode(QProcess::SeparateChannels);
     process->setStandardErrorFile(QProcess::nullDevice());
 #ifdef Q_OS_LINUX
     const pid_t creatingProcess = getpid();
@@ -294,6 +370,9 @@ void ManagedServer::spawn()
     });
 #endif
     const quint64 generation = m_generation;
+    connect(process, &QProcess::readyReadStandardOutput, this, [this, process, generation] {
+        if (generation == m_generation && process == m_process) collectIdentity();
+    });
     connect(process, &QProcess::started, this, [this, process, generation] {
         if (generation != m_generation || process != m_process) return;
         if (!assignWindowsJob()) {
@@ -304,7 +383,20 @@ void ManagedServer::spawn()
         }
         m_state = QStringLiteral("starting");
         emit stateChanged();
-        beginReadiness();
+        m_sessionNonce = randomHex(2);
+        m_sessionToken = randomHex(4);
+        const QByteArray frame = QJsonDocument(QJsonObject{
+            {QStringLiteral("schema"), 1},
+            {QStringLiteral("nonce"), QString::fromLatin1(m_sessionNonce)},
+            {QStringLiteral("token"), QString::fromLatin1(m_sessionToken)},
+        }).toJson(QJsonDocument::Compact) + '\n';
+        if (process->write(frame) != frame.size()) {
+            failOwnedStartup(QStringLiteral("Headroom could not initialize the bundled server's private connection."),
+                             QStringLiteral("identity"));
+            return;
+        }
+        process->closeWriteChannel();
+        m_identityTimer.start(m_options.sessionHandshakeTimeoutMs);
     });
     connect(process, &QProcess::errorOccurred, this, [this, process, generation](QProcess::ProcessError error) {
         if (generation != m_generation || process != m_process || error != QProcess::FailedToStart) return;
@@ -321,6 +413,7 @@ void ManagedServer::spawn()
         process->deleteLater();
         m_owned = false;
         m_available = false;
+        clearSession();
         m_readinessTimer.stop();
         if (m_mode != QStringLiteral("local")) return;
         if (m_restartCount >= m_options.restartLimit) {
@@ -335,6 +428,98 @@ void ManagedServer::spawn()
     m_state = QStringLiteral("starting");
     emit stateChanged();
     process->start();
+}
+
+void ManagedServer::collectIdentity()
+{
+    if (!m_process) return;
+    const QByteArray incoming = m_process->readAllStandardOutput();
+    if (!m_sessionCertificate.isNull()) {
+        if (!incoming.isEmpty())
+            failOwnedStartup(QStringLiteral("The bundled usage server wrote unexpected private-session output."),
+                             QStringLiteral("identity"));
+        return;
+    }
+    m_identityOutput += incoming;
+    if (m_identityOutput.size() > maximumIdentityBytes)
+        failOwnedStartup(QStringLiteral("The bundled usage server returned an invalid private connection identity."),
+                         QStringLiteral("identity"));
+    else if (m_identityOutput.contains('\n'))
+        finishIdentity();
+}
+
+void ManagedServer::finishIdentity()
+{
+    if (!m_process || m_sessionNonce.isEmpty() || m_sessionToken.isEmpty()) return;
+    m_identityTimer.stop();
+    const QByteArray frame = m_identityOutput;
+    const bool framed = !frame.isEmpty() && frame.size() <= maximumIdentityBytes && frame.endsWith('\n')
+        && frame.count('\n') == 1 && !frame.contains("PRIVATE KEY") && !frame.contains(m_sessionToken);
+    QJsonParseError parseError;
+    const auto document = framed ? QJsonDocument::fromJson(frame.left(frame.size() - 1), &parseError) : QJsonDocument();
+    const auto object = document.object();
+    const QSet<QString> expectedKeys{QStringLiteral("schema"), QStringLiteral("nonce"),
+        QStringLiteral("address"), QStringLiteral("certificate")};
+    QSet<QString> actualKeys;
+    for (const auto &key : object.keys()) actualKeys.insert(key);
+    const QString address = object.value(QStringLiteral("address")).toString();
+    const int colon = address.lastIndexOf(':');
+    QHostAddress host;
+    bool portOk = false;
+    const quint16 port = colon >= 0 ? address.mid(colon + 1).toUShort(&portOk) : 0;
+    QString hostText = colon >= 0 ? address.left(colon) : QString();
+    if (hostText.startsWith('[') && hostText.endsWith(']')) hostText = hostText.mid(1, hostText.size() - 2);
+    const bool addressOk = host.setAddress(hostText) && host.isLoopback() && portOk && port > 0
+        && host == QHostAddress(m_options.localUrl.host()) && port == m_options.localUrl.port(7823);
+    const QByteArray certificatePEM = object.value(QStringLiteral("certificate")).toString().toUtf8();
+    const QList<QSslCertificate> certificates = QSslCertificate::fromData(certificatePEM, QSsl::Pem);
+    if (!framed || parseError.error != QJsonParseError::NoError || !document.isObject() ||
+        !exactTopLevelKeys(frame.left(frame.size() - 1), expectedKeys) || actualKeys != expectedKeys ||
+        !object.value(QStringLiteral("schema")).isDouble() ||
+        object.value(QStringLiteral("schema")).toDouble() != 1.0 ||
+        !object.value(QStringLiteral("nonce")).isString() ||
+        object.value(QStringLiteral("nonce")).toString().toLatin1() != m_sessionNonce ||
+        !object.value(QStringLiteral("address")).isString() || !addressOk ||
+        !object.value(QStringLiteral("certificate")).isString() || certificates.size() != 1 ||
+        certificates.first().isNull() || !certificates.first().isSelfSigned() ||
+        certificatePEM.trimmed() != certificates.first().toPem().trimmed()) {
+        failOwnedStartup(QStringLiteral("The bundled usage server returned an invalid private connection identity."),
+                         QStringLiteral("identity"));
+        return;
+    }
+    m_identityOutput.fill('\0');
+    m_identityOutput.clear();
+    m_sessionCertificate = certificates.first();
+    m_sessionUrl = QUrl(QStringLiteral("https://") + address + '/');
+    m_network.clearConnectionCache();
+    emit connectionChanged();
+    beginReadiness();
+}
+
+void ManagedServer::clearSession()
+{
+    const bool changed = !m_sessionUrl.isEmpty() || !m_sessionToken.isEmpty() || !m_sessionCertificate.isNull();
+    m_identityOutput.fill('\0');
+    m_identityOutput.clear();
+    m_sessionNonce.fill('\0');
+    m_sessionNonce.clear();
+    m_sessionToken.fill('\0');
+    m_sessionToken.clear();
+    m_sessionCertificate.clear();
+    m_sessionUrl.clear();
+    m_network.clearConnectionCache();
+    if (changed) emit connectionChanged();
+}
+
+void ManagedServer::failOwnedStartup(const QString &message, const QString &kind)
+{
+    if (!m_process) return;
+    ++m_generation;
+    cancelAsync();
+    m_ensureAfterRetire = false;
+    disposeProcess(true);
+    clearSession();
+    setFailure(message, kind);
 }
 
 void ManagedServer::beginReadiness()
@@ -369,6 +554,7 @@ void ManagedServer::disposeProcess(bool kill)
     m_process = nullptr;
     m_owned = false;
     m_available = false;
+    clearSession();
     if (!process) {
         closeWindowsJob();
         return;

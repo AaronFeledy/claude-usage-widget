@@ -11,10 +11,11 @@ var (
 )
 
 type Config struct {
-	ListenAddr   string
-	AuthToken    string
-	PollInterval time.Duration
-	Providers    map[string]ProviderConfig
+	ListenAddr     string
+	AuthToken      string
+	PollInterval   time.Duration
+	Providers      map[string]ProviderConfig
+	DesktopSession bool
 }
 
 type ProviderConfig struct {

@@ -28,9 +28,13 @@ and configuration name for ChatGPT remains `Codex`.
 
 Both platforms default to Local mode. Headroom probes `127.0.0.1:7823`, attaches
 to a compatible server, or starts the adjacent `usage-server` executable. A saved
-remote address overrides this default. Headroom owns,
-stops, or hands off only a server process it started. Remote mode accepts a
-normalized HTTP(S) base URL; nonempty bearer tokens are sent as
+remote address overrides this default. Local discovery and attached HTTP requests
+never send saved bearer tokens or browser credentials. The bundled child uses
+`--desktop-session`: a private stdin session token and stdout certificate identity
+establish per-launch TLS trust for health, usage, version, and credential requests.
+Do not replace certificate verification with PID checks or ignored TLS errors.
+Headroom owns, stops, or hands off only a server process it started. Remote mode
+accepts a normalized HTTP(S) base URL; nonempty bearer tokens are sent as
 `Authorization: Bearer <token>`.
 
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,

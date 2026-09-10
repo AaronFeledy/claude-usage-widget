@@ -1,8 +1,11 @@
 #include "appinfo.h"
+#include "serverconnection.h"
 #include "usage.h"
 #include <QCoreApplication>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkProxy>
 #include <QRegularExpression>
 #include <QTimer>
 
@@ -18,11 +21,19 @@ bool success(QNetworkReply *reply) {
 }
 }
 AppInfo::AppInfo(QObject *parent, int timeoutMs)
-    : QObject(parent), m_timeoutMs(timeoutMs) {}
+    : QObject(parent), m_timeoutMs(timeoutMs) { m_localNetwork.setProxy(QNetworkProxy::NoProxy); }
+AppInfo::~AppInfo() {
+    // The network manager is destroyed after the fields the health handler writes, so an
+    // in-flight reply must be disconnected and aborted first.
+    if (m_healthReply) {
+        auto reply = m_healthReply; m_healthReply = nullptr;
+        reply->disconnect(this); reply->abort();
+    }
+}
 QString AppInfo::applicationVersion() const {
     return QCoreApplication::applicationVersion();
 }
-QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token) {
+QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token, const QSslCertificate &certificate) {
     QNetworkRequest request(url);
     // Manual policy rejects every redirect, including same-origin redirects. In
     // particular a backend cannot redirect the bearer token to a different host.
@@ -30,7 +41,11 @@ QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token) {
     request.setRawHeader("User-Agent", "Headroom/" + applicationVersion().toUtf8());
     request.setRawHeader("Accept", "application/json");
     if (!token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + token);
-    auto reply = m_network.get(request);
+    ServerTransport::secureRequest(request, certificate);
+    QHostAddress address;
+    const bool local = !certificate.isNull() || (address.setAddress(url.host()) && address.isLoopback());
+    auto reply = (local ? &m_localNetwork : &m_network)->get(request);
+    ServerTransport::requirePinnedPeer(reply, certificate);
     reply->setReadBufferSize(1024 * 1024 + 1);
     connect(reply, &QIODevice::readyRead, reply, [reply] {
         if (reply->bytesAvailable() > 1024 * 1024) reply->abort();
@@ -38,24 +53,25 @@ QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token) {
     QTimer::singleShot(m_timeoutMs, reply, [reply] { if (!reply->isFinished()) reply->abort(); });
     return reply;
 }
-void AppInfo::setBackend(const QString &baseUrl, const QString &token) {
+void AppInfo::setBackend(const QString &baseUrl, const QString &token, const QSslCertificate &certificate) {
     auto endpoint = Usage::endpoint(baseUrl);
     if (!endpoint.isEmpty()) {
         QString path = endpoint.path(); path.chop(QString("usage").size());
         endpoint.setPath(path + "health");
     }
-    if (endpoint == m_healthUrl && token.toUtf8() == m_token) return;
+    if (endpoint == m_healthUrl && token.toUtf8() == m_token && certificate == m_certificate) return;
     if (m_healthReply) {
         auto previous = m_healthReply; m_healthReply = nullptr;
         previous->disconnect(this); previous->abort(); previous->deleteLater();
     }
-    m_healthUrl = endpoint; m_token = token.toUtf8(); m_serverVersion.clear();
+    m_localNetwork.clearConnectionCache();
+    m_healthUrl = endpoint; m_token = token.toUtf8(); m_certificate = certificate; m_serverVersion.clear();
     m_serverStatus = endpoint.isEmpty() ? "Connect a backend to see its version." : "Server version has not been checked.";
     emit changed();
 }
 void AppInfo::refreshServer() {
     if (m_healthUrl.isEmpty() || m_healthReply) return;
-    auto reply = request(m_healthUrl, m_token); m_healthReply = reply;
+    auto reply = request(m_healthUrl, m_token, m_certificate); m_healthReply = reply;
     m_serverStatus = "Checking server…"; emit changed();
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         m_healthReply = nullptr; m_serverVersion.clear();

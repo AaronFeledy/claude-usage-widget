@@ -8,6 +8,7 @@
 #include <QTimer>
 #include <QVariantList>
 #include <QSet>
+#include <QSslCertificate>
 #include "settings.h"
 #include "managedserver.h"
 #include "credentialservice.h"
@@ -22,6 +23,7 @@ public:
     explicit Controller(bool demo = false, const QString &configPath = {}, QObject *parent = nullptr,
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
                         CredentialServiceOptions credentialOptions = {}, QByteArray demoPayload = {});
+    ~Controller() override;
     QVariantList providers() const;
     QVariantMap state() const;
     QVariantMap settings() const;
@@ -30,7 +32,8 @@ public:
     Q_INVOKABLE QString diagnosticText() const;
     // C++ integration only: the bearer token is never a QML property.
     QString backendUrl() const;
-    QString backendToken() const { return m_token; }
+    QString backendToken() const;
+    QSslCertificate backendCertificate() const;
     bool startupPreference() const { return m_settingsService.value().startup; }
     bool startupMigrationPending() const { return m_settingsService.value().startupMigrationPending; }
     QString settingsPath() const { return m_settingsService.path(); }
@@ -68,6 +71,7 @@ private:
     void resetRetry();
     void cancel();
     void requestUsage();
+    void syncConnection();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, int interval, bool notifications, const QString &primary);
     QStringList m_order;
     SettingsService m_settingsService;
@@ -84,6 +88,7 @@ private:
     QHash<MeterKey, Usage::WarningState> m_warningStates;
     QHash<MeterKey, QVariantMap> m_concerns;
     QNetworkAccessManager m_network;
+    QNetworkAccessManager m_localNetwork;
     ManagedServer m_server;
     CredentialService m_credentials;
     QPointer<QNetworkReply> m_reply;

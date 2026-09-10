@@ -3,6 +3,7 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QDateTime>
+#include <QNetworkProxy>
 #include <QUrl>
 #include <utility>
 
@@ -22,8 +23,9 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
     m_poll.start(m_interval * 1000);
     connect(&m_clock, &QTimer::timeout, this, [this] { updateMeterStates(); emit changed(); });
     m_clock.start(30000);
+    m_localNetwork.setProxy(QNetworkProxy::NoProxy);
     m_server.configure(m_mode, m_token);
-    m_credentials.configure(m_demo ? QStringLiteral("remote") : m_mode, backendUrl(), m_demo ? QString() : m_token);
+    syncConnection();
     connect(&m_credentials, &CredentialService::event, this, [this](const QString &message) {
         log(QStringLiteral("Credentials"), message);
     });
@@ -51,6 +53,13 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
         m_status = "offline"; m_message = message; m_errorKind = kind;
         log("Local server", message); emit changed();
     });
+    connect(&m_server, &ManagedServer::connectionChanged, this, [this] {
+        if (m_mode != QStringLiteral("local")) return;
+        cancel();
+        m_localNetwork.clearConnectionCache();
+        syncConnection();
+        emit changed();
+    });
     connect(&m_server, &ManagedServer::stateChanged, this, [this] {
         if (m_demo || m_mode != "local" || m_server.isAvailable() || m_server.state() == "failed") return;
         if (m_loading) cancel();
@@ -74,7 +83,24 @@ QVariantMap Controller::state() const {
 }
 QString Controller::backendUrl() const {
     if (m_demo) return {};
-    return m_mode == "local" ? m_server.localUrl().toString() : m_url;
+    return m_mode == "local" ? m_server.connection().url.toString() : m_url;
+}
+QString Controller::backendToken() const {
+    if (m_demo) return {};
+    return m_mode == "local" ? QString::fromUtf8(m_server.connection().token) : m_token;
+}
+QSslCertificate Controller::backendCertificate() const {
+    return !m_demo && m_mode == "local" ? m_server.connection().certificate : QSslCertificate();
+}
+void Controller::syncConnection() {
+    if (m_demo) {
+        m_credentials.configure(QStringLiteral("remote"), {}, {}, QSslCertificate());
+    } else if (m_mode == QStringLiteral("local")) {
+        const auto transport = m_server.connection();
+        m_credentials.configure(m_mode, transport.url.toString(), QString::fromUtf8(transport.token), transport.certificate);
+    } else {
+        m_credentials.configure(m_mode, m_url, m_token, QSslCertificate());
+    }
 }
 QString Controller::displayName(const QString &provider) const { return Usage::displayName(provider); }
 
@@ -138,9 +164,13 @@ void Controller::requestUsage() {
     request.setRawHeader("User-Agent", "Headroom/0.1");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(10000);
-    if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+    const ServerConnection transport = m_mode == QStringLiteral("local")
+        ? m_server.connection() : ServerConnection{QUrl(m_url), m_token.toUtf8(), QSslCertificate()};
+    if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
+    if (m_mode == QStringLiteral("local")) ServerTransport::secureRequest(request, transport.certificate);
     m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
-    auto reply = m_network.get(request); m_reply = reply;
+    auto reply = (m_mode == QStringLiteral("local") ? &m_localNetwork : &m_network)->get(request); m_reply = reply;
+    if (m_mode == QStringLiteral("local")) ServerTransport::requirePinnedPeer(reply, transport.certificate);
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(12000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 1024 * 1024) reply->abort(); });
@@ -172,6 +202,11 @@ void Controller::requestUsage() {
         m_credentials.consider(m_providers);
     });
 }
+Controller::~Controller() {
+    // The network manager outlives every other member, so an in-flight reply must be
+    // disconnected and aborted before the members its handler touches are destroyed.
+    cancel();
+}
 QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken) {
     mode = mode == "local" ? "local" : "remote";
     url = url.trimmed(); token = token.trimmed();
@@ -186,9 +221,10 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     m_waitingForUsageRetry = false;
     if (m_mode != mode || m_url != url || m_token != savedToken || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_interval = interval; m_notifications = notifications; m_primary = primary;
+    m_demo = false;
     m_server.configure(m_mode, m_token);
-    m_credentials.configure(m_mode, backendUrl(), m_token);
-    m_demo = false; m_status = "connecting"; m_message.clear(); resetRetry();
+    syncConnection();
+    m_status = "connecting"; m_message.clear(); resetRetry();
     log("Settings", "Connection settings saved.");
     emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
 }
@@ -230,7 +266,7 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
 void Controller::preview(bool enabled) {
     cancel(); resetRetry(); m_waitingForUsageRetry = false; m_demo = enabled;
     m_server.configure(enabled ? QStringLiteral("remote") : m_mode, enabled ? QString() : m_token);
-    m_credentials.configure(enabled ? QStringLiteral("remote") : m_mode, enabled ? QString() : backendUrl(), enabled ? QString() : m_token);
+    syncConnection();
     log("App", enabled ? "Sample preview enabled." : "Live connection enabled."); m_providers.clear(); m_warningStates.clear(); m_concerns.clear(); m_lastGood = 0; m_message.clear(); m_status = "setup"; emit providersChanged(); emit changed(); refresh();
 }
 QVariantMap Controller::concern(const QString &provider, const QVariantMap &bucket) const {

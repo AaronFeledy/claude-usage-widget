@@ -10,6 +10,8 @@
 #include <QVariantList>
 #include <memory>
 
+#include "serverconnection.h"
+
 struct CredentialServiceOptions {
     QString helperPath;
     int helperTimeoutMs = 5000;
@@ -28,7 +30,8 @@ public:
     explicit CredentialService(CredentialServiceOptions options = {}, QObject *parent = nullptr);
     ~CredentialService() override;
 
-    void configure(const QString &mode, const QString &baseUrl, const QString &token);
+    void configure(const QString &mode, const QString &baseUrl, const QString &token,
+                   const QSslCertificate &certificate = QSslCertificate());
     void consider(const QVariantList &providers);
     bool busy() const { return m_process || m_reply || !m_retiringProcesses.isEmpty(); }
 
@@ -64,6 +67,7 @@ private:
     QString m_mode;
     QString m_baseUrl;
     QString m_token;
+    QSslCertificate m_certificate;
     QString m_activeProvider;
     std::shared_ptr<QTemporaryDir> m_snapshotDirectory;
     QByteArray m_helperOutput;

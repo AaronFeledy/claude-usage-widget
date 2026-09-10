@@ -81,7 +81,7 @@ Popup {
                 Text {
                     Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11
                     text: localMode.checked
-                        ? "Use the bundled server on 127.0.0.1:7823, or attach if a compatible server is already there."
+                        ? "Use the bundled server or an existing server on this computer. Choose Remote server to enter an address or token."
                         : "Connect to an existing usage server over HTTP or HTTPS."
                 }
             }
@@ -92,6 +92,7 @@ Popup {
                 Text { text: "The base address of your existing usage API."; color: Theme.muted; font.pixelSize: 11 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
+                visible: remoteMode.checked
                 Caption { text: "BEARER TOKEN" }
                 Entry { id: token; objectName: "bearerToken"; echoMode: TextInput.Password; placeholderText: backend.settings.hasToken && (localMode.checked ? backend.settings.mode === "local" : backend.settings.mode === "remote" && url.text.trim() === backend.settings.url) ? "Saved token · leave empty to keep" : "Enter token, if your server requires one"; Accessible.name: "Bearer token" }
                 Text { text: "Stored locally in your current-user settings file."; color: Theme.muted; font.pixelSize: 11 }

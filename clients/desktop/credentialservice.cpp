@@ -83,14 +83,17 @@ CredentialService::~CredentialService()
     m_retiringProcesses.clear();
 }
 
-void CredentialService::configure(const QString &mode, const QString &baseUrl, const QString &token)
+void CredentialService::configure(const QString &mode, const QString &baseUrl, const QString &token,
+                                  const QSslCertificate &certificate)
 {
     const QString normalizedMode = mode == QStringLiteral("local") ? QStringLiteral("local") : QStringLiteral("remote");
-    if (normalizedMode == m_mode && baseUrl == m_baseUrl && token == m_token) return;
+    if (normalizedMode == m_mode && baseUrl == m_baseUrl && token == m_token && certificate == m_certificate) return;
     cancel();
+    m_localNetwork.clearConnectionCache();
     m_mode = normalizedMode;
     m_baseUrl = baseUrl;
     m_token = token;
+    m_certificate = certificate;
     m_attempts.clear();
 }
 
@@ -191,16 +194,17 @@ void CredentialService::resolvePolicy(const QString &provider)
         continueQueue();
         return;
     }
-    if (endpoint.scheme() == QStringLiteral("https")) { startHelper(provider, false); return; }
-    if (endpoint.scheme() != QStringLiteral("http")) { continueQueue(); return; }
-    QHostAddress address;
-    if (address.setAddress(endpoint.host())) {
-        if (address.isLoopback()) startHelper(provider, true);
-        else continueQueue();
+    if (endpoint.scheme() == QStringLiteral("https")) {
+        if (m_mode == QStringLiteral("local") && m_certificate.isNull()) {
+            emit event(QStringLiteral("Browser credential forwarding requires Headroom's verified private local connection."));
+            continueQueue();
+            return;
+        }
+        startHelper(provider, !m_certificate.isNull());
         return;
     }
-    if (endpoint.host().compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0)
-        emit event(QStringLiteral("Browser credential forwarding requires a numeric loopback address such as 127.0.0.1."));
+    if (endpoint.scheme() == QStringLiteral("http"))
+        emit event(QStringLiteral("Browser credential forwarding requires HTTPS or Headroom's verified private local connection."));
     continueQueue();
 }
 
@@ -303,6 +307,12 @@ void CredentialService::submit(const QString &provider, QByteArray cookie, const
 {
     const QUrl endpoint = credentialEndpoint(provider);
     if (endpoint.isEmpty()) { cookie.fill('\0'); continueQueue(); return; }
+    if (localNoProxy && (m_mode != QStringLiteral("local") || m_certificate.isNull())) {
+        cookie.fill('\0');
+        emit event(QStringLiteral("Browser credential forwarding requires Headroom's verified private local connection."));
+        continueQueue();
+        return;
+    }
     QNetworkRequest request(endpoint);
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("Content-Type", "application/json");
@@ -310,10 +320,12 @@ void CredentialService::submit(const QString &provider, QByteArray cookie, const
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(m_options.requestTimeoutMs);
     if (!m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
+    if (localNoProxy) ServerTransport::secureRequest(request, m_certificate);
     const QByteArray body = QJsonDocument(QJsonObject{{QStringLiteral("cookie"), QString::fromUtf8(cookie)}}).toJson(QJsonDocument::Compact);
     cookie.fill('\0');
     m_activeProvider = provider;
     auto reply = (localNoProxy ? &m_localNetwork : &m_remoteNetwork)->put(request, body);
+    if (localNoProxy) ServerTransport::requirePinnedPeer(reply, m_certificate);
     m_reply = reply;
     const quint64 operation = ++m_operation;
     auto deadline = new QTimer(reply);
