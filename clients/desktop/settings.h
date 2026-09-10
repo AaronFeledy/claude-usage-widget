@@ -8,6 +8,7 @@ struct DesktopSettings {
     QString connectionMode = "local";
     QString url;
     QString token;
+    QString sshUrl;
     int interval = 60;
     bool notifications = true;
     QString primary = "Claude";

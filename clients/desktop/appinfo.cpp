@@ -20,8 +20,9 @@ bool success(QNetworkReply *reply) {
         && reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200;
 }
 }
-AppInfo::AppInfo(QObject *parent, int timeoutMs)
-    : QObject(parent), m_timeoutMs(timeoutMs) { m_localNetwork.setProxy(QNetworkProxy::NoProxy); }
+AppInfo::AppInfo(QObject *parent, int timeoutMs, SshOptions sshOptions)
+    : QObject(parent), m_sshNetwork(std::move(sshOptions)), m_timeoutMs(timeoutMs)
+{ m_localNetwork.setProxy(QNetworkProxy::NoProxy); }
 AppInfo::~AppInfo() {
     // The network manager is destroyed after the fields the health handler writes, so an
     // in-flight reply must be disconnected and aborted first.
@@ -44,13 +45,16 @@ QNetworkReply *AppInfo::request(const QUrl &url, const QByteArray &token, const 
     ServerTransport::secureRequest(request, certificate);
     QHostAddress address;
     const bool local = !certificate.isNull() || (address.setAddress(url.host()) && address.isLoopback());
-    auto reply = (local ? &m_localNetwork : &m_network)->get(request);
+    QNetworkAccessManager *network = url.scheme() == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork)
+        : local ? &m_localNetwork : &m_network;
+    auto reply = network->get(request);
     ServerTransport::requirePinnedPeer(reply, certificate);
     reply->setReadBufferSize(1024 * 1024 + 1);
     connect(reply, &QIODevice::readyRead, reply, [reply] {
         if (reply->bytesAvailable() > 1024 * 1024) reply->abort();
     });
-    QTimer::singleShot(m_timeoutMs, reply, [reply] { if (!reply->isFinished()) reply->abort(); });
+    QTimer::singleShot(url.scheme() == QStringLiteral("ssh") ? qMax(m_timeoutMs, 27000) : m_timeoutMs,
+                       reply, [reply] { if (!reply->isFinished()) reply->abort(); });
     return reply;
 }
 void AppInfo::setBackend(const QString &baseUrl, const QString &token, const QSslCertificate &certificate) {
@@ -59,13 +63,14 @@ void AppInfo::setBackend(const QString &baseUrl, const QString &token, const QSs
         QString path = endpoint.path(); path.chop(QString("usage").size());
         endpoint.setPath(path + "health");
     }
-    if (endpoint == m_healthUrl && token.toUtf8() == m_token && certificate == m_certificate) return;
+    const QByteArray effectiveToken = endpoint.scheme() == QStringLiteral("ssh") ? QByteArray() : token.toUtf8();
+    if (endpoint == m_healthUrl && effectiveToken == m_token && certificate == m_certificate) return;
     if (m_healthReply) {
         auto previous = m_healthReply; m_healthReply = nullptr;
         previous->disconnect(this); previous->abort(); previous->deleteLater();
     }
     m_localNetwork.clearConnectionCache();
-    m_healthUrl = endpoint; m_token = token.toUtf8(); m_certificate = certificate; m_serverVersion.clear();
+    m_healthUrl = endpoint; m_token = effectiveToken; m_certificate = certificate; m_serverVersion.clear();
     m_serverStatus = endpoint.isEmpty() ? "Connect a backend to see its version." : "Server version has not been checked.";
     emit changed();
 }

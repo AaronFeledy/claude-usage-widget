@@ -43,7 +43,8 @@ startup. Stop the old Windows server and disable any independent Windows service
 or scheduled task that launches it. Verify authenticated access and a WSL
 service restart before relying on the new service. Remote plain HTTP disables
 browser credential forwarding from Headroom; use WSL credential files and this
-sync helper instead. The retained Qt setting names differ from the legacy
+sync helper, or configure the encrypted [SSH connection](../../../docs/ssh.md)
+with SSH access enabled under the backend's OS account. The retained Qt setting names differ from the legacy
 WinForms JSON keys, but the server API and bearer-token behavior are unchanged.
 
 To roll back, repoint clients to the prior server and restore the appropriate

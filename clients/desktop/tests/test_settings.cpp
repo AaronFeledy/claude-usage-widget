@@ -130,6 +130,48 @@ private slots:
         QVERIFY(!QFileInfo::exists(service.legacyBackupPath()));
     }
 
+    void sshRoundTripIsSeparateFromHttpCredentials()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        SettingsService service(path, false, SettingsService::Platform::Linux);
+        auto value = service.value();
+        value.connectionMode = QStringLiteral("ssh");
+        value.url = QStringLiteral("https://usage.example.test/base");
+        value.token = QStringLiteral("saved-http-token");
+        value.sshUrl = QStringLiteral("ssh://alice@example.test:2222");
+        QVERIFY2(service.save(value, true).isEmpty(), qPrintable(service.loadError()));
+        SettingsService reopened(path, false, SettingsService::Platform::Linux);
+        QCOMPARE(reopened.value().connectionMode, QStringLiteral("ssh"));
+        QCOMPARE(reopened.value().sshUrl, value.sshUrl);
+        QCOMPARE(reopened.value().url, value.url);
+        QCOMPARE(reopened.value().token, value.token);
+    }
+
+    void inactiveInvalidSshAddressDoesNotDisableHttpSettings()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"connectionMode\":\"remote\",\"url\":\"https://usage.example.test\",\"token\":\"keep\",\"sshUrl\":\"ssh://-obad\"}")));
+        SettingsService service(path, false, SettingsService::Platform::Linux);
+        QVERIFY(service.loadError().isEmpty());
+        QCOMPARE(service.value().connectionMode, QStringLiteral("remote"));
+        QCOMPARE(service.value().url, QStringLiteral("https://usage.example.test"));
+        QCOMPARE(service.value().token, QStringLiteral("keep"));
+        QVERIFY(service.value().sshUrl.isEmpty());
+    }
+
+    void rejectsInvalidActiveSshAddressWithoutChangingFile()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        const QByteArray original = QByteArrayLiteral("{\"connectionMode\":\"ssh\",\"sshUrl\":\"ssh://user:password@example.test\"}");
+        QVERIFY(writeFile(path, original));
+        SettingsService service(path, true, SettingsService::Platform::Linux);
+        QVERIFY(!service.loadError().isEmpty());
+        QCOMPARE(readFile(path), original);
+    }
+
     void explicitConfigIsIsolated()
     {
         QTemporaryDir dir;

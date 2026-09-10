@@ -8,11 +8,16 @@
 #include <utility>
 
 Controller::Controller(bool demo, const QString &configPath, QObject *parent, bool allowAutomaticMigration,
-                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions, QByteArray demoPayload)
+                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions, QByteArray demoPayload, SshOptions sshOptions)
     : QObject(parent), m_settingsService(configPath, allowAutomaticMigration && !demo),
-      m_demo(demo), m_demoPayload(std::move(demoPayload)), m_server(std::move(serverOptions), this), m_credentials(std::move(credentialOptions), this) {
+      m_demo(demo), m_demoPayload(std::move(demoPayload)), m_sshNetwork(sshOptions),
+      m_server(std::move(serverOptions), this),
+      m_credentials([&] {
+          if (credentialOptions.sshOptions.executablePath.isEmpty()) credentialOptions.sshOptions = sshOptions;
+          return std::move(credentialOptions);
+      }(), this) {
     const auto &loaded = m_settingsService.value();
-    m_mode = loaded.connectionMode; m_url = loaded.url; m_token = loaded.token;
+    m_mode = loaded.connectionMode; m_url = loaded.url; m_token = loaded.token; m_sshUrl = loaded.sshUrl;
     m_interval = loaded.interval; m_notifications = loaded.notifications;
     m_primary = loaded.primary; m_order = loaded.order;
     if (!m_settingsService.loadError().isEmpty()) m_message = m_settingsService.loadError();
@@ -71,7 +76,7 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
 }
 
 QVariantMap Controller::settings() const {
-    return {{"mode", m_mode}, {"url", m_url}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
+    return {{"mode", m_mode}, {"url", m_url}, {"sshUrl", m_sshUrl}, {"hasToken", !m_token.isEmpty()}, {"interval", m_interval},
         {"notifications", m_notifications}, {"primary", primary()}};
 }
 QVariantMap Controller::state() const {
@@ -83,11 +88,11 @@ QVariantMap Controller::state() const {
 }
 QString Controller::backendUrl() const {
     if (m_demo) return {};
-    return m_mode == "local" ? m_server.connection().url.toString() : m_url;
+    return m_mode == "local" ? m_server.connection().url.toString() : (m_mode == "ssh" ? m_sshUrl : m_url);
 }
 QString Controller::backendToken() const {
     if (m_demo) return {};
-    return m_mode == "local" ? QString::fromUtf8(m_server.connection().token) : m_token;
+    return m_mode == "local" ? QString::fromUtf8(m_server.connection().token) : (m_mode == "ssh" ? QString() : m_token);
 }
 QSslCertificate Controller::backendCertificate() const {
     return !m_demo && m_mode == "local" ? m_server.connection().certificate : QSslCertificate();
@@ -99,7 +104,7 @@ void Controller::syncConnection() {
         const auto transport = m_server.connection();
         m_credentials.configure(m_mode, transport.url.toString(), QString::fromUtf8(transport.token), transport.certificate);
     } else {
-        m_credentials.configure(m_mode, m_url, m_token, QSslCertificate());
+        m_credentials.configure(m_mode, backendUrl(), backendToken(), QSslCertificate());
     }
 }
 QString Controller::displayName(const QString &provider) const { return Usage::displayName(provider); }
@@ -150,7 +155,7 @@ void Controller::refresh() {
         m_server.ensureAvailable();
         return;
     }
-    if (m_url.isEmpty()) { m_status = "setup"; m_errorKind.clear(); emit changed(); return; }
+    if (backendUrl().isEmpty()) { m_status = "setup"; m_errorKind.clear(); emit changed(); return; }
     requestUsage();
 }
 void Controller::requestUsage() {
@@ -165,14 +170,16 @@ void Controller::requestUsage() {
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(10000);
     const ServerConnection transport = m_mode == QStringLiteral("local")
-        ? m_server.connection() : ServerConnection{QUrl(m_url), m_token.toUtf8(), QSslCertificate()};
+        ? m_server.connection() : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), QSslCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
     if (m_mode == QStringLiteral("local")) ServerTransport::secureRequest(request, transport.certificate);
     m_loading = true; log("Connection", "Requesting usage snapshot."); emit changed();
-    auto reply = (m_mode == QStringLiteral("local") ? &m_localNetwork : &m_network)->get(request); m_reply = reply;
+    QNetworkAccessManager *network = m_mode == QStringLiteral("local") ? &m_localNetwork
+        : m_mode == QStringLiteral("ssh") ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
+    auto reply = network->get(request); m_reply = reply;
     if (m_mode == QStringLiteral("local")) ServerTransport::requirePinnedPeer(reply, transport.certificate);
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
-    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(12000);
+    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(m_mode == QStringLiteral("ssh") ? 27000 : 12000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 1024 * 1024) reply->abort(); });
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -187,7 +194,8 @@ void Controller::requestUsage() {
                 m_waitingForUsageRetry = true;
                 m_server.reportConnectionFailure();
                 fail("Cannot reach the local usage server. Headroom will recheck it before retrying.");
-            } else fail("Cannot reach your backend. Check your network and connection settings.");
+            } else if (m_mode == "ssh") fail("Cannot connect over SSH. Make sure OpenSSH is installed, then check the address, trusted host key, and key or agent authentication.");
+            else fail("Cannot reach your backend. Check your network and connection settings.");
             return;
         }
         QVariantList providers;
@@ -207,20 +215,24 @@ Controller::~Controller() {
     // disconnected and aborted before the members its handler touches are destroyed.
     cancel();
 }
-QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken) {
-    mode = mode == "local" ? "local" : "remote";
-    url = url.trimmed(); token = token.trimmed();
+QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl) {
+    if (mode != "local" && mode != "remote" && mode != "ssh") mode = "remote";
+    url = url.trimmed(); token = token.trimmed(); sshUrl = sshUrl.trimmed();
+    if (mode == QStringLiteral("ssh")) { url = m_url; token = m_token; }
     if (mode == "local") url = Usage::endpoint(m_url).isEmpty() ? QString() : m_url;
     if (mode == "remote" && Usage::endpoint(url).isEmpty()) return "Use an HTTP or HTTPS address without credentials, a query, or a fragment.";
+    if (mode == "ssh" && !SshTransport::parseAddress(sshUrl)) return "Use ssh://[user@]host[:port] without a password, path, query, or fragment.";
     if (token.contains('\n') || token.contains('\r')) return "The bearer token must be a single line.";
     if (interval < 15 || interval > 900) return "Choose a refresh interval between 15 and 900 seconds.";
-    const QString savedToken = forgetToken ? QString() : (token.isEmpty() && mode == m_mode && (mode == "local" || url == m_url) ? m_token : token);
-    const QString error = writeSettings(mode, url, savedToken, interval, notifications, primary);
+    const QString savedToken = forgetToken && mode == "remote" ? QString()
+        : (token.isEmpty() && (mode != "remote" || url == m_url) ? m_token : token);
+    const QString retainedSshUrl = sshUrl.isEmpty() && mode != "ssh" ? m_sshUrl : sshUrl;
+    const QString error = writeSettings(mode, url, savedToken, retainedSshUrl, interval, notifications, primary);
     if (!error.isEmpty()) return error;
     cancel();
     m_waitingForUsageRetry = false;
-    if (m_mode != mode || m_url != url || m_token != savedToken || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
-    m_mode = mode; m_url = url; m_token = savedToken; m_interval = interval; m_notifications = notifications; m_primary = primary;
+    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
+    m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
     m_demo = false;
     m_server.configure(m_mode, m_token);
     syncConnection();
@@ -228,9 +240,10 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     log("Settings", "Connection settings saved.");
     emit settingsChanged(); emit providersChanged(); emit changed(); refresh(); return {};
 }
-QString Controller::writeSettings(const QString &mode, const QString &url, const QString &token, int interval, bool notifications, const QString &primary) {
+QString Controller::writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary) {
     DesktopSettings updated = m_settingsService.value();
     updated.connectionMode = mode; updated.url = url; updated.token = token;
+    updated.sshUrl = sshUrl;
     updated.interval = interval; updated.notifications = notifications;
     updated.primary = primary; updated.order = m_order;
     return m_settingsService.save(updated, true);

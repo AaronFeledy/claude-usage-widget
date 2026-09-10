@@ -631,6 +631,41 @@ private slots:
         QVERIFY(!requests.contains("saved-token-must-not-be-used"));
         QVERIFY(!controller.diagnosticText().contains("synthetic-cursor"));
     }
+    void controllerUsesSshAndPreservesHttpCredentials()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        SettingsService settings(path, false);
+        auto saved = settings.value(); saved.connectionMode = QStringLiteral("ssh");
+        saved.sshUrl = QStringLiteral("ssh://valid"); saved.url = QStringLiteral("https://http.example.test");
+        saved.token = QStringLiteral("saved-http-token");
+        QVERIFY(settings.save(saved, true).isEmpty());
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(false, path, nullptr, false, {}, credentials, {},
+                              SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000});
+        QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
+        QCOMPARE(controller.backendUrl(), QStringLiteral("ssh://valid"));
+        QVERIFY(controller.backendToken().isEmpty());
+        QVERIFY(controller.saveSettings(QStringLiteral("ssh"), QStringLiteral("https://unsaved.example.test"),
+            QStringLiteral("unsaved-hidden-token"), 60, false, QStringLiteral("Claude"), true, QStringLiteral("ssh://valid")).isEmpty());
+        QCOMPARE(controller.settings()["url"].toString(), saved.url);
+        QVERIFY(controller.saveSettings(QStringLiteral("remote"), QStringLiteral("https://http.example.test"), {},
+            60, false, QStringLiteral("Claude"), false).isEmpty());
+        QCOMPARE(controller.backendToken(), QStringLiteral("saved-http-token"));
+    }
+    void freshSshConnectionDoesNotRequireHttpAddress()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        SettingsService settings(path, false);
+        auto saved = settings.value(); saved.connectionMode = QStringLiteral("ssh");
+        saved.sshUrl = QStringLiteral("ssh://valid"); saved.url.clear(); saved.token.clear();
+        QVERIFY(settings.save(saved, true).isEmpty());
+        CredentialServiceOptions credentials; credentials.enabled = false;
+        Controller controller(false, path, nullptr, false, {}, credentials, {},
+                              SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000});
+        QTRY_COMPARE(controller.state()["status"].toString(), QStringLiteral("ready"));
+    }
 };
 QTEST_GUILESS_MAIN(UsageTest)
 #include "test_usage.moc"

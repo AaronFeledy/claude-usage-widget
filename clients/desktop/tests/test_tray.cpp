@@ -1,5 +1,7 @@
 #include "trayvisual.h"
 #include "usage.h"
+#include <QDir>
+#include <QPainter>
 #include <QtTest>
 
 class TrayTest : public QObject {
@@ -33,6 +35,30 @@ private slots:
         QVERIFY(!image.isNull());
         QCOMPARE(image.pixelColor(53, 52), QColor("#ff5555"));
         QCOMPARE(image.pixelColor(32, 59), QColor("#8be9fd"));
+        const QString captureDirectory = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!captureDirectory.isEmpty()) {
+            QVERIFY(QDir().mkpath(captureDirectory));
+            QImage sheet(440, 220, QImage::Format_ARGB32_Premultiplied);
+            sheet.fill(QColor("#282a36"));
+            QPainter painter(&sheet);
+            painter.setPen(QColor("#f8f8f2"));
+            painter.setFont(QFont("sans-serif", 10));
+            int row = 0;
+            for (const QString &name : {QStringLiteral("Claude"), QStringLiteral("Codex"), QStringLiteral("Cursor"), QStringLiteral("Grok")}) {
+                auto sample = model; sample.provider = name;
+                sample.used = 38; sample.expected = 55; sample.level = Usage::WarningLevel::Normal;
+                sample.secondary = Usage::WarningLevel::Normal;
+                painter.drawText(QRect(12, row * 54, 85, 50), Qt::AlignVCenter, Usage::displayName(name));
+                int x = 110;
+                for (const int size : {16, 20, 24, 32, 48}) {
+                    painter.drawPixmap(x, row * 54 + (50 - size) / 2, TrayVisual::icon(sample).pixmap(size, size));
+                    x += 62;
+                }
+                ++row;
+            }
+            painter.end();
+            QVERIFY(sheet.save(QDir(captureDirectory).filePath(QStringLiteral("tray-sizes.png"))));
+        }
     }
     void keepsSelectedProviderOnError() {
         const auto model = TrayVisual::build(ready(), {

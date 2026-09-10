@@ -6,6 +6,11 @@ option. New Windows release packages use the shared Qt
 [Headroom desktop](../desktop/README.md); this project is not the default
 downloadable UI.
 
+To switch an existing installation to Headroom, run the new Windows installer
+once and follow the [upgrade guide](../../docs/upgrading-to-headroom.md).
+This client's updater only recognizes legacy executable assets; it cannot
+install the new Headroom packages automatically.
+
 ## Build
 
 From the repository root:

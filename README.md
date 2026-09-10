@@ -40,11 +40,12 @@ Linux x86_64:
 curl -fsSL https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.sh | sh
 ```
 
-These commands require a published Headroom release containing the schema 1
-release manifest. The older public `v1.7.1` release contains the retained legacy
-client, so the new installers reject it rather than treating it as Headroom.
-See [desktop build instructions](clients/desktop/README.md) to run Headroom from
-source before the first Headroom package release.
+Headroom packages are available starting with
+[v1.8.0](https://github.com/AaronFeledy/claude-usage-widget/releases/tag/v1.8.0).
+The installers require a Headroom release manifest and do not accept the older
+legacy executable releases. Existing Claude Usage Widget users should follow the
+[upgrade guide](docs/upgrading-to-headroom.md) for the one-time transition.
+See [desktop build instructions](clients/desktop/README.md) for source builds.
 
 Windows installs under `%LOCALAPPDATA%\Headroom` and adds a Start menu shortcut.
 Linux installs under `${XDG_DATA_HOME:-$HOME/.local/share}/headroom`, places the
@@ -83,27 +84,44 @@ connection before sending authenticated requests or browser cookies. Session
 secrets stay in memory and travel between parent and child through private pipes.
 An existing plain HTTP server can supply usage without receiving a saved token
 or browser cookies. To connect to an independently managed server that requires
-a token, configure it explicitly in Remote settings; browser recovery requires
-HTTPS.
+a token, configure it explicitly in HTTP(S) settings; direct browser recovery
+requires HTTPS. The SSH connection described below provides another encrypted
+transport for Linux/WSL servers.
 
 Headroom stops or hands off only a server process it started; attached and remote
 servers remain independently owned. The standalone server binds to
 `127.0.0.1:7823` by default and refuses any non-loopback bind without a bearer
 token. Its existing HTTP API and configuration remain compatible.
 
-Windows and Linux start in Local mode at `http://127.0.0.1:7823`. To use another
-server, select Remote in Connection settings and enter its HTTP(S) base URL.
-Existing saved connection settings take precedence over the default. Browser
-credential forwarding to a remote server requires HTTPS.
+Windows and Linux start in Local mode at `http://127.0.0.1:7823`. Existing saved
+connection settings take precedence over the default. **SSH is the recommended
+remote option**; **HTTP(S)** remains available for direct connections. Browser
+credential forwarding to a direct remote server requires HTTPS.
+
+For a Linux or WSL backend with SSH access, choose **SSH** and use an address such
+as `ssh://usageuser@server.example`. Headroom uses your existing OpenSSH keys and
+trusted host configuration. Usage, version checks, and browser credential updates
+travel through the encrypted connection to the running server's private socket;
+no HTTPS certificate setup is needed for this mode. Enable `ssh_access: true` on
+the backend first. See the [SSH setup guide](docs/ssh.md) for account requirements
+and supported platforms. Headroom remembers the selected mode and never falls
+back from SSH to HTTP.
 
 ## Migrate from Claude Usage Widget
+
+Run the Headroom Windows installer once to switch from the old app. Its built-in
+updater only recognizes `ClaudeUsageWidget-*.exe` assets and cannot install a
+Headroom package. After this transition, Headroom's own package updater handles
+future releases. The [upgrade guide](docs/upgrading-to-headroom.md) covers the
+steps, preserved settings, server compatibility, and rollback.
 
 On the first normal Windows launch, Headroom imports the legacy schema 0–3 file
 at `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new Headroom
 settings file does not exist. It keeps the old file untouched and writes a
 create-once backup beside the new settings. An empty legacy API URL remains
-Local mode; a configured URL remains Remote mode. The installer stops the exact
-legacy WinForms executable before launching Headroom.
+Local mode; a configured URL remains a direct HTTP(S) connection. The installer
+stops the legacy executable at its standard installation path before launching
+Headroom; quit portable or custom-path copies yourself.
 
 The old path, repository URL, Go module names, server config directories,
 `usage-server` binary name, API provider value `Codex`, and API field names stay
@@ -157,9 +175,10 @@ and Grok browser cookies from supported Chrome, Edge, Brave, and Firefox
 profiles. It uses the current Windows user's browser encryption context and
 returns only the requested cookie over a bounded private child-process channel.
 It cannot read another user's profile or bypass unsupported newer encrypted
-values. Headroom forwards a result only to its verified bundled server session
-or a configured HTTPS server and never persists it. Linux does not include this
-helper; use server-side credential files or the documented [WSL credential sync](server/deploy/wsl/README.md).
+values. Headroom forwards a result only to its verified bundled server session,
+a configured HTTPS server, or the SSH receiver and never persists it. Linux does
+not include this helper; use server-side credential files or the documented
+[WSL credential sync](server/deploy/wsl/README.md).
 
 ## Interface behavior
 

@@ -16,6 +16,7 @@ type Config struct {
 	PollInterval   time.Duration
 	Providers      map[string]ProviderConfig
 	DesktopSession bool
+	SSHAccess      bool
 }
 
 type ProviderConfig struct {

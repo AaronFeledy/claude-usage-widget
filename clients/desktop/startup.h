@@ -31,6 +31,7 @@ signals:
     void availableChanged();
     void preferenceChanged(bool enabled);
 private:
+    void repairPackagedRegistration();
     bool fail(const QString &message);
     bool persistPreference(bool enabled);
     void clearError();

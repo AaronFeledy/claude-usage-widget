@@ -231,6 +231,16 @@ private slots:
         QTRY_VERIFY(!service.busy()); QCOMPARE(recovered.size(), 0); QCOMPARE(server.requests.size(), 1);
         QTest::qWait(60); service.consider({grokWithoutWeekly()}); QTRY_COMPARE(server.requests.size(), 2);
     }
+    void sshRecoversWithoutBearerOrHttpFallback()
+    {
+        auto sshOptions = options();
+        sshOptions.sshOptions = SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000};
+        CredentialService service(sshOptions); QSignalSpy recovered(&service, &CredentialService::providerRecovered);
+        service.configure(QStringLiteral("ssh"), QStringLiteral("ssh://valid"), QStringLiteral("must-not-be-sent"));
+        service.consider({cursorFailure()});
+        QTRY_COMPARE(recovered.size(), 1);
+        QCOMPARE(recovered.first().first().toMap()["provider_name"].toString(), QStringLiteral("Cursor"));
+    }
 };
 QTEST_GUILESS_MAIN(CredentialServiceTest)
 #include "test_credentials.moc"

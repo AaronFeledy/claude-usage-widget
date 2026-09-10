@@ -45,6 +45,11 @@ curl -H 'Authorization: Bearer replace-with-a-long-random-token' \
   http://server.example:7823/api/v1/usage
 ```
 
+Linux and WSL servers can also enable Headroom's SSH transport with
+`--ssh-access` or `ssh_access: true`. The SSH login must use the same OS account
+as the service. This adds a protected Unix socket to the existing server while
+preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
+
 ## Endpoints
 
 - `GET /api/v1/usage` - array of cached provider usage entries.
@@ -53,7 +58,9 @@ curl -H 'Authorization: Bearer replace-with-a-long-random-token' \
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one JSON field: `cookie` or `access_token`.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 
-When `auth_token` or `USAGE_AUTH_TOKEN` is set, every endpoint requires `Authorization: Bearer <token>`.
+When `auth_token` or `USAGE_AUTH_TOKEN` is set, every public HTTP endpoint requires
+`Authorization: Bearer <token>`. The protected SSH socket authenticates the local
+OS account and supplies that token internally; an SSH client does not need it.
 
 ## Configuration
 
@@ -71,6 +78,11 @@ CLI flags:
 - `--listen-addr <host:port>` - HTTP listen address.
 - `--auth-token <token>` - bearer token.
 - `--poll-interval <duration>` - Go duration such as `30s`, `1m`, or `5m`.
+- `--ssh-access` - opt in to the private per-account SSH socket on Linux/WSL;
+  disabled by default and incompatible with `--desktop-session`.
+- `--ssh-stdio` - run the restricted one-request SSH receiver. Must be used
+  alone; it connects to the running server without loading provider configuration
+  or creating a second poller.
 - `--desktop-session` - reserved for the bundled Headroom child process; requires
   a numeric loopback bind and a bounded private stdin handshake. It uses a fresh
   in-memory TLS identity and session bearer token instead of the configured
@@ -84,6 +96,7 @@ Environment variables:
 - `USAGE_LISTEN_ADDR` - HTTP listen address.
 - `USAGE_AUTH_TOKEN` - bearer token.
 - `USAGE_POLL_INTERVAL` - Go duration.
+- `USAGE_SSH_ACCESS` - boolean enabling the Linux/WSL SSH socket.
 - `USAGE_PROVIDER_<NAME>_ENABLED` - boolean provider toggle, for example `USAGE_PROVIDER_CODEX_ENABLED=true`.
 - `USAGE_PROVIDER_<NAME>_CREDENTIALS_PATH` - provider credential path, for example `USAGE_PROVIDER_GROK_CREDENTIALS_PATH=/var/lib/usage-server/grok-auth.json`.
 
@@ -93,6 +106,7 @@ YAML keys:
 listen_addr: 127.0.0.1:7823
 auth_token: ""
 poll_interval: 60s
+ssh_access: false
 providers:
   claude:
     enabled: true

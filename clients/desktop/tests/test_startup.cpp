@@ -39,8 +39,9 @@ private slots:
     {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
-        const QString launcher = dir.filePath("headroom-launcher");
-        QFile file(launcher); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("fixture"); file.close();
+        const QString launcher = dir.filePath("external/headroom");
+        QVERIFY(writeFile(launcher, "fixture", true));
+        QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(dir.path()).toUtf8() + '\n'));
         qputenv("HEADROOM_INSTALL_ROOT", dir.path().toUtf8());
         qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());
         qputenv("HEADROOM_PACKAGE_VERSION", "9.8.7");
@@ -53,6 +54,110 @@ private slots:
 #endif
         QVERIFY(writeFile(packaged, "fixture", true));
         QCOMPARE(StartupService::packagedExecutablePath(packaged), QFileInfo(launcher).absoluteFilePath());
+        const QString generation = dir.filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-fedcba9876543210/bin/%1")
+#ifdef Q_OS_WIN
+            .arg("headroom.exe"));
+#else
+            .arg("headroom"));
+#endif
+        QVERIFY(writeFile(generation, "fixture", true));
+        QCOMPARE(StartupService::packagedExecutablePath(generation), QFileInfo(launcher).absoluteFilePath());
+#ifdef Q_OS_WIN
+        QString generationCaseAlias = generation;
+        generationCaseAlias.replace(QStringLiteral("generation-0123456789abcdef"),
+                                    QStringLiteral("GENERATION-0123456789ABCDEF"));
+        QCOMPARE(StartupService::packagedExecutablePath(generationCaseAlias), QFileInfo(launcher).absoluteFilePath());
+#endif
+
+        for (const QString &unsafe : {
+                 dir.filePath(QStringLiteral("versions/9.8.6.generation-0123456789abcdef-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
+                 dir.filePath(QStringLiteral("versions/9.8.7.generation-1123456789ABCDEf-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
+                 dir.filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-short/bin/") + QFileInfo(packaged).fileName()),
+                 dir.filePath(QStringLiteral("foreign/bin/") + QFileInfo(packaged).fileName())}) {
+            QVERIFY(writeFile(unsafe, "fixture", true));
+            QCOMPARE(StartupService::packagedExecutablePath(unsafe), QFileInfo(unsafe).absoluteFilePath());
+        }
+        QVERIFY(writeFile(launcher + QStringLiteral(".root"), QByteArrayLiteral("/wrong/root\n")));
+        QCOMPARE(StartupService::packagedExecutablePath(generation), QFileInfo(generation).absoluteFilePath());
+        qunsetenv("HEADROOM_INSTALL_ROOT"); qunsetenv("HEADROOM_LAUNCHER_PATH"); qunsetenv("HEADROOM_PACKAGE_VERSION");
+    }
+
+    void repairsPriorGenerationStartupEntryToStableLauncher()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString root = dir.filePath(QStringLiteral("install"));
+        const QString launcher = dir.filePath(QStringLiteral("bin/headroom"));
+#ifdef Q_OS_WIN
+        const QString appName = QStringLiteral("headroom.exe");
+#else
+        const QString appName = QStringLiteral("headroom");
+#endif
+        const QString current = QDir(root).filePath(QStringLiteral("versions/2.0.0.generation-0123456789abcdef-fedcba9876543210/bin/") + appName);
+        const QString previous = QDir(root).filePath(QStringLiteral("versions/1.8.0.generation-1111111111111111-2222222222222222/bin/") + appName);
+        QVERIFY(writeFile(current, "current", true)); QVERIFY(writeFile(previous, "previous", true));
+        QVERIFY(writeFile(launcher, "launcher", true));
+        QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
+        qputenv("HEADROOM_INSTALL_ROOT", root.toUtf8()); qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());
+        qputenv("HEADROOM_PACKAGE_VERSION", "2.0.0");
+
+#ifdef Q_OS_WIN
+        const QString registryPath = QStringLiteral("HKEY_CURRENT_USER\\Software\\HeadroomTests\\")
+            + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        QSettings registry(registryPath, QSettings::NativeFormat);
+        const QString oldCommand = QStringLiteral("\"") + QDir::toNativeSeparators(previous) + QStringLiteral("\" --background");
+        const QString stableCommand = QStringLiteral("\"") + QDir::toNativeSeparators(launcher) + QStringLiteral("\" --background");
+        registry.setValue(QStringLiteral("Headroom"), oldCommand); registry.sync();
+        StartupService repaired({}, current, true, nullptr, StartupService::Platform::Windows, registryPath);
+        QCOMPARE(registry.value(QStringLiteral("Headroom")).toString(), stableCommand);
+        registry.setValue(QStringLiteral("Headroom"), oldCommand + QStringLiteral(" --custom")); registry.sync();
+        StartupService custom({}, current, true, nullptr, StartupService::Platform::Windows, registryPath);
+        QCOMPARE(registry.value(QStringLiteral("Headroom")).toString(), oldCommand + QStringLiteral(" --custom"));
+        registry.setValue(QStringLiteral("Headroom"), oldCommand); registry.sync();
+        StartupService preview({}, current, false, nullptr, StartupService::Platform::Windows, registryPath);
+        QCOMPARE(registry.value(QStringLiteral("Headroom")).toString(), oldCommand);
+        registry.remove(QStringLiteral("Headroom"));
+        registry.setValue(QStringLiteral("ClaudeUsageWidget"), QStringLiteral("legacy")); registry.sync();
+        StartupService migration({}, current, true, nullptr, StartupService::Platform::Windows, registryPath);
+        migration.setPreferenceWriter([](bool) { return QString(); });
+        QVERIFY(migration.migrateLegacyRegistration(true));
+        QCOMPARE(registry.value(QStringLiteral("Headroom")).toString(), stableCommand);
+        QVERIFY(!registry.contains(QStringLiteral("ClaudeUsageWidget")));
+        registry.clear(); registry.sync();
+#else
+        const QString config = dir.filePath(QStringLiteral("config"));
+        const QString entry = QDir(config).filePath(QStringLiteral("autostart/headroom.desktop"));
+        const QByteArray oldEntry = QStringLiteral("[Desktop Entry]\nType=Application\nExec=\"%1\" --background\nX-GNOME-Autostart-enabled=true\n")
+            .arg(previous).toUtf8();
+        QVERIFY(writeFile(entry, oldEntry));
+        StartupService repaired(config, current, true);
+        QVERIFY(repaired.enabled());
+        const QByteArray repairedEntry = readFile(entry);
+        QVERIFY(repairedEntry.contains((QStringLiteral("Exec=\"") + launcher + QStringLiteral("\" --background")).toUtf8()));
+        QVERIFY(!repairedEntry.contains(previous.toUtf8()));
+
+        QVERIFY(writeFile(entry, QByteArray(oldEntry).replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false")));
+        StartupService disabled(config, current, true);
+        QVERIFY(!disabled.enabled()); QCOMPARE(readFile(entry), QByteArray(oldEntry).replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false"));
+
+        const QByteArray hiddenEntry = oldEntry + QByteArrayLiteral("Hidden = true\n");
+        QVERIFY(writeFile(entry, hiddenEntry));
+        StartupService hidden(config, current, true);
+        QVERIFY(!hidden.enabled()); QCOMPARE(readFile(entry), hiddenEntry);
+
+        const QByteArray duplicateEntry = oldEntry + QByteArrayLiteral("Type=Application\n");
+        QVERIFY(writeFile(entry, duplicateEntry));
+        StartupService duplicate(config, current, true);
+        QCOMPARE(readFile(entry), duplicateEntry);
+
+        const QByteArray custom = QStringLiteral("[Desktop Entry]\nType=Application\nExec=\"%1\" --background --custom\n").arg(previous).toUtf8();
+        QVERIFY(writeFile(entry, custom));
+        StartupService unrelated(config, current, true);
+        QCOMPARE(readFile(entry), custom);
+
+        QVERIFY(writeFile(entry, oldEntry));
+        StartupService preview(config, current, false);
+        QCOMPARE(readFile(entry), oldEntry);
+#endif
         qunsetenv("HEADROOM_INSTALL_ROOT"); qunsetenv("HEADROOM_LAUNCHER_PATH"); qunsetenv("HEADROOM_PACKAGE_VERSION");
     }
     void preferenceWriterTracksBothToggles()

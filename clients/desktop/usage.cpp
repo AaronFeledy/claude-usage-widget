@@ -1,4 +1,5 @@
 #include "usage.h"
+#include "sshnetwork.h"
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -12,6 +13,11 @@ QString Usage::displayName(const QString &provider) {
 }
 
 QUrl Usage::endpoint(const QString &base) {
+    QUrl ssh;
+    if (SshTransport::parseAddress(base.trimmed(), &ssh)) {
+        ssh.setPath(QStringLiteral("/api/v1/usage"));
+        return ssh;
+    }
     const QUrl url(base.trimmed(), QUrl::StrictMode);
     if (!url.isValid() || (url.scheme() != "http" && url.scheme() != "https") || url.host().isEmpty()
         || !url.userInfo().isEmpty() || url.hasQuery() || url.hasFragment()) return {};

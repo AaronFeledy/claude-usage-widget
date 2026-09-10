@@ -106,7 +106,7 @@ jobs:
       - name: Test installer streaming download bounds without network
         run: bash packaging/tests/test-install-download.sh
       - name: Install Qt runtime build dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build xvfb libgl1-mesa-dev libxkbcommon-x11-0
+        run: sudo apt-get update && sudo apt-get install -y ninja-build xvfb libgl1-mesa-dev libxkbcommon-x11-0 openssh-server
       - uses: jurplel/install-qt-action@v4.3.0
         with:
           version: ${{ env.HEADROOM_QT_VERSION }}
@@ -123,6 +123,20 @@ jobs:
         run: cmake --build clients/desktop/build-ci --parallel
       - name: Test
         run: ctest --test-dir clients/desktop/build-ci --output-on-failure
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache: true
+          cache-dependency-path: server/go.sum
+      - name: Build isolated SSH test backend
+        working-directory: server
+        run: go build -o "$RUNNER_TEMP/usage-server-ssh" ./cmd/usage-server
+      - name: Exercise Qt and Go through real OpenSSH
+        timeout-minutes: 3
+        run: >-
+          python3 packaging/tests/ssh_server_smoke.py
+          --server "$RUNNER_TEMP/usage-server-ssh"
+          --qt-probe clients/desktop/build-ci/headroom-ssh-probe
       - name: Exercise QML menus and focus on xcb
         timeout-minutes: 2
         run: >-

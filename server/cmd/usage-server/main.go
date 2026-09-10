@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"os/user"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/cursor"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/providers/grok"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/server"
+	"github.com/AaronFeledy/claude-usage-widget/server/internal/sshaccess"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
@@ -40,6 +43,20 @@ func run(args []string, env []string, logger *slog.Logger) error {
 }
 
 func runContext(ctx context.Context, args []string, env []string, logger *slog.Logger, desktopOptions desktopSessionOptions) error {
+	stdioMode, err := sshaccess.IsStdioMode(args)
+	if err != nil {
+		return err
+	}
+	if stdioMode {
+		if err := sshaccess.ValidatePlatform(); err != nil {
+			return err
+		}
+		home, err := runtimeHome(desktopOptions)
+		if err != nil {
+			return err
+		}
+		return sshaccess.ServeStdio(ctx, desktopOptions.input, desktopOptions.output, home)
+	}
 	cfg, err := config.Load(ctx, config.LoadOptions{Args: args, Env: env})
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -48,10 +65,30 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		return err
 	}
 	if cfg.DesktopSession {
+		if cfg.SSHAccess {
+			return fmt.Errorf("desktop-session and ssh-access cannot be combined: %w", config.ErrInvalidConfig)
+		}
 		return runDesktopSession(ctx, cfg, logger, desktopOptions)
+	}
+	if cfg.SSHAccess {
+		if err := sshaccess.ValidatePlatform(); err != nil {
+			return err
+		}
 	}
 	if err := api.ValidateStartup(cfg.ListenAddr, cfg.AuthToken); err != nil {
 		return err
+	}
+	var sshListener net.Listener
+	if cfg.SSHAccess {
+		home, err := runtimeHome(desktopOptions)
+		if err != nil {
+			return err
+		}
+		sshListener, err = sshaccess.Listen(home)
+		if err != nil {
+			return err
+		}
+		defer sshListener.Close()
 	}
 	providerPoller, cursorClient, grokProvider, names, err := buildPoller(cfg)
 	if err != nil {
@@ -71,7 +108,11 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	if err != nil {
 		return err
 	}
-	return runServerAndPoller(ctx, appRuntime{server: server.RunOptions{Listener: listener, Handler: handler, Logger: logger}, poller: providerPoller, interval: cfg.PollInterval})
+	servers := []server.RunOptions{{Listener: listener, Handler: handler, Logger: logger}}
+	if sshListener != nil {
+		servers = append(servers, server.RunOptions{Listener: sshListener, Handler: sshaccess.InjectAuthorization(cfg.AuthToken, handler), Logger: logger})
+	}
+	return runServerAndPoller(ctx, appRuntime{servers: servers, poller: providerPoller, interval: cfg.PollInterval})
 }
 
 func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions) error {
@@ -99,14 +140,14 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		return err
 	}
 	return runServerAndPoller(ctx, appRuntime{
-		server:   server.RunOptions{Listener: prepared.listener, Handler: handler, Logger: logger},
+		servers:  []server.RunOptions{{Listener: prepared.listener, Handler: handler, Logger: logger}},
 		poller:   providerPoller,
 		interval: cfg.PollInterval,
 	})
 }
 
 type appRuntime struct {
-	server   server.RunOptions
+	servers  []server.RunOptions
 	poller   *poller.Poller
 	interval time.Duration
 }
@@ -160,7 +201,7 @@ func buildProvider(name string, providerCfg config.ProviderConfig, allowLocalDis
 func runServerAndPoller(ctx context.Context, runtime appRuntime) error {
 	appCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errCh := make(chan error, 2)
+	errCh := make(chan error, len(runtime.servers)+1)
 	go func() {
 		err := runtime.poller.Run(appCtx, runtime.interval)
 		if errors.Is(err, context.Canceled) {
@@ -168,12 +209,31 @@ func runServerAndPoller(ctx context.Context, runtime appRuntime) error {
 		}
 		errCh <- err
 	}()
-	go func() { errCh <- server.Run(appCtx, runtime.server) }()
+	for _, options := range runtime.servers {
+		options := options
+		go func() { errCh <- server.Run(appCtx, options) }()
+	}
 	first := <-errCh
 	cancel()
-	second := <-errCh
+	var shutdownErr error
+	for range runtime.servers {
+		if err := <-errCh; shutdownErr == nil && err != nil {
+			shutdownErr = err
+		}
+	}
 	if first != nil {
 		return first
 	}
-	return second
+	return shutdownErr
+}
+
+func runtimeHome(options desktopSessionOptions) (string, error) {
+	if options.homeDir != "" {
+		return options.homeDir, nil
+	}
+	current, err := user.Current()
+	if err != nil || current.HomeDir == "" {
+		return "", fmt.Errorf("resolve current account home")
+	}
+	return current.HomeDir, nil
 }

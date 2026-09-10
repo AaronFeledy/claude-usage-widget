@@ -15,13 +15,16 @@ and rollback implementation; differences below are intentional unless stated.
 | Polling | Retains last good data on failure, distinguishes setup/auth/network/provider states, backs off to five minutes or the configured interval, and lets manual Refresh bypass the delay |
 | Local mode | Probes `127.0.0.1:7823` without secrets; attaches without saved auth, or starts the adjacent bundle with a private, verified TLS session; owns and stops only its child |
 | Remote mode | Accepts normalized HTTP(S) base URLs and bearer auth; the server still requires authentication for non-loopback binds |
+| SSH mode | Windows/Linux clients use existing OpenSSH keys and trusted host keys to reach an opted-in Linux/WSL backend through its protected socket; saved HTTP settings remain separate |
 | Startup | Registers the stable package launcher, or the current executable for a source/system build, with `--background` |
 | Diagnostics | Keeps 500 controlled session events with UTC timestamps; copy and clear are available; tokens, URLs, raw bodies, credentials, and account output are omitted |
 | Updates | Official packages make one delayed check, automatically download and verify newer native packages, and apply them transactionally on restart; exact-version repair is available for a trusted incomplete auxiliary component |
 
 Both platforms default to Local mode; saved remote settings override it. Windows
 can use the packaged current-user helper to forward supported Cursor and Grok
-browser cookies to its verified bundled server session or configured HTTPS.
+browser cookies to its verified bundled server session, configured HTTPS, or SSH
+receiver. The [SSH setup guide](ssh.md) covers the same-account requirement and
+server opt-in.
 Unlike the retained Windows implementation, Headroom does not send browser
 cookies or saved tokens to an unverified attached localhost HTTP listener.
 Linux uses server-side credential files or the WSL sync helper.
@@ -83,6 +86,7 @@ in-app restart path stops and replaces the expected running generation.
 - [Desktop warning policy](../clients/desktop/warning.cpp)
 - [Desktop tray rendering](../clients/desktop/trayvisual.cpp)
 - [Desktop local-server manager](../clients/desktop/managedserver.cpp)
+- [Desktop SSH transport](../clients/desktop/sshnetwork.cpp)
 - [Desktop updater](../clients/desktop/updateservice.cpp)
 - [Desktop startup service](../clients/desktop/startup.cpp)
 - [Retained Windows tray behavior](../clients/windows/TrayIcon/TrayApplicationContext.Helpers.cs)

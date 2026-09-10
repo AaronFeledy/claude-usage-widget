@@ -150,6 +150,15 @@ private slots:
         info.setBackend(fixture.url(), "test-token"); info.refreshServer();
         QTRY_VERIFY(!info.checkingServer()); QVERIFY(info.serverVersion().isEmpty());
     }
+    void checksVersionOverSsh()
+    {
+        AppInfo info(nullptr, 1000, SshOptions{QStringLiteral(SSH_FIXTURE_PATH), 1000});
+        info.setBackend(QStringLiteral("ssh://valid"), QStringLiteral("must-not-be-sent"));
+        info.refreshServer();
+        QTRY_VERIFY(!info.checkingServer());
+        QCOMPARE(info.serverVersion(), QStringLiteral("test"));
+        QCOMPARE(info.serverStatus(), QStringLiteral("Server healthy"));
+    }
 };
 QTEST_GUILESS_MAIN(AppInfoTest)
 #include "test_appinfo.moc"
