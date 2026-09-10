@@ -1,6 +1,7 @@
 #include "trayvisual.h"
 #include "usage.h"
 #include <QPainter>
+#include <QPixmapCache>
 #include <cmath>
 
 namespace {
@@ -21,6 +22,25 @@ Usage::WarningLevel level(const QVariantMap &assessment) {
 }
 bool isMeter(TrayVisual::Kind kind) {
     return kind == TrayVisual::Kind::Usage || kind == TrayVisual::Kind::Exhausted;
+}
+QPixmap providerPixmap(const QString &provider) {
+    if (provider.isEmpty()) return {};
+    const QString key = QStringLiteral("Headroom/tray-provider/") + provider.toLower();
+    QPixmap result;
+    if (QPixmapCache::find(key, &result)) return result;
+    const QIcon icon(QString(":/provider-icons/%1.svg").arg(provider.toLower()));
+    if (icon.isNull()) return {};
+    const QImage image = icon.pixmap(128, 128).toImage();
+    // Favicons include different transparent margins. Fit the actual artwork
+    // consistently inside the meter, without changing the shared brand assets.
+    QRect bounds;
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+            if (image.pixelColor(x, y).alpha() > 0) bounds |= QRect(x, y, 1, 1);
+    if (bounds.isEmpty()) return {};
+    result = QPixmap::fromImage(image.copy(bounds));
+    QPixmapCache::insert(key, result);
+    return result;
 }
 QString statusText(TrayVisual::Kind kind) {
     using K = TrayVisual::Kind;
@@ -87,29 +107,40 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
     return result;
 }
 
-QIcon TrayVisual::icon(const Model &model) {
-    QPixmap pixmap(64, 64); pixmap.fill(Qt::transparent);
+namespace {
+QPixmap renderIcon(const TrayVisual::Model &model, int size) {
+    using TrayVisual::Kind;
+    QPixmap pixmap(size, size); pixmap.fill(Qt::transparent);
     QPainter p(&pixmap); p.setRenderHint(QPainter::Antialiasing);
+    p.setRenderHint(QPainter::SmoothPixmapTransform);
+    p.scale(size / 64.0, size / 64.0);
     const bool meter = isMeter(model.kind);
     const QColor foreground("#f8f8f2"), track("#44475a"), background("#282a36");
     p.setPen(QPen(track, 7, Qt::SolidLine, Qt::RoundCap));
-    p.drawEllipse(QRectF(7, 7, 50, 50));
+    const QRectF ring(5, 5, 54, 54);
+    p.drawEllipse(ring);
     if (meter) {
         p.setPen(QPen(QColor(Usage::warningColor(model.level)), 7, Qt::SolidLine, Qt::RoundCap));
         // Zero means an empty meter; don't invent visible usage for an empty allowance.
-        if (model.used > 0) p.drawArc(QRectF(7, 7, 50, 50), 90 * 16, -qRound(qBound(0.0, model.used, 100.0) / 100 * 5760));
+        if (model.used > 0) p.drawArc(ring, 90 * 16, -qRound(qBound(0.0, model.used, 100.0) / 100 * 5760));
         if (model.expected >= 0) {
             const double angle = (model.expected / 100 * 360 - 90) * 3.14159265358979323846 / 180;
             const QPointF unit(std::cos(angle), std::sin(angle));
             const QPointF center(32, 32);
-            p.setPen(QPen(background, 6)); p.drawLine(center + unit * 19, center + unit * 31);
-            p.setPen(QPen(QColor("#8be9fd"), 3)); p.drawLine(center + unit * 20, center + unit * 30);
+            p.setPen(QPen(background, 4)); p.drawLine(center + unit * 22, center + unit * 30);
+            p.setPen(QPen(QColor("#8be9fd"), 3)); p.drawLine(center + unit * 23, center + unit * 30);
         }
     }
-    const QIcon providerIcon = model.provider.isEmpty() ? QIcon()
-        : QIcon(QString(":/provider-icons/%1.svg").arg(model.provider.toLower()));
-    if (!providerIcon.isNull()) providerIcon.paint(&p, QRect(18, 18, 28, 28));
-    else { p.setPen(foreground); p.setFont(QFont("sans-serif", 15, QFont::DemiBold)); p.drawText(QRect(18, 18, 28, 28), Qt::AlignCenter, "H"); }
+    const QPixmap provider = providerPixmap(model.provider);
+    if (!provider.isNull()) {
+        const QSizeF logoSize = QSizeF(provider.size()).scaled(QSizeF(36, 36), Qt::KeepAspectRatio);
+        const QRectF logo(QPointF(32 - logoSize.width() / 2, 32 - logoSize.height() / 2), logoSize);
+        p.drawPixmap(logo, provider, QRectF(provider.rect()));
+    } else {
+        p.setPen(foreground);
+        QFont font("sans-serif"); font.setPixelSize(30); font.setWeight(QFont::DemiBold); p.setFont(font);
+        p.drawText(QRect(14, 14, 36, 36), Qt::AlignCenter, "H");
+    }
     p.setPen(foreground); p.setFont(QFont("sans-serif", 10, QFont::DemiBold));
     if (!meter) {
         QString glyph; QColor color("#6272a4");
@@ -143,5 +174,14 @@ QIcon TrayVisual::icon(const Model &model) {
         p.drawEllipse(QPointF(11, 12), 8, 8);
         p.setPen(foreground); p.drawLine(QPointF(7, 12), QPointF(15, 12));
     }
-    return QIcon(pixmap);
+    return pixmap;
+}
+}
+
+QIcon TrayVisual::icon(const Model &model) {
+    QIcon result;
+    // Supply native tray sizes so the shell does not have to reduce a single
+    // large bitmap, particularly at Windows fractional display scales.
+    for (const int size : {16, 20, 22, 24, 32, 40, 48, 64}) result.addPixmap(renderIcon(model, size));
+    return result;
 }
