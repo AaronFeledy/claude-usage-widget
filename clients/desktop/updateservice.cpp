@@ -61,9 +61,7 @@ UpdateService::UpdateService(bool allowPublicTraffic, UpdateServiceOptions optio
         return;
     }
     if (m_options.installRoot.isEmpty() || m_options.launcherPath.isEmpty() || m_options.packageVersion.isEmpty()) {
-        m_status = m_options.systemManaged
-            ? QStringLiteral("This installation is managed by your system package manager.")
-            : QStringLiteral("This source installation is updated from its source checkout.");
+        m_status = QStringLiteral("This source installation is updated from its source checkout.");
         return;
     }
     inspectInstallation();

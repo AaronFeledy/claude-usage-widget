@@ -38,6 +38,7 @@ private slots:
         source.managerPath = QStringLiteral(UPDATE_FIXTURE_PATH);
         UpdateService service(true, source);
         QCOMPARE(service.state(), QStringLiteral("unavailable")); QCOMPARE(service.updateMethod(), QStringLiteral("source"));
+        QCOMPARE(service.statusText(), QStringLiteral("This source installation is updated from its source checkout."));
         service.startAutomaticCheck(); service.checkForUpdates(); QTest::qWait(50);
         QVERIFY(record().isEmpty());
         auto official = options(); UpdateService isolated(false, official);
@@ -45,6 +46,7 @@ private slots:
         QVERIFY(record().isEmpty()); QVERIFY(isolated.statusText().contains(QStringLiteral("disabled")));
         official.systemManaged = true; UpdateService system(true, official); system.startAutomaticCheck(); QTest::qWait(50);
         QVERIFY(record().isEmpty()); QCOMPARE(system.updateMethod(), QStringLiteral("system"));
+        QCOMPARE(system.statusText(), QStringLiteral("This installation is managed by your system package manager."));
     }
     void externalStableEntryIsValidatedWithoutPathEquality() {
         const QString root = m_dir.filePath(QStringLiteral("native identity"));
