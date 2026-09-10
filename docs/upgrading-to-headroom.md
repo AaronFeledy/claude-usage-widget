@@ -1,0 +1,104 @@
+# Upgrade from Claude Usage Widget to Headroom
+
+Existing Windows users can switch to Headroom with a one-time installation.
+Headroom imports supported settings and startup preferences, and keeps the old
+settings intact. Headroom packages were first published in
+[v1.8.0](https://github.com/AaronFeledy/claude-usage-widget/releases/tag/v1.8.0).
+
+The old app's **Check for updates** does not perform this transition. Its updater
+looks for `ClaudeUsageWidget-win-x64.exe` or `ClaudeUsageWidget-win-arm64.exe`;
+Headroom ships a complete Qt package with a different installation layout.
+An automatic upgrade bridge for those already-installed legacy executables has
+not been shipped. After the one-time installation, Headroom's own updater handles
+future Headroom releases.
+
+## Windows upgrade steps
+
+1. Quit Claude Usage Widget from its tray menu. Keep its settings and backend
+   configuration in place. The installer also stops the old executable at
+   `%LOCALAPPDATA%\ClaudeUsageWidget\ClaudeUsageWidget.exe`, but does not stop
+   portable copies or copies installed elsewhere.
+2. Run the installer in PowerShell 5.1 or newer under the same Windows account
+   that ran the old app:
+
+   ```powershell
+   irm https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.ps1 | iex
+   ```
+
+   The installer chooses Windows x64 or ARM64 automatically, validates the
+   complete package, installs under `%LOCALAPPDATA%\Headroom`, and creates a
+   **Headroom** Start menu shortcut. It removes the old Start menu shortcut only
+   if that shortcut points at the standard legacy installation.
+3. Let the installer launch Headroom normally. If it was already open, quit and
+   reopen it to use the newly installed version. Automatic import runs only when
+   the Headroom settings file does not exist; demo, screenshot, and explicit
+   `--config` sessions do not import legacy settings.
+4. Check Connection settings, provider order, and **Start Headroom when I sign
+   in**. Existing HTTP(S) connections stay selected. A fresh installation or an
+   empty legacy API address uses Local mode. Choosing SSH is a separate setup
+   step, described in the [SSH guide](ssh.md); it is never selected in place of
+   an existing connection automatically.
+
+## What is carried over
+
+The importer reads schema versions 0–3 from
+`%APPDATA%\ClaudeUsageWidget\settings.json` and writes
+`%APPDATA%\Headroom\Headroom\settings.json`.
+
+| Existing preference | Headroom behavior |
+| --- | --- |
+| `ApiUrl` | Keeps the configured HTTP(S) address; an empty address uses Local mode |
+| `ApiToken` | Preserved for direct HTTP(S) connections; never sent during local HTTP discovery or through SSH |
+| `RefreshIntervalSeconds` | Preserved within the supported 15–900 second range |
+| `NotificationsEnabled` | Preserved |
+| `ProviderOrder`, `PrimaryProvider` | Preserves supported provider order, removes duplicates, appends missing providers; the first provider drives the tray meter |
+| `StartWithWindows` | When enabled, registers Headroom at sign-in, then removes the old app's Run entry after the replacement succeeds |
+| `DebugMode` | Not imported; use Headroom's built-in diagnostics |
+
+The original file is left untouched. A create-once copy is stored beside the new
+settings as `settings.json.legacy.bak`, including fields the importer does not
+use. Existing Headroom settings always take precedence; reinstalling does not
+overwrite them or re-import changes subsequently made in the old app.
+
+If the legacy settings are malformed, use an unsupported schema, or cannot be
+backed up, Headroom reports the problem and leaves the source intact. Startup
+migration failures are shown in settings and remain retryable on a later launch.
+
+## Existing servers and credentials
+
+Changing the frontend does not require moving or renaming an independently
+managed backend. The `usage-server` executable name, HTTP API, provider keys,
+and server configuration paths remain compatible:
+
+- Windows server config: `%APPDATA%\ClaudeUsageWidget\config.yaml`
+- Linux/WSL server config: `${XDG_CONFIG_HOME:-$HOME/.config}/claude-usage-widget/config.yaml`
+- Custom `--config` paths and existing service definitions can stay in place.
+
+Provider credential files stay on the machine running the backend. They are not
+copied by the frontend settings importer. Headroom displays the API's `Codex`
+provider as **ChatGPT**, so existing server settings and Home Assistant sensors
+do not need their provider keys renamed.
+
+Browser credential recovery now requires the verified bundled local session,
+HTTPS, or an SSH-capable client and backend. An existing plain HTTP connection
+can still supply usage, but browser cookies will not be forwarded to it. If an
+independently managed local server requires a bearer token, configure its address
+and token explicitly under **HTTP(S)** (called **Remote** in v1.8.0). See the
+[connection guide](../clients/desktop/README.md).
+
+SSH is an optional server upgrade: install a version with SSH support, enable
+`ssh_access: true`, and follow the same-account and host-key setup in the
+[SSH guide](ssh.md). Installing the frontend does not enable SSH on a remote
+machine or update its service automatically. The original v1.8.0 Headroom release
+predates SSH support.
+
+## Rollback
+
+Quit Headroom before launching the old executable. The installer retains the
+legacy installation and its settings; it does not copy subsequent Headroom
+setting changes back into the old file. Disable Headroom's sign-in option and
+re-enable the old app's startup option if you want to keep using the old client.
+
+Headroom-to-Headroom updates use verified packages and transactional rollback if
+the newly selected generation fails to start. That mechanism applies after the
+initial migration; it is separate from the manual return to the legacy app.

@@ -88,26 +88,27 @@ Popup {
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 Caption { text: "CONNECTION" }
                 ButtonGroup { id: connectionModes }
-                RowLayout {
+                Flow {
+                    id: connectionModeFlow; objectName: "connectionModeFlow"
                     Layout.fillWidth: true; spacing: 8
+                    Layout.preferredHeight: childrenRect.height
                     ConnectionMode { id: localMode; objectName: "localMode"; text: "Local"; ButtonGroup.group: connectionModes; Accessible.name: "Use local server" }
-                    ConnectionMode { id: remoteMode; objectName: "remoteMode"; text: "Remote"; ButtonGroup.group: connectionModes; Accessible.name: "Use remote server" }
-                    ConnectionMode { id: sshMode; objectName: "sshMode"; text: "SSH"; ButtonGroup.group: connectionModes; Accessible.name: "Use SSH" }
+                    ConnectionMode { id: sshMode; objectName: "sshMode"; text: "SSH · Recommended"; ButtonGroup.group: connectionModes; Accessible.name: "Use SSH, recommended for a remote server" }
+                    ConnectionMode { id: remoteMode; objectName: "remoteMode"; text: "HTTP(S)"; ButtonGroup.group: connectionModes; Accessible.name: "Connect directly over HTTP or HTTPS" }
                 }
                 Text {
                     Layout.fillWidth: true; wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11
                     text: localMode.checked
                         ? "Use the bundled server or an existing server on this computer."
                         : sshMode.checked
-                            ? "Connect with your existing OpenSSH keys or agent and trusted host keys. The server must enable SSH access."
-                            : "Connect to an existing usage server over HTTP or HTTPS."
+                            ? "Recommended for a remote server. Uses your OpenSSH keys or agent and trusted host keys; server SSH access must be enabled."
+                            : "Connect directly to an existing usage server over HTTP or HTTPS."
                 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 visible: sshMode.checked
                 Caption { text: "SSH ADDRESS" }
                 Entry { id: sshUrl; objectName: "sshUrl"; placeholderText: "ssh://user@server.example:2222"; Accessible.name: "SSH address" }
-                Text { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Uses your existing OpenSSH configuration, keys or agent, and trusted host keys."; color: Theme.muted; font.pixelSize: 11 }
             }
             ColumnLayout { Layout.fillWidth: true; spacing: 8
                 visible: remoteMode.checked

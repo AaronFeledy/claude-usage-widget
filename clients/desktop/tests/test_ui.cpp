@@ -148,6 +148,8 @@ private slots:
         QTest::qWait(200); QVERIFY(window->isVisible());
         QVERIFY(QMetaObject::invokeMethod(filterMenu, "close"));
         QVERIFY(window->setProperty("filter", QStringLiteral("All providers")));
+        window->resize(420, 800);
+        QTest::qWait(100);
         auto panel = window->findChild<QObject *>("settingsPanel"); QVERIFY(panel);
         QVERIFY(QMetaObject::invokeMethod(panel, "open"));
         QTest::qWait(150);
@@ -158,8 +160,20 @@ private slots:
         auto sshMode = findItem(window->contentItem(), "sshMode");
         QVERIFY(localMode); QVERIFY(remoteMode); QVERIFY(sshMode);
         const bool startsLocal = controller.settings()["mode"].toString() == QStringLiteral("local");
+        QVERIFY(startsLocal);
         QCOMPARE(localMode->property("checked").toBool(), startsLocal);
         QCOMPARE(remoteMode->property("checked").toBool(), !startsLocal);
+        QCOMPARE(localMode->property("text").toString(), QStringLiteral("Local"));
+        QCOMPARE(sshMode->property("text").toString(), QStringLiteral("SSH · Recommended"));
+        QCOMPARE(remoteMode->property("text").toString(), QStringLiteral("HTTP(S)"));
+        auto connectionModeFlow = findItem(window->contentItem(), "connectionModeFlow"); QVERIFY(connectionModeFlow);
+        for (auto mode : {localMode, sshMode, remoteMode}) {
+            QVERIFY(mode->x() >= 0);
+            QVERIFY2(mode->x() + mode->width() <= connectionModeFlow->width() + 1,
+                     qPrintable(QStringLiteral("%1 exceeds the %2px connection chooser")
+                         .arg(mode->property("text").toString()).arg(connectionModeFlow->width())));
+        }
+        QVERIFY(sshMode->y() < remoteMode->y() || (sshMode->y() == remoteMode->y() && sshMode->x() < remoteMode->x()));
         auto backendUrl = findItem(window->contentItem(), "backendUrl"); QVERIFY(backendUrl);
         auto sshUrl = findItem(window->contentItem(), "sshUrl"); QVERIFY(sshUrl);
         QVERIFY(!sshUrl->isVisible());
@@ -228,7 +242,8 @@ private slots:
     void preservesAndDisplaysCustomInterval() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
         QFile settings(dir.filePath("settings.json")); QVERIFY(settings.open(QIODevice::WriteOnly));
-        QVERIFY(settings.write(R"({"schemaVersion":1,"connectionMode":"remote","url":"","token":"","interval":900,"notifications":true,"primary":"Claude","order":["Claude","Codex","Cursor","Grok"]})") > 0);
+        const QByteArray savedSettings = QByteArrayLiteral("{\"schemaVersion\":1,\"connectionMode\":\"ssh\",\"url\":\"\",\"token\":\"\",\"sshUrl\":\"ssh://saved.example.test\",\"interval\":900,\"notifications\":true,\"primary\":\"Claude\",\"order\":[\"Claude\",\"Codex\",\"Cursor\",\"Grok\"]}");
+        QVERIFY(settings.write(savedSettings) > 0);
         settings.close();
         CredentialServiceOptions credentials; credentials.enabled = false;
         Controller controller(true, settings.fileName(), nullptr, true, {}, credentials);
@@ -249,6 +264,11 @@ private slots:
         QTRY_VERIFY(panel->property("opened").toBool()); QCOMPARE(panel->property("selectedInterval").toInt(), 900);
         auto interval = findItem(window->contentItem(), "refreshInterval"); QVERIFY(interval);
         QCOMPARE(interval->property("displayText").toString(), QString("15 minutes"));
+        auto sshMode = findItem(window->contentItem(), "sshMode"); QVERIFY(sshMode);
+        auto sshUrl = findItem(window->contentItem(), "sshUrl"); QVERIFY(sshUrl);
+        QVERIFY(sshMode->property("checked").toBool());
+        QCOMPARE(sshUrl->property("text").toString(), QStringLiteral("ssh://saved.example.test"));
+        QVERIFY(sshUrl->isVisible());
         auto save = findItem(window->contentItem(), "saveConnection"); QVERIFY(save);
         QVERIFY(QMetaObject::invokeMethod(panel, "saveAndConnect"));
         QCOMPARE(controller.settings()["interval"].toInt(), 900);

@@ -58,23 +58,26 @@ verified per-user installer and stable launcher described in the repository
 
 Windows and Linux start in **Local** mode at `http://127.0.0.1:7823`, attaching to
 an existing server or starting an adjacent packaged server. Saved connection
-settings take precedence. To override the default, choose **Remote**, enter the
+settings take precedence. To connect directly, choose **HTTP(S)**, enter the
 server's base HTTP(S) address and bearer token, then choose **Save & connect**.
 Reverse-proxy path prefixes are supported.
 
-Choose **SSH** to reach a Linux or WSL server using an address such as
+**SSH is recommended for remote connections.** Choose it to reach a Linux or WSL
+server using an address such as
 `ssh://usageuser@server.example:2222` or an existing SSH alias. SSH mode uses
 OpenSSH key/agent authentication and trusted host keys, keeps its settings
 separate from the HTTP address/token, and carries usage, version, and credential
 requests to the same running backend. The backend must enable SSH access under
-the SSH login account. Follow the [SSH setup guide](../../docs/ssh.md).
+the SSH login account. Follow the [SSH setup guide](../../docs/ssh.md). Local stays
+the default for a fresh install, saved choices are retained, and SSH never falls
+back to HTTP.
 
 Local discovery and attached plain HTTP servers receive no saved bearer tokens
 or browser cookies. A bundled server uses a fresh TLS certificate and session
 token exchanged through private process pipes. Health, usage, version, and
 credential requests all verify that server identity. The session is discarded
 when the child exits or connection settings change. To use authentication with
-an independently managed server, configure it explicitly in Remote or SSH
+an independently managed server, configure it explicitly in HTTP(S) or SSH
 settings; direct browser credential forwarding requires HTTPS.
 
 The client polls `GET /api/v1/usage`; Refresh reads the server's current cache,
@@ -171,6 +174,12 @@ guide, while system-managed builds defer to their package manager and never
 write into a per-user package installation. Entering preview cancels a pending
 public operation; demo, capture, preview, and explicit-config sessions cannot
 check or download public releases.
+
+The legacy WinForms updater cannot install a Headroom package. Existing users
+run the Headroom installer once, then the settings import and startup migration
+take place on the first normal launch. See the
+[upgrade guide](../../docs/upgrading-to-headroom.md) for the complete transition
+and rollback steps.
 
 Rerunning an external installer replaces the verified on-disk generation. If a
 Headroom window is already open, quit and reopen it afterward; a new launcher

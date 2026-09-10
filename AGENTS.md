@@ -37,7 +37,10 @@ Headroom owns, stops, or hands off only a server process it started. Remote mode
 accepts a normalized HTTP(S) base URL; nonempty bearer tokens are sent as
 `Authorization: Bearer <token>`.
 
-SSH mode uses system OpenSSH and a separate saved SSH address. It requires
+Local remains the fresh-install default; SSH is the recommended remote option
+in the UI, with direct HTTP(S) available separately. Preserve saved choices and
+never fall back from SSH to HTTP. SSH mode uses system OpenSSH and a separate
+saved SSH address. It requires
 trusted host keys and key/agent authentication; never weaken host-key checking
 or expose cookies in arguments. Linux/WSL standalone servers opt in with
 `--ssh-access`, `ssh_access`, or `USAGE_SSH_ACCESS`. The fixed

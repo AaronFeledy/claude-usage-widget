@@ -59,7 +59,8 @@ key and refuses unknown or changed keys. It does not disable host-key checking
 or display password/passphrase prompts. Load encrypted keys into your SSH agent
 before connecting. See the [OpenSSH host-key settings](https://man.openbsd.org/ssh_config#StrictHostKeyChecking).
 
-In Headroom's connection settings, select **SSH** and enter an address such as:
+Local remains the default on a fresh install. For a remote backend, select
+**SSH · Recommended** in Headroom's connection settings and enter an address such as:
 
 ```text
 ssh://usage-backend
@@ -69,7 +70,10 @@ ssh://usageuser@server.example:2222
 Omitted users and ports come from your SSH configuration. Passwords, query
 parameters, fragments, and custom command paths are not accepted in this address.
 SSH mode keeps its address separate from the saved HTTP(S) address and bearer
-token, and never sends that bearer token through SSH.
+token, and never sends that bearer token through SSH. Headroom remembers the
+selected mode. If SSH fails, it reports the failure and retries SSH; it never
+switches to HTTP automatically. Choose **HTTP(S)** explicitly for a direct
+connection, including HTTPS to a native Windows backend.
 
 ## Credential recovery and server identity
 
