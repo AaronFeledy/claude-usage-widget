@@ -62,10 +62,16 @@ private slots:
 #endif
         QVERIFY(writeFile(generation, "fixture", true));
         QCOMPARE(StartupService::packagedExecutablePath(generation), QFileInfo(launcher).absoluteFilePath());
+#ifdef Q_OS_WIN
+        QString generationCaseAlias = generation;
+        generationCaseAlias.replace(QStringLiteral("generation-0123456789abcdef"),
+                                    QStringLiteral("GENERATION-0123456789ABCDEF"));
+        QCOMPARE(StartupService::packagedExecutablePath(generationCaseAlias), QFileInfo(launcher).absoluteFilePath());
+#endif
 
         for (const QString &unsafe : {
                  dir.filePath(QStringLiteral("versions/9.8.6.generation-0123456789abcdef-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
-                 dir.filePath(QStringLiteral("versions/9.8.7.generation-0123456789ABCDEf-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
+                 dir.filePath(QStringLiteral("versions/9.8.7.generation-1123456789ABCDEf-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
                  dir.filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-short/bin/") + QFileInfo(packaged).fileName()),
                  dir.filePath(QStringLiteral("foreign/bin/") + QFileInfo(packaged).fileName())}) {
             QVERIFY(writeFile(unsafe, "fixture", true));
