@@ -1,5 +1,14 @@
 # WSL service deployment
 
+For a managed installation that supports `headroom update`, use the **per-user**
+[`headroom.service`](headroom.service) and the
+[CLI service setup and Windows/WSL pairing guide](../../../docs/cli.md).
+It uses the existing configuration path and participates in verified restart and
+rollback. Migrate an existing system-wide service once before opting in.
+
+The legacy sample units below remain available for independently managed
+`usage-server` deployments. They are not automatically controlled by the updater.
+
 These sample systemd units run the Headroom Go usage server directly in a WSL distribution
 with systemd enabled. Replace `USER` in the service files with your Linux account
 and adjust the paths before installing them into `/etc/systemd/system`.

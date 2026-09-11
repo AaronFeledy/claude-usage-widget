@@ -1,7 +1,7 @@
 # Headroom
 
-Headroom is a Windows, macOS, and Linux tray app for Claude, ChatGPT, Cursor, and Grok
-usage. The shared Qt interface shows every usage meter returned by the bundled
+Headroom is a Windows, macOS, and Linux tray app and terminal dashboard for Claude,
+ChatGPT, Cursor, and Grok usage. The shared Qt interface shows every usage meter returned by the bundled
 Go server, keeps the chosen provider order, estimates pace within reset windows,
 and alerts when usage moves into Warning or Critical.
 
@@ -20,7 +20,9 @@ and alerts when usage moves into Warning or Critical.
 | macOS Intel | macOS 12+; native x86_64 | Local managed server |
 
 Official packages bundle Qt 6.8.3, the matching `usage-server`, and the stable
-launcher/package manager. Linux uses baseline system graphics, desktop, C++,
+launcher/package manager. They also include the unified `headroom` CLI. CLI-only
+packages support all five desktop targets plus Linux ARM64 without installing Qt.
+Linux uses baseline system graphics, desktop, C++,
 glibc, D-Bus, and OpenSSL libraries; the exact package list is in the
 [package contract](packaging/README.md). Source builds support Qt 6.6 or newer.
 
@@ -53,9 +55,11 @@ legacy executable releases. Existing Claude Usage Widget users should follow the
 [upgrade guide](docs/upgrading-to-headroom.md) for the one-time transition.
 See [desktop build instructions](clients/desktop/README.md) for source builds.
 
-Windows installs under `%LOCALAPPDATA%\Headroom` and adds a Start menu shortcut.
+Windows installs under `%LOCALAPPDATA%\Headroom`, adds a Start menu shortcut,
+and puts its `cli` directory on the current user's PATH.
 Linux installs under `${XDG_DATA_HOME:-$HOME/.local/share}/headroom`, places the
-stable entry at `~/.local/bin/headroom`, and adds an application-menu entry.
+CLI at `~/.local/bin/headroom`, and adds an application-menu entry pointing to
+the separate desktop launcher.
 macOS installs its managed files under `~/Library/Application Support/Headroom`
 and creates a stable `~/Applications/Headroom.app` entry for Finder and login
 startup. Mac packages are ad-hoc signed for code integrity; they are not yet
@@ -72,6 +76,11 @@ that window and reopen the stable entry. `--no-launch`/`-NoLaunch` always prints
 the same restart instruction and performs no activation attempt.
 
 ## Local and remote operation
+
+Run `headroom` for terminal usage, `headroom desktop` for the tray app,
+`headroom serve` for the server, or `headroom update` to update the installation.
+See the [CLI guide](docs/cli.md) for flags, CLI-only installation, and coordinated
+Windows/WSL updates.
 
 ```text
 Local mode (default on Windows, macOS, and Linux)
@@ -165,6 +174,10 @@ An official per-user install performs one delayed startup update check. When a
 newer stable release exists, it automatically downloads and fully verifies the
 matching package, then offers **Restart to apply**. Restart switches to a new
 immutable generation, checks native readiness, and rolls back on failure. A
+CLI-initiated update uses the same operation for the local desktop and server.
+An explicitly paired Windows desktop and WSL server stage the same release on
+both sides before applying it. Other remote servers are updated manually on their
+own host; the desktop shows a notice when it is newer than the connected server. A
 trusted installation with a missing server or Windows credential helper can
 stage an exact-version repair. Capture and explicit-config sessions do not
 contact the public release service. Source
@@ -224,16 +237,21 @@ are in the [server guide](server/README.md).
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build clients/desktop/build --parallel
-ctest --test-dir clients/desktop/build --output-on-failure
+ctest --test-dir clients/desktop/build --output-on-failure -E headroom-reset-prohibited-tests
+
+cd packaging/headroom-manager
+go build ./...
+go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
+cd ../..
 
 cd server
-go test ./...
+go test -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
 ```
 
-The reusable package workflow builds and smoke-tests Windows x64, Windows ARM64,
-and Linux x86_64 from one validated version. It also retains the legacy C#
+The reusable package workflow builds and smoke-tests five desktop targets and
+six CLI targets from one validated version. It also retains the legacy C#
 harness and server Go/race/vet/build/Docker workflows. See
 [AGENTS.md](AGENTS.md) for the full contributor verification matrix.
 

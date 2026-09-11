@@ -72,6 +72,21 @@ unrelated startup commands are left alone.
 
 ## Existing servers and credentials
 
+Existing Headroom desktop users should rerun the updated official installer once
+to add the unified `headroom` CLI entry and PATH integration. On Linux this moves
+the desktop entry inside the managed root so bare `headroom` opens the terminal
+dashboard; application-menu and login entries continue opening the desktop.
+Quit and reopen an already-running Qt app after this external reinstall.
+
+Standalone servers can keep their current deployment or install the CLI-only
+package and run `headroom serve` with the same configuration. Stop the old server
+before switching its launch command. The managed Linux CLI also provides the
+`usage-server` compatibility entry for SSH stdio receivers. A pre-existing
+unmanaged executable is not silently adopted as an updater-owned process.
+For managed self-updates, migrate the old system-wide service to the fixed
+per-user `headroom.service`. See the [CLI guide](cli.md) for that one-time cutover
+and coordinated Windows/WSL updates.
+
 Changing the frontend does not require moving or renaming an independently
 managed backend. The `usage-server` executable name, HTTP API, provider keys,
 and server configuration paths remain compatible:
