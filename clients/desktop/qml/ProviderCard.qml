@@ -13,6 +13,9 @@ Rectangle {
     property bool failed: provider.error !== null && provider.error !== undefined
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780
+    property var resetCredits: provider.rate_limit_reset_credits
+    property bool hasBankedResets: name === "Codex" && !failed && resetCredits !== null
+        && resetCredits !== undefined && resetCredits.available_count !== undefined
     implicitHeight: body.implicitHeight + 36
     radius: 12
     color: Theme.surface
@@ -66,6 +69,18 @@ Rectangle {
                     Text { textFormat: Text.PlainText; text: card.provider.subtitle || "Usage overview"; color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                     Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
                 }
+            }
+            Text {
+                objectName: "bankedResets_" + card.name
+                visible: card.hasBankedResets
+                textFormat: Text.PlainText
+                text: !card.hasBankedResets ? "" : card.resetCredits.available_count === 0 ? "No banked resets"
+                    : card.resetCredits.available_count === 1 ? "1 banked reset"
+                    : card.resetCredits.available_count + " banked resets"
+                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+                HoverHandler { id: bankedResetHover }
+                ToolTip.visible: bankedResetHover.hovered
+                ToolTip.text: "Available usage resets. Use them in ChatGPT."
             }
             Item {
                 Layout.preferredWidth: 35; Layout.preferredHeight: 28

@@ -41,6 +41,18 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             || !p["is_success"].isBool() || p["is_success"].toBool() != p["error"].isNull()
             || !p["needs_reauth"].isBool()) return false;
         names.insert(name.toLower());
+        QJsonValue resetCredits(QJsonValue::Null);
+        if (p["error"].isNull() && p["rate_limit_reset_credits"].isObject()) {
+            const auto credits = p["rate_limit_reset_credits"].toObject();
+            const auto countValue = credits["available_count"];
+            const double count = countValue.toDouble(-1);
+            constexpr double maxSafeInteger = 9007199254740991.0;
+            if (countValue.isDouble() && std::isfinite(count) && count >= 0
+                && count <= maxSafeInteger && std::floor(count) == count) {
+                resetCredits = QJsonObject{{"available_count", count}};
+            }
+        }
+        p["rate_limit_reset_credits"] = resetCredits;
         QJsonArray buckets;
         if (p["error"].isNull()) {
             if (p.contains("buckets") && !p["buckets"].isArray()) return false;

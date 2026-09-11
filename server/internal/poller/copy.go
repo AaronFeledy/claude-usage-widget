@@ -25,20 +25,28 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		}
 	}
 	return usage.UsageData{
-		ProviderName:        data.ProviderName,
-		PrimaryLabel:        data.PrimaryLabel,
-		SecondaryLabel:      data.SecondaryLabel,
-		ShowSecondary:       data.ShowSecondary,
-		Subtitle:            copyString(data.Subtitle),
-		PrimaryStatusText:   copyString(data.PrimaryStatusText),
-		SecondaryStatusText: copyString(data.SecondaryStatusText),
-		ReauthCommand:       copyString(data.ReauthCommand),
-		Current:             copyBucket(data.Current),
-		Weekly:              copyBucket(data.Weekly),
-		Buckets:             buckets,
-		Error:               copyString(data.Error),
-		NeedsReauth:         data.NeedsReauth,
+		ProviderName:          data.ProviderName,
+		PrimaryLabel:          data.PrimaryLabel,
+		SecondaryLabel:        data.SecondaryLabel,
+		ShowSecondary:         data.ShowSecondary,
+		Subtitle:              copyString(data.Subtitle),
+		PrimaryStatusText:     copyString(data.PrimaryStatusText),
+		SecondaryStatusText:   copyString(data.SecondaryStatusText),
+		ReauthCommand:         copyString(data.ReauthCommand),
+		Current:               copyBucket(data.Current),
+		Weekly:                copyBucket(data.Weekly),
+		Buckets:               buckets,
+		Error:                 copyString(data.Error),
+		NeedsReauth:           data.NeedsReauth,
+		RateLimitResetCredits: copyResetCredits(data.RateLimitResetCredits),
 	}
+}
+
+func copyResetCredits(value *usage.RateLimitResetCredits) *usage.RateLimitResetCredits {
+	if value == nil {
+		return nil
+	}
+	return &usage.RateLimitResetCredits{AvailableCount: value.AvailableCount}
 }
 
 func copyBucket(bucket usage.UsageBucket) usage.UsageBucket {

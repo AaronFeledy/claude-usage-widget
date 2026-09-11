@@ -35,6 +35,36 @@ private slots:
             QVERIFY(!Usage::parse(bad, providers)); QCOMPARE(providers, original);
         }
     }
+    void bankedResetMetadataIsOptionalAndSanitized() {
+        auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
+        auto verify = [&](const QJsonValue &metadata, bool include, qint64 expected) {
+            if (include) provider["rate_limit_reset_credits"] = metadata;
+            else provider.remove("rate_limit_reset_credits");
+            QVariantList parsed;
+            QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+            const auto normalized = parsed.first().toMap()["rate_limit_reset_credits"];
+            if (expected < 0) {
+                QVERIFY(normalized.isNull());
+            } else {
+                QCOMPARE(normalized.toMap()["available_count"].toLongLong(), expected);
+            }
+        };
+
+        verify({}, false, -1);
+        verify(QJsonValue(QJsonValue::Null), true, -1);
+        verify(QJsonObject{{"available_count", 0}}, true, 0);
+        verify(QJsonObject{{"available_count", 1}}, true, 1);
+        verify(QJsonObject{{"available_count", 3}}, true, 3);
+        verify(QJsonObject{{"available_count", -1}}, true, -1);
+        verify(QJsonObject{{"available_count", 1.5}}, true, -1);
+        verify(QJsonObject{{"available_count", "2"}}, true, -1);
+        verify(QJsonObject{{"available_count", 9007199254740992.0}}, true, -1);
+        verify(QJsonArray{1}, true, -1);
+
+        provider["error"] = "Unavailable";
+        provider["is_success"] = false;
+        verify(QJsonObject{{"available_count", 3}}, true, -1);
+    }
     void malformedMeters() {
         auto list = QJsonDocument::fromJson(TestUsage::snapshot()).array();
         auto p = list[0].toObject(); auto buckets = p["buckets"].toArray(); auto b = buckets[0].toObject();

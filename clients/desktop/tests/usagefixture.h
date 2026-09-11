@@ -26,9 +26,12 @@ inline QByteArray snapshot() {
     };
     const QStringList names {"Claude", "Codex", "Cursor", "Grok"};
     QJsonArray providers;
-    for (int i = 0; i < names.size(); ++i)
-        providers.append(QJsonObject{{"provider_name", names[i]}, {"subtitle", "Sample account"}, {"error", QJsonValue::Null},
-            {"is_success", true}, {"needs_reauth", false}, {"buckets", meters[i]}});
+    for (int i = 0; i < names.size(); ++i) {
+        QJsonObject provider{{"provider_name", names[i]}, {"subtitle", "Sample account"}, {"error", QJsonValue::Null},
+            {"is_success", true}, {"needs_reauth", false}, {"buckets", meters[i]}};
+        if (names[i] == "Codex") provider["rate_limit_reset_credits"] = QJsonObject{{"available_count", 3}};
+        providers.append(provider);
+    }
     return QJsonDocument(providers).toJson();
 }
 

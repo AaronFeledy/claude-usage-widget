@@ -58,6 +58,10 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one JSON field: `cookie` or `access_token`.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 
+Successful ChatGPT (`Codex`) usage entries include read-only
+`rate_limit_reset_credits` metadata when the upstream response reports a valid
+banked-reset count. The field is `null` when unknown or on provider errors.
+
 When `auth_token` or `USAGE_AUTH_TOKEN` is set, every public HTTP endpoint requires
 `Authorization: Bearer <token>`. The protected SSH socket authenticates the local
 OS account and supplies that token internally; an SSH client does not need it.

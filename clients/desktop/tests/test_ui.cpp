@@ -131,6 +131,27 @@ private slots:
         }
         auto chatgpt = findItem(window->contentItem(), "providerLabel_Codex");
         QVERIFY(chatgpt); QCOMPARE(chatgpt->property("text").toString(), QString("ChatGPT"));
+        auto chatgptCard = findItem(window->contentItem(), "providerCard_Codex"); QVERIFY(chatgptCard);
+        auto bankedResets = findItem(window->contentItem(), "bankedResets_Codex"); QVERIFY(bankedResets);
+        QTRY_VERIFY(bankedResets->isVisible());
+        QCOMPARE(bankedResets->property("text").toString(), QString("3 banked resets"));
+        QVERIFY(window->grabWindow().save(capture("headroom-banked-resets.png")));
+        const auto originalChatgpt = chatgptCard->property("provider").toMap();
+        auto changedChatgpt = originalChatgpt;
+        changedChatgpt.remove("rate_limit_reset_credits");
+        QVERIFY(chatgptCard->setProperty("provider", changedChatgpt));
+        QTRY_VERIFY(!bankedResets->isVisible());
+        for (const auto countAndText : QList<QPair<int, QString>>{{0, "No banked resets"}, {1, "1 banked reset"}, {3, "3 banked resets"}}) {
+            changedChatgpt["rate_limit_reset_credits"] = QVariantMap{{"available_count", countAndText.first}};
+            QVERIFY(chatgptCard->setProperty("provider", changedChatgpt));
+            QTRY_VERIFY(bankedResets->isVisible());
+            QCOMPARE(bankedResets->property("text").toString(), countAndText.second);
+        }
+        changedChatgpt["error"] = "Unavailable";
+        QVERIFY(chatgptCard->setProperty("provider", changedChatgpt));
+        QTRY_VERIFY(!bankedResets->isVisible());
+        QVERIFY(chatgptCard->setProperty("provider", originalChatgpt));
+        QTRY_VERIFY(bankedResets->isVisible());
         auto source = findItem(window->contentItem(), "dragHandle_Codex");
         auto target = findItem(window->contentItem(), "dragHandle_Claude");
         QVERIFY(source); QVERIFY(target);

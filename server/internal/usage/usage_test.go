@@ -63,6 +63,23 @@ func Test_UsageData_MarshalJSON_computes_success_from_error_when_error_present(t
 	assertJSONField(t, encoded, "is_success", `false`)
 }
 
+func Test_UsageData_MarshalJSON_emits_optional_reset_credit_metadata(t *testing.T) {
+	data := usage.UsageData{ProviderName: "Codex", RateLimitResetCredits: &usage.RateLimitResetCredits{AvailableCount: 3}}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits.available_count", `3`)
+
+	errorText := "unavailable"
+	data.Error = &errorText
+	encoded, err = json.Marshal(data)
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	assertJSONField(t, encoded, "rate_limit_reset_credits", `null`)
+}
+
 func Test_RefreshResult_String_returns_stable_wire_text_for_all_variants(t *testing.T) {
 	tests := []struct {
 		name string
@@ -136,6 +153,7 @@ func assertUsageKeys(t *testing.T, encoded []byte) {
 		"error",
 		"needs_reauth",
 		"is_success",
+		"rate_limit_reset_credits",
 	}
 	if !reflect.DeepEqual(sortedKeys(got), want) {
 		t.Fatalf("keys = %v, want %v", sortedKeys(got), want)
@@ -169,7 +187,7 @@ func jsonField(encoded []byte, path string) (json.RawMessage, error) {
 	if err := json.Unmarshal(encoded, &root); err != nil {
 		return nil, err
 	}
-	if path == "current.resets_at" || path == "weekly.resets_at" {
+	if _, _, nested := cutPath(path); nested {
 		bucketName, fieldName, _ := cutPath(path)
 		var bucket map[string]json.RawMessage
 		if err := json.Unmarshal(root[bucketName], &bucket); err != nil {
@@ -195,6 +213,7 @@ func sortedKeys(values map[string]json.RawMessage) []string {
 		"provider_name": 0, "primary_label": 1, "secondary_label": 2, "show_secondary": 3,
 		"subtitle": 4, "primary_status_text": 5, "secondary_status_text": 6, "reauth_command": 7,
 		"current": 8, "weekly": 9, "buckets": 10, "error": 11, "needs_reauth": 12, "is_success": 13,
+		"rate_limit_reset_credits": 14,
 	}
 	for key := range values {
 		keys = append(keys, key)

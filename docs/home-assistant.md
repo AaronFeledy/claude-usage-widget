@@ -162,10 +162,17 @@ Each provider entry has this shape:
   ],
   "error": null,
   "needs_reauth": false,
-  "is_success": true
+  "is_success": true,
+  "rate_limit_reset_credits": null
 }
 ```
 
 Optional strings and reset timestamps are explicit `null`. `is_success` is true only when `error` is `null`.
+
+ChatGPT (`Codex`) responses may also include
+`"rate_limit_reset_credits": {"available_count": 3}`. This optional metadata is
+read-only and reports how many usage resets are currently banked. It is `null`
+when the count is unknown or the provider returned an error; zero is a known
+count. Headroom does not redeem resets.
 
 `buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; Cursor `auto` / `api`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` remain frozen compatibility fields so existing sensors keep working unchanged; Cursor preserves its legacy aggregate values there while exposing separate `auto` and `api` entries in `buckets`.

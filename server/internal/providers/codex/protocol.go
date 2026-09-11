@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ func parseUsage(body []byte, data usage.UsageData) (usage.UsageData, error) {
 	if decoded.PlanType != nil {
 		data.Subtitle = decoded.PlanType
 	}
+	data.RateLimitResetCredits = parseResetCredits(decoded.RateLimitResetCredits)
 	current, weekly := normalizeWindows(decoded.RateLimit.PrimaryWindow, decoded.RateLimit.SecondaryWindow)
 	currentUsage := usageBucket(current)
 	weeklyUsage := usageBucket(weekly)
@@ -25,6 +27,25 @@ func parseUsage(body []byte, data usage.UsageData) (usage.UsageData, error) {
 		{ID: usage.BucketSession, Label: "5-Hour", Utilization: currentUsage.Utilization, ResetsAt: currentUsage.ResetsAt},
 		{ID: usage.BucketWeekly, Label: "Weekly", Utilization: weeklyUsage.Utilization, ResetsAt: weeklyUsage.ResetsAt},
 	}), nil
+}
+
+const maxDesktopSafeInteger int64 = 9007199254740991
+
+func parseResetCredits(raw json.RawMessage) *usage.RateLimitResetCredits {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil
+	}
+	var decoded struct {
+		AvailableCount json.RawMessage `json:"available_count"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || len(decoded.AvailableCount) == 0 {
+		return nil
+	}
+	var count *int64
+	if err := json.Unmarshal(decoded.AvailableCount, &count); err != nil || count == nil || *count < 0 || *count > maxDesktopSafeInteger {
+		return nil
+	}
+	return &usage.RateLimitResetCredits{AvailableCount: *count}
 }
 
 func baseUsage() usage.UsageData {
@@ -142,8 +163,9 @@ type refreshResponse struct {
 }
 
 type whamResponse struct {
-	PlanType  *string `json:"plan_type"`
-	RateLimit struct {
+	PlanType              *string         `json:"plan_type"`
+	RateLimitResetCredits json.RawMessage `json:"rate_limit_reset_credits"`
+	RateLimit             struct {
 		PrimaryWindow   *whamWindow `json:"primary_window"`
 		SecondaryWindow *whamWindow `json:"secondary_window"`
 	} `json:"rate_limit"`

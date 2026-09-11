@@ -54,19 +54,26 @@ func (b Bucket) MarshalJSON() ([]byte, error) {
 }
 
 type UsageData struct {
-	ProviderName        string
-	PrimaryLabel        string
-	SecondaryLabel      string
-	ShowSecondary       bool
-	Subtitle            *string
-	PrimaryStatusText   *string
-	SecondaryStatusText *string
-	ReauthCommand       *string
-	Current             UsageBucket
-	Weekly              UsageBucket
-	Buckets             []Bucket
-	Error               *string
-	NeedsReauth         bool
+	ProviderName          string
+	PrimaryLabel          string
+	SecondaryLabel        string
+	ShowSecondary         bool
+	Subtitle              *string
+	PrimaryStatusText     *string
+	SecondaryStatusText   *string
+	ReauthCommand         *string
+	Current               UsageBucket
+	Weekly                UsageBucket
+	Buckets               []Bucket
+	Error                 *string
+	NeedsReauth           bool
+	RateLimitResetCredits *RateLimitResetCredits
+}
+
+// RateLimitResetCredits is read-only provider metadata. It is separate from
+// usage buckets because a banked reset is an available action, not usage.
+type RateLimitResetCredits struct {
+	AvailableCount int64 `json:"available_count"`
 }
 
 type Header struct {
@@ -124,39 +131,45 @@ func (d UsageData) WithBuckets(buckets []Bucket) UsageData {
 
 func (d UsageData) MarshalJSON() ([]byte, error) {
 	type usageJSON struct {
-		ProviderName        string      `json:"provider_name"`
-		PrimaryLabel        string      `json:"primary_label"`
-		SecondaryLabel      string      `json:"secondary_label"`
-		ShowSecondary       bool        `json:"show_secondary"`
-		Subtitle            *string     `json:"subtitle"`
-		PrimaryStatusText   *string     `json:"primary_status_text"`
-		SecondaryStatusText *string     `json:"secondary_status_text"`
-		ReauthCommand       *string     `json:"reauth_command"`
-		Current             UsageBucket `json:"current"`
-		Weekly              UsageBucket `json:"weekly"`
-		Buckets             []Bucket    `json:"buckets"`
-		Error               *string     `json:"error"`
-		NeedsReauth         bool        `json:"needs_reauth"`
-		IsSuccess           bool        `json:"is_success"`
+		ProviderName          string                 `json:"provider_name"`
+		PrimaryLabel          string                 `json:"primary_label"`
+		SecondaryLabel        string                 `json:"secondary_label"`
+		ShowSecondary         bool                   `json:"show_secondary"`
+		Subtitle              *string                `json:"subtitle"`
+		PrimaryStatusText     *string                `json:"primary_status_text"`
+		SecondaryStatusText   *string                `json:"secondary_status_text"`
+		ReauthCommand         *string                `json:"reauth_command"`
+		Current               UsageBucket            `json:"current"`
+		Weekly                UsageBucket            `json:"weekly"`
+		Buckets               []Bucket               `json:"buckets"`
+		Error                 *string                `json:"error"`
+		NeedsReauth           bool                   `json:"needs_reauth"`
+		IsSuccess             bool                   `json:"is_success"`
+		RateLimitResetCredits *RateLimitResetCredits `json:"rate_limit_reset_credits"`
 	}
 	buckets := d.Buckets
 	if d.Error != nil || buckets == nil {
 		buckets = []Bucket{}
 	}
+	resetCredits := d.RateLimitResetCredits
+	if d.Error != nil {
+		resetCredits = nil
+	}
 	return json.Marshal(usageJSON{
-		ProviderName:        d.ProviderName,
-		PrimaryLabel:        d.PrimaryLabel,
-		SecondaryLabel:      d.SecondaryLabel,
-		ShowSecondary:       d.ShowSecondary,
-		Subtitle:            d.Subtitle,
-		PrimaryStatusText:   d.PrimaryStatusText,
-		SecondaryStatusText: d.SecondaryStatusText,
-		ReauthCommand:       d.ReauthCommand,
-		Current:             d.Current,
-		Weekly:              d.Weekly,
-		Buckets:             buckets,
-		Error:               d.Error,
-		NeedsReauth:         d.NeedsReauth,
-		IsSuccess:           d.Error == nil,
+		ProviderName:          d.ProviderName,
+		PrimaryLabel:          d.PrimaryLabel,
+		SecondaryLabel:        d.SecondaryLabel,
+		ShowSecondary:         d.ShowSecondary,
+		Subtitle:              d.Subtitle,
+		PrimaryStatusText:     d.PrimaryStatusText,
+		SecondaryStatusText:   d.SecondaryStatusText,
+		ReauthCommand:         d.ReauthCommand,
+		Current:               d.Current,
+		Weekly:                d.Weekly,
+		Buckets:               buckets,
+		Error:                 d.Error,
+		NeedsReauth:           d.NeedsReauth,
+		IsSuccess:             d.Error == nil,
+		RateLimitResetCredits: resetCredits,
 	})
 }
