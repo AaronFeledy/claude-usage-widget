@@ -43,6 +43,11 @@ func Test_parseUsage_omits_absent_windows_but_keeps_zero_usage(t *testing.T) {
 		{"real zero session", `{"primary_window":{"used_percent":0,"limit_window_seconds":18000},"secondary_window":{"used_percent":42,"limit_window_seconds":604800}}`, []string{"session", "weekly"}, []string{"5-Hour", "Weekly"}},
 		{"session only", `{"primary_window":{"used_percent":0,"limit_window_seconds":18000}}`, []string{"session"}, []string{"5-Hour"}},
 		{"no windows", `{"primary_window":null,"secondary_window":null}`, nil, nil},
+		// A secondary window without a duration must keep its reported position
+		// so the weekly meter the reset action depends on is never mislabelled.
+		{"undated secondary only", `{"primary_window":null,"secondary_window":{"used_percent":42}}`, []string{"weekly"}, []string{"Weekly"}},
+		{"undated primary only", `{"primary_window":{"used_percent":42},"secondary_window":null}`, []string{"session"}, []string{"5-Hour"}},
+		{"session duration reported as secondary", `{"primary_window":null,"secondary_window":{"used_percent":42,"limit_window_seconds":18000}}`, []string{"session"}, []string{"5-Hour"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

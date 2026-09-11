@@ -214,6 +214,36 @@ private slots:
         QVERIFY(!service.error().isEmpty());
     }
 
+    void macLaunchAgentIsRemovableAfterTheExecutableDisappears()
+    {
+        // An external reinstall can delete the generation an owned entry points
+        // at. Start at login must still be switchable off instead of leaving a
+        // stale plist that launches a missing binary at every login.
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom"));
+        QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+        StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
+                               StartupService::Platform::Mac);
+        bool stored = false;
+        service.setPreferenceWriter([&](bool enabled) { stored = enabled; return QString(); });
+        QVERIFY(service.setEnabled(true));
+        QVERIFY(QFileInfo::exists(service.entryPath()));
+
+        QVERIFY(QFile::remove(executable));
+        QVERIFY(service.setEnabled(false));
+        QVERIFY(!stored);
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+        QVERIFY(service.error().isEmpty());
+
+        // Enabling still requires a usable binary, and an unrecognized entry is
+        // never removed just because the executable is gone.
+        QVERIFY(!service.setEnabled(true));
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+        QVERIFY(writeFile(service.entryPath(), QByteArrayLiteral("<plist>foreign</plist>"), true));
+        QVERIFY(!service.setEnabled(false));
+        QCOMPARE(readFile(service.entryPath()), QByteArrayLiteral("<plist>foreign</plist>"));
+    }
+
     void macLaunchAgentIsPrivateExactAndTransactional()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());

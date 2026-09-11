@@ -382,9 +382,6 @@ bool StartupService::setEnabled(bool enabled)
         if (!QDir::isAbsolutePath(m_executable) || m_executable.contains('\n') || m_executable.contains('\r')
             || m_executable.contains(QChar::Null))
             return fail(tr("The application path cannot be used in a macOS startup entry."));
-        const QFileInfo executable(m_executable);
-        if (!executable.isFile() || !executable.isExecutable())
-            return fail(tr("The Headroom executable is missing or is not executable."));
         const QFileInfo existingInfo(m_entryPath);
         const bool existed = existingInfo.exists();
         const QByteArray previous = privateRegularFile(m_entryPath);
@@ -392,6 +389,12 @@ bool StartupService::setEnabled(bool enabled)
         if (existed && previous != expected)
             return fail(tr("Headroom refused to replace an unrecognized startup entry."));
         if (enabled) {
+            // Only launching at the next login needs a usable binary. Removing an
+            // exactly matching owned entry must still work after the generation
+            // it pointed at was replaced or deleted.
+            const QFileInfo executable(m_executable);
+            if (!executable.isFile() || !executable.isExecutable())
+                return fail(tr("The Headroom executable is missing or is not executable."));
             if (!QDir().mkpath(existingInfo.absolutePath()) || !writePrivateFile(m_entryPath, expected)
                 || privateRegularFile(m_entryPath) != expected)
                 return fail(tr("Could not save the Headroom startup entry. Check folder permissions."));

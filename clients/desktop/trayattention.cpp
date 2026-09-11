@@ -14,6 +14,10 @@ void TrayAttentionState::update(const TrayVisual::Model &model, qint64 now, bool
     const bool critical = model.level == Usage::WarningLevel::Critical
         || model.secondary == Usage::WarningLevel::Critical;
     const bool entered = critical && !m_critical.value(model.provider, false);
+    // A snapshot may rename providers, so cap the episode map at the per-response
+    // provider limit. Dropping stale names can only re-arm a provider that is no
+    // longer reported; the current episode is already resolved above.
+    if (m_critical.size() >= MaxTrackedProviders && !m_critical.contains(model.provider)) m_critical.clear();
     m_critical.insert(model.provider, critical);
     if (!critical || engaged) acknowledge();
     else if (entered) m_started = now;

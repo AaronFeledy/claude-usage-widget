@@ -171,7 +171,7 @@ void Controller::requestUsage() {
     if (url.isEmpty()) { fail("Enter a valid HTTP or HTTPS backend address in settings."); return; }
     QNetworkRequest request(url);
     request.setRawHeader("Accept", "application/json");
-    request.setRawHeader("User-Agent", "Headroom/0.1");
+    request.setRawHeader("User-Agent", "Headroom/" HEADROOM_VERSION);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(10000);
     const ServerConnection transport = m_mode == QStringLiteral("local")

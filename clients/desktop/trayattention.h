@@ -11,6 +11,8 @@ class TrayAttentionState {
 public:
     static constexpr qint64 FireMs = 4000;
     static constexpr qint64 FlashMs = 180000;
+    // Usage::parse accepts at most 64 providers in one response.
+    static constexpr int MaxTrackedProviders = 64;
     void update(const TrayVisual::Model &model, qint64 now, bool engaged = false);
     void acknowledge();
     TrayVisual::AttentionFrame frame(qint64 now) const;

@@ -33,6 +33,24 @@ private slots:
         state.update(model(), end + 1000);
         QVERIFY(!state.active(end + 1000));
     }
+    void providerHistoryStaysBoundedWithoutDisturbingTheCurrentEpisode() {
+        // A compatible backend may report a different primary provider on every
+        // poll. Tracking must stay bounded while the live episode is preserved.
+        TrayAttentionState state;
+        TrayVisual::Model renamed = model();
+        for (int i = 0; i < TrayAttentionState::MaxTrackedProviders * 4; ++i) {
+            renamed.provider = QStringLiteral("Provider-%1").arg(i);
+            state.update(renamed, i);
+            QVERIFY(state.active(i));
+        }
+        // The current provider keeps its acknowledgement instead of re-arming.
+        TrayVisual::Model stable = model();
+        state.update(stable, 100000);
+        QVERIFY(state.active(100000));
+        state.acknowledge();
+        state.update(stable, 100100);
+        QVERIFY(!state.active(100100));
+    }
     void pollingAndAcknowledgementDoNotRestartTheEpisode() {
         TrayAttentionState state;
         state.update(model(), 0);
