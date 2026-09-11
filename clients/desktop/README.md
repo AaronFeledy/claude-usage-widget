@@ -53,6 +53,13 @@ ctest --test-dir clients/desktop/build --output-on-failure
 open clients/desktop/build/headroom.app
 ```
 
+Mac test builds generate fresh synthetic TLS certificates with the system
+`/usr/bin/openssl`. On macOS 15, local TLS fixture runs need a Qt kit built with
+the macOS 15 SDK or newer. Native CI tests the official Qt 6.8.3 kit in a
+disposable keychain because that kit's older SDK cannot request memory-only
+private-key import on macOS 15. The application uses the Go server's in-memory
+TLS identity and Apple's native client verification.
+
 On Linux, install the executable, application-menu entry, and icon for your
 user:
 
