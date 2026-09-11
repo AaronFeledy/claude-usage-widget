@@ -226,6 +226,22 @@ func TestCommandCallbacksAndUnavailableErrors(t *testing.T) {
 	}
 }
 
+func TestLegacyBackgroundLaunchesDesktopWithOriginalArguments(t *testing.T) {
+	options, _, _ := baseOptions(fixtureUsage(t))
+	options.Args = []string{"--background", "fixture"}
+	var got []string
+	options.Desktop = func(_ context.Context, args []string) error {
+		got = append([]string(nil), args...)
+		return nil
+	}
+	if err := Run(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, options.Args) {
+		t.Fatalf("desktop arguments = %#v", got)
+	}
+}
+
 func TestTokenFileRequiresOwnerOnlyRegularFile(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX mode bits are not available")

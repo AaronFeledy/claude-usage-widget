@@ -11,7 +11,9 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
 )
 
-func launch(arguments []string) error {
+func launch(arguments []string) error { return launchRole(contract.RoleApplication, arguments) }
+
+func launchRole(role string, arguments []string) error {
 	root, err := associatedInstallRoot()
 	if err != nil {
 		return err
@@ -19,7 +21,7 @@ func launch(arguments []string) error {
 	if err = contract.RecoverInstall(root); err != nil {
 		return err
 	}
-	executable, inspection, err := contract.ActiveExecutable(root)
+	executable, inspection, err := contract.ActiveExecutableForRole(root, role)
 	if err != nil {
 		return err
 	}
@@ -31,12 +33,17 @@ func launch(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	environment := authoritativeEnvironment(os.Environ(), map[string]string{
+	values := map[string]string{
 		"HEADROOM_INSTALL_ROOT":    root,
 		"HEADROOM_LAUNCHER_PATH":   launcher,
 		"HEADROOM_PACKAGE_VERSION": inspection.Version,
-	})
-	return startApplication(executable, arguments, environment)
+	}
+	if role == contract.RoleCLI {
+		values["HEADROOM_PUBLIC_LAUNCHER_PID"] = fmt.Sprintf("%d", os.Getpid())
+		values["HEADROOM_PUBLIC_LAUNCHER_PATH"] = launcher
+	}
+	environment := authoritativeEnvironment(os.Environ(), values)
+	return startApplication(executable, arguments, environment, role == contract.RoleApplication)
 }
 
 func associatedInstallRoot() (string, error) {
@@ -114,8 +121,10 @@ func authoritativeEnvironment(base []string, values map[string]string) []string 
 			result = append(result, item)
 		}
 	}
-	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION"} {
-		result = append(result, key+"="+values[key])
+	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION", "HEADROOM_PUBLIC_LAUNCHER_PID", "HEADROOM_PUBLIC_LAUNCHER_PATH"} {
+		if value, ok := values[key]; ok {
+			result = append(result, key+"="+value)
+		}
 	}
 	return result
 }

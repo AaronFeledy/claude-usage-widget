@@ -32,23 +32,32 @@ type LocalFetchFunc func(context.Context) (LocalSnapshot, error)
 var ErrLocalUnavailable = errors.New("local desktop is not running")
 
 type Options struct {
-	Args, Env       []string
-	Stdin           io.Reader
-	Stdout, Stderr  io.Writer
-	Version         string
-	HTTPClient      *http.Client
-	Now             func() time.Time
-	IsTerminal      func(io.Writer) bool
-	WatchInterval   time.Duration
-	RunSSH          SSHFunc
-	FetchLocal      LocalFetchFunc
-	Serve           ServeFunc
-	Update, Desktop CommandFunc
+	Args, Env             []string
+	Stdin                 io.Reader
+	Stdout, Stderr        io.Writer
+	Version               string
+	HTTPClient            *http.Client
+	Now                   func() time.Time
+	IsTerminal            func(io.Writer) bool
+	WatchInterval         time.Duration
+	RunSSH                SSHFunc
+	FetchLocal            LocalFetchFunc
+	Serve                 ServeFunc
+	Update, Desktop, Pair CommandFunc
 }
 
 func Run(ctx context.Context, options Options) error {
 	options = options.defaults()
 	if len(options.Args) > 0 {
+		// Older Linux desktop autostart entries invoked the public command with
+		// --background. Keep that exact leading argument on the desktop path now
+		// that the public command is the CLI.
+		if options.Args[0] == "--background" {
+			if options.Desktop == nil {
+				return errors.New("desktop launch is unavailable in this Headroom build")
+			}
+			return options.Desktop(ctx, options.Args)
+		}
 		switch options.Args[0] {
 		case "serve":
 			if options.Serve == nil {
@@ -66,6 +75,11 @@ func Run(ctx context.Context, options Options) error {
 				return errors.New("desktop launch is unavailable in this Headroom build")
 			}
 			return options.Desktop(ctx, options.Args[1:])
+		case "pair":
+			if options.Pair == nil {
+				return errors.New("pairing is unavailable in this Headroom build")
+			}
+			return options.Pair(ctx, options.Args[1:])
 		case "version":
 			if len(options.Args) != 1 {
 				return errors.New("version does not accept arguments")
@@ -140,7 +154,7 @@ func runDashboard(ctx context.Context, options Options) error {
 	set.StringVar(&flags.ssh, "ssh", "", "SSH destination ([user@]host[:port])")
 	showVersion := set.Bool("version", false, "print Headroom version")
 	set.Usage = func() {
-		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update\n       headroom desktop\n       headroom version")
+		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update [--this-install-only]\n       headroom desktop\n       headroom pair windows-wsl [pairing options]\n       headroom version")
 		set.PrintDefaults()
 		fmt.Fprintln(options.Stderr, "Remote HTTP authentication: HEADROOM_AUTH_TOKEN or HEADROOM_AUTH_TOKEN_FILE")
 		fmt.Fprintln(options.Stderr, "Token files require owner-only permissions on Linux/macOS; use HEADROOM_AUTH_TOKEN on Windows.")
