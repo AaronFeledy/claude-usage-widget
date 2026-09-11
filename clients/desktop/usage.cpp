@@ -60,8 +60,10 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
         QJsonArray buckets;
         if (p["error"].isNull()) {
             if (p.contains("buckets") && !p["buckets"].isArray()) return false;
-            buckets = p["buckets"].toArray();
-            if (buckets.isEmpty()) {
+            buckets = p.value("buckets").toArray();
+            // An explicit empty list means no meters; only older servers
+            // that omit the bucket contract need the legacy header fallback.
+            if (!p.contains("buckets")) {
                 if (!p["current"].isObject() || !p["show_secondary"].isBool()) return false;
                 auto primary = p["current"].toObject();
                 primary["id"] = "session"; primary["label"] = p["primary_label"];

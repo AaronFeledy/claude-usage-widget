@@ -139,7 +139,7 @@ func Test_ParseUsage_normalizes_rate_window_roles(t *testing.T) {
 		wantWeekly  float64
 	}{
 		{name: "swapped windows", body: `{"rate_limit":{"primary_window":{"used_percent":80,"limit_window_seconds":604800},"secondary_window":{"used_percent":12.5,"limit_window_seconds":18000}}}`, wantCurrent: 12.5, wantWeekly: 80},
-		{name: "single weekly primary window", body: `{"rate_limit":{"primary_window":{"used_percent":80,"limit_window_seconds":604800}}}`, wantWeekly: 80},
+		{name: "single weekly primary window", body: `{"rate_limit":{"primary_window":{"used_percent":80,"limit_window_seconds":604800}}}`, wantCurrent: 80, wantWeekly: 80},
 		{name: "missing durations preserve positions", body: `{"rate_limit":{"primary_window":{"used_percent":12.5},"secondary_window":{"used_percent":80}}}`, wantCurrent: 12.5, wantWeekly: 80},
 	}
 	for _, tt := range tests {

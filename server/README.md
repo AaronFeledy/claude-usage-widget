@@ -59,6 +59,10 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
 - `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
 
+ChatGPT (`Codex`) meters follow the windows returned by OpenAI. A weekly-only
+allowance produces one `weekly` bucket; an absent five-hour window does not
+produce a `session` bucket. A reported window with zero usage remains visible.
+
 Successful ChatGPT (`Codex`) usage entries include read-only
 `rate_limit_reset_credits` metadata when the upstream response reports a valid
 banked-reset count. It contains `available_count` and a nullable, opaque

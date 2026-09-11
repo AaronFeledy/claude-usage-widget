@@ -39,6 +39,23 @@ private slots:
             QVERIFY(!Usage::parse(bad, providers)); QCOMPARE(providers, original);
         }
     }
+    void explicitBucketsNeverInventMissingWindows() {
+        QJsonObject provider{{"provider_name", "Codex"}, {"is_success", true},
+            {"error", QJsonValue::Null}, {"needs_reauth", false},
+            {"primary_label", "5-Hour"}, {"show_secondary", false},
+            {"current", QJsonObject{{"utilization", 0}, {"resets_at", QJsonValue::Null}}},
+            {"buckets", QJsonArray{}}};
+        QVariantList parsed;
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        QVERIFY(parsed.first().toMap()["buckets"].toList().isEmpty());
+        provider["buckets"] = QJsonArray{QJsonObject{{"id", "weekly"}, {"label", "Weekly"},
+            {"utilization", 0}, {"resets_at", QJsonValue::Null}}};
+        QVERIFY(Usage::parse(QJsonDocument(QJsonArray{provider}).toJson(), parsed));
+        const auto buckets = parsed.first().toMap()["buckets"].toList();
+        QCOMPARE(buckets.size(), 1);
+        QCOMPARE(buckets.first().toMap()["id"].toString(), QString("weekly"));
+        QCOMPARE(buckets.first().toMap()["utilization"].toDouble(), 0.0);
+    }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
         const QString fingerprint(64, QLatin1Char('a'));
@@ -113,6 +130,8 @@ private slots:
         p.remove("buckets"); p["current"] = QJsonObject{{"utilization", 0}, {"resets_at", QJsonValue::Null}};
         p["primary_label"] = "Session"; p["show_secondary"] = false;
         QVariantList result; QVERIFY(Usage::parse(QJsonDocument(QJsonArray{p}).toJson(), result));
+        QCOMPARE(result.size(), 1);
+        QCOMPARE(result[0].toMap()["buckets"].toList().size(), 1);
         QCOMPARE(result[0].toMap()["buckets"].toList()[0].toMap()["utilization"].toDouble(), 0.0);
         p["error"] = "Unavailable"; p["is_success"] = false; p["current"] = QJsonValue::Null;
         QVERIFY(Usage::parse(QJsonDocument(QJsonArray{p}).toJson(), result)); QVERIFY(result[0].toMap()["buckets"].toList().isEmpty());

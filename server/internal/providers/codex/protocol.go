@@ -20,13 +20,19 @@ func parseUsage(body []byte, data usage.UsageData) (usage.UsageData, error) {
 	}
 	data.RateLimitResetCredits = parseResetCredits(decoded.RateLimitResetCredits)
 	current, weekly := normalizeWindows(decoded.RateLimit.PrimaryWindow, decoded.RateLimit.SecondaryWindow)
-	currentUsage := usageBucket(current)
-	weeklyUsage := usageBucket(weekly)
 	data.ProviderName = providerName
-	return data.WithBuckets([]usage.Bucket{
-		{ID: usage.BucketSession, Label: "5-Hour", Utilization: currentUsage.Utilization, ResetsAt: currentUsage.ResetsAt},
-		{ID: usage.BucketWeekly, Label: "Weekly", Utilization: weeklyUsage.Utilization, ResetsAt: weeklyUsage.ResetsAt},
-	}), nil
+	// Some plans expose only a weekly window. Absence is not zero usage:
+	// preserve real zero-valued windows, but never invent a missing limit.
+	buckets := make([]usage.Bucket, 0, 2)
+	if current != nil {
+		value := usageBucket(current)
+		buckets = append(buckets, usage.Bucket{ID: usage.BucketSession, Label: "5-Hour", Utilization: value.Utilization, ResetsAt: value.ResetsAt})
+	}
+	if weekly != nil {
+		value := usageBucket(weekly)
+		buckets = append(buckets, usage.Bucket{ID: usage.BucketWeekly, Label: "Weekly", Utilization: value.Utilization, ResetsAt: value.ResetsAt})
+	}
+	return data.WithBuckets(buckets), nil
 }
 
 const maxDesktopSafeInteger int64 = 9007199254740991

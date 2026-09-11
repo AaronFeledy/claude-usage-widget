@@ -33,6 +33,41 @@ func Test_parseUsage_emits_buckets_matching_legacy_header(t *testing.T) {
 	}
 }
 
+func Test_parseUsage_omits_absent_windows_but_keeps_zero_usage(t *testing.T) {
+	tests := []struct {
+		name, rateLimit string
+		ids, labels     []string
+	}{
+		{"weekly only primary", `{"primary_window":{"used_percent":42,"limit_window_seconds":604800},"secondary_window":null}`, []string{"weekly"}, []string{"Weekly"}},
+		{"weekly only secondary", `{"primary_window":null,"secondary_window":{"used_percent":42,"limit_window_seconds":604800}}`, []string{"weekly"}, []string{"Weekly"}},
+		{"real zero session", `{"primary_window":{"used_percent":0,"limit_window_seconds":18000},"secondary_window":{"used_percent":42,"limit_window_seconds":604800}}`, []string{"session", "weekly"}, []string{"5-Hour", "Weekly"}},
+		{"session only", `{"primary_window":{"used_percent":0,"limit_window_seconds":18000}}`, []string{"session"}, []string{"5-Hour"}},
+		{"no windows", `{"primary_window":null,"secondary_window":null}`, nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := parseUsage([]byte(`{"rate_limit":`+tt.rateLimit+`}`), baseUsage())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(data.Buckets) != len(tt.ids) {
+				t.Fatalf("buckets = %+v, want %v", data.Buckets, tt.ids)
+			}
+			for i, bucket := range data.Buckets {
+				if bucket.ID != tt.ids[i] || bucket.Label != tt.labels[i] {
+					t.Fatalf("bucket %d = %+v, want %s / %s", i, bucket, tt.ids[i], tt.labels[i])
+				}
+			}
+			if data.ShowSecondary != (len(tt.ids) > 1) {
+				t.Fatal("legacy secondary visibility does not match returned windows")
+			}
+			if len(tt.ids) == 1 && tt.ids[0] == "weekly" && (data.PrimaryLabel != "Weekly" || data.Current.Utilization != 42 || data.Weekly.Utilization != 42) {
+				t.Fatal("weekly-only legacy header must show the actual weekly window")
+			}
+		})
+	}
+}
+
 func Test_parseUsage_normalizes_rate_limit_reset_credits(t *testing.T) {
 	tests := []struct {
 		name     string
