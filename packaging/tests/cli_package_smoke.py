@@ -27,7 +27,9 @@ def main():
     if bool(args.manager) == bool(args.release_manifest):
         parser.error("supply exactly one of --manager or --release-manifest")
     with tempfile.TemporaryDirectory(prefix="headroom cli smoke ") as directory:
-        root = Path(directory)
+        # macOS exposes its temporary directory through /var -> /private/var.
+        # Install targets intentionally reject symlink traversal.
+        root = Path(directory).resolve()
         executable = root / "entries with spaces" / ("headroom.exe" if os.name == "nt" else "headroom")
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("HEADROOM_", "USAGE_"))}
@@ -47,7 +49,10 @@ def main():
         else:
             command = [str(args.manager.resolve()), "install", "--archive", str(args.archive.resolve()),
                 "--install-root", str(install), "--entry-path", str(executable), "--cli-entry-path", str(executable)]
-        subprocess.run(command, env=env, check=True, timeout=90, stdout=subprocess.PIPE)
+        installed = subprocess.run(command, env=env, timeout=90, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        if installed.returncode:
+            raise AssertionError(f"CLI installation failed ({installed.returncode}): {installed.stdout[-8000:]}")
         def run(*arguments):
             return subprocess.check_output([str(executable), *arguments], env=env, text=True, timeout=20, stderr=subprocess.STDOUT)
         assert args.version in run("version")
@@ -68,13 +73,17 @@ def main():
         state = json.loads((install / "install-state.json").read_text())
         runtime = install / state["version_path"] / "bin" / executable.name
         server_env = env | {"HEADROOM_INSTALL_ROOT": str(install), "HEADROOM_PACKAGE_VERSION": args.version}
+        server_log = (root / "provider-disabled-server.log").open("w+")
         server = subprocess.Popen([str(runtime), "serve", "--config", str(config),
-            "--listen-addr", f"127.0.0.1:{port}"], env=server_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            "--listen-addr", f"127.0.0.1:{port}"], env=server_env, stdout=server_log, stderr=subprocess.STDOUT)
+        def startup_failure(message):
+            server_log.seek(0)
+            return AssertionError(f"{message}: {server_log.read(8000)}")
         try:
             deadline = time.monotonic() + 15
             while True:
                 if server.poll() is not None:
-                    raise AssertionError("provider-disabled server exited before readiness")
+                    raise startup_failure(f"provider-disabled server exited before readiness ({server.returncode})")
                 try:
                     with urllib.request.urlopen(address + "/api/v1/health", timeout=1) as response:
                         if response.status == 200:
@@ -82,7 +91,7 @@ def main():
                 except (urllib.error.URLError, TimeoutError):
                     pass
                 if time.monotonic() >= deadline:
-                    raise AssertionError("provider-disabled server did not become ready")
+                    raise startup_failure("provider-disabled server did not become ready")
                 time.sleep(0.1)
             receipt = json.loads((install / "runtime/managed-serve.json").read_text())
             assert receipt["pid"] == server.pid and receipt["ready"] is True
@@ -97,6 +106,7 @@ def main():
             except subprocess.TimeoutExpired:
                 server.kill()
                 server.wait(timeout=5)
+            server_log.close()
         print("Native CLI install, routing, version, and provider-disabled serve/usage passed.")
 
 

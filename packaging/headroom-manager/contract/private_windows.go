@@ -5,7 +5,6 @@ package contract
 import (
 	"errors"
 	"os"
-	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -50,8 +49,15 @@ func validatePrivateWindows(path string, directory, setACL bool) error {
 	if err != nil {
 		return err
 	}
+	actualOwner, _, err := descriptor.Owner()
+	if err != nil || actualOwner == nil || actualOwner.String() != owner {
+		return errors.New("private storage owner is unsafe")
+	}
 	sddl := descriptor.String()
-	if !strings.Contains(sddl, "O:"+owner) || !strings.Contains(sddl, "D:P(A;;FA;;;"+owner+")") {
+	// Windows can retain the informational auto-inheritance flags even after
+	// replacing and protecting the DACL. They do not grant access. Require the
+	// protected bit and exactly one full-control ACE for the current owner.
+	if !privateWindowsDACLIsSafe(sddl, owner) {
 		return errors.New("private storage ACL is unsafe")
 	}
 	return nil

@@ -14,6 +14,21 @@ import (
 
 const maxPrivateJSONBytes = 64 << 10
 
+func privateWindowsDACLIsSafe(sddl, owner string) bool {
+	daclIndex := strings.Index(sddl, "D:")
+	aceIndex := -1
+	if daclIndex >= 0 {
+		aceIndex = strings.Index(sddl[daclIndex+2:], "(")
+	}
+	if aceIndex < 0 {
+		return false
+	}
+	aceIndex += daclIndex + 2
+	flags := sddl[daclIndex+2 : aceIndex]
+	remaining := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(flags, "AI", ""), "AR", ""), "P", "")
+	return strings.Contains(flags, "P") && remaining == "" && sddl[aceIndex:] == "(A;;FA;;;"+owner+")"
+}
+
 func WritePrivateJSON(installRoot, relativeName string, value any) error {
 	root, path, err := privateJSONPath(installRoot, relativeName)
 	if err != nil {
