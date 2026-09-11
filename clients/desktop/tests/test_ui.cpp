@@ -102,7 +102,7 @@ private slots:
         if (QGuiApplication::platformName() == "offscreen") QTRY_VERIFY(hover->property("hovered").toBool());
         QCOMPARE(claudeCard->property("color").value<QColor>(), restingColor);
         QVERIFY(track->property("color").value<QColor>() != restingColor);
-        QCOMPARE(fill->property("color").value<QColor>(), QColor("#8be9fd"));
+        QCOMPARE(fill->property("color").value<QColor>(), QColor("#bd93f9"));
         QVERIFY(window->grabWindow().save(capture("headroom-hover.png")));
         auto meter = findItem(window->contentItem(), "meter_Claude_session"); QVERIFY(meter);
         const auto originalBucket = meter->property("bucket").toMap();
@@ -112,7 +112,7 @@ private slots:
             bucket["resets_at"] = QDateTime::currentDateTimeUtc().addSecs(9000).toString(Qt::ISODate);
             QVERIFY(meter->setProperty("bucket", bucket));
             QVERIFY(meter->setProperty("concern", Usage::concern("Claude", bucket)));
-            const QColor expected(used >= 80 ? "#ff5555" : used >= 68 ? "#ffb86c" : used >= 60 ? "#f1fa8c" : "#8be9fd");
+            const QColor expected(used >= 80 ? "#ff5555" : used >= 68 ? "#ffb86c" : used >= 60 ? "#f1fa8c" : "#bd93f9");
             QTRY_COMPARE(fill->property("color").value<QColor>(), expected);
         }
         QTRY_COMPARE(fill->width(), track->width());
@@ -221,7 +221,7 @@ private slots:
                     const auto bucketId = bucket.toMap()["id"].toString();
                     auto meter = findItem(window->contentItem(), "meter_" + name + "_" + bucketId);
                     QVERIFY(meter);
-                    QCOMPARE(meter->property("accent").value<QColor>(), QColor("#8be9fd"));
+                    QCOMPARE(meter->property("accent").value<QColor>(), QColor("#bd93f9"));
                     if (firstMeter) QCOMPARE(meter->width(), meter->parentItem()->width());
                     firstMeter = false;
                     const auto origin = meter->mapToItem(row, QPointF(0, 0));

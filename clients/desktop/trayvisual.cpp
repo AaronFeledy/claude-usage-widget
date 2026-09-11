@@ -127,8 +127,11 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
             const double angle = (model.expected / 100 * 360 - 90) * 3.14159265358979323846 / 180;
             const QPointF unit(std::cos(angle), std::sin(angle));
             const QPointF center(32, 32);
-            p.setPen(QPen(background, 4)); p.drawLine(center + unit * 22, center + unit * 30);
-            p.setPen(QPen(foreground, 3)); p.drawLine(center + unit * 23, center + unit * 30);
+            // Extend equally beyond both edges of the 8px ring. Flat caps let
+            // the tick reach the canvas edge without a projecting cap.
+            const QPointF inner = center + unit * 21, outer = center + unit * 32;
+            p.setPen(QPen(background, 5, Qt::SolidLine, Qt::FlatCap)); p.drawLine(inner, outer);
+            p.setPen(QPen(foreground, 3, Qt::SolidLine, Qt::FlatCap)); p.drawLine(inner, outer);
         }
     }
     const QPixmap provider = providerPixmap(model.provider);

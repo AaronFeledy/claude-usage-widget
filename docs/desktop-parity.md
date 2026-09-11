@@ -59,7 +59,7 @@ seven-day boundaries in a monthly estimate. Unknown periods have no invented
 notches or pace marker.
 
 The Dracula-based palette and provider icons are shared across Windows and Linux.
-The tray intentionally omits a numeric label. Pressure below 10% remains cyan;
+The tray intentionally omits a numeric label. Pressure below 10% remains purple;
 Watch begins at 10%, Warning at 25%, and Critical at 50%, with lower recovery
 thresholds. Low-capacity and no-period fallbacks are documented in the
 [desktop guide](../clients/desktop/README.md).
