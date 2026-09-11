@@ -263,10 +263,14 @@ func createPackage(args []string) (any, error) {
 	arch := set.String("arch", nativeArch(), "architecture")
 	qt := set.String("qt-version", "6.8.3", "Qt version")
 	baseline := set.String("baseline", "", "runtime baseline")
+	kind := set.String("kind", "", "package kind: cli, or empty for desktop")
 	if err := set.Parse(args); err != nil {
 		return nil, err
 	}
-	manifest, err := contract.BuildManifest(*root, *version, *platform, *arch, *qt, *baseline)
+	if *kind == contract.PackageKindCLI {
+		*qt = ""
+	}
+	manifest, err := contract.BuildManifestForKind(*kind, *root, *version, *platform, *arch, *qt, *baseline)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +297,7 @@ func createRelease(args []string) (any, error) {
 	output := set.String("output", "", "release manifest output")
 	version := set.String("version", buildVersion, "version")
 	legacy := set.Bool("legacy", false, "create the legacy Windows/Linux release manifest")
+	kind := set.String("kind", "", "package kind: cli, or empty for desktop")
 	var packages listFlag
 	set.Var(&packages, "package", "package archive (repeatable)")
 	if err := set.Parse(args); err != nil {
@@ -303,17 +308,22 @@ func createRelease(args []string) (any, error) {
 	if *legacy {
 		wantName, wantCount = "Headroom-v"+*version+"-release.json", 3
 	}
+	if *kind == contract.PackageKindCLI && !*legacy {
+		wantName, wantCount = "Headroom-CLI-v"+*version+"-release.json", 6
+	} else if *kind != "" {
+		return nil, fmt.Errorf("unsupported package kind or legacy combination")
+	}
 	if filepath.Base(*output) != wantName {
 		return nil, fmt.Errorf("release manifest output must be named %s", wantName)
 	}
-	release := contract.ReleaseManifest{Schema: contract.SchemaVersion, Product: "Headroom", Version: *version}
+	release := contract.ReleaseManifest{PackageKind: *kind, Schema: contract.SchemaVersion, Product: "Headroom", Version: *version}
 	for _, archive := range packages {
 		manifest, root, err := contract.VerifyArchive(archive, contract.Expectations{})
 		if err != nil {
 			return nil, err
 		}
-		if manifest.Version != *version {
-			return nil, fmt.Errorf("package version mismatch")
+		if manifest.Version != *version || manifest.PackageKind != *kind {
+			return nil, fmt.Errorf("package version or kind mismatch")
 		}
 		size, hash, err := contract.FileDigest(archive)
 		if err != nil {
@@ -325,6 +335,9 @@ func createRelease(args []string) (any, error) {
 		return release.Packages[i].Platform+"/"+release.Packages[i].Architecture < release.Packages[j].Platform+"/"+release.Packages[j].Architecture
 	})
 	if len(release.Packages) != wantCount {
+		if *kind == contract.PackageKindCLI {
+			return nil, fmt.Errorf("CLI release manifest requires all six Windows, Linux, and macOS targets")
+		}
 		if *legacy {
 			return nil, fmt.Errorf("legacy release manifest requires Windows x64/ARM64 and Linux x86_64 packages")
 		}

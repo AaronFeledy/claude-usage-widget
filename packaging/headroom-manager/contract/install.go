@@ -17,6 +17,7 @@ import (
 const StateName = "install-state.json"
 
 type InstallState struct {
+	PackageKind    string `json:"package_kind,omitempty"`
 	Schema         int    `json:"schema"`
 	Product        string `json:"product"`
 	Platform       string `json:"platform"`
@@ -28,6 +29,7 @@ type InstallState struct {
 }
 
 type StageResult struct {
+	PackageKind    string `json:"package_kind,omitempty"`
 	Schema         int    `json:"schema"`
 	Product        string `json:"product"`
 	Version        string `json:"version"`
@@ -39,6 +41,7 @@ type StageResult struct {
 }
 
 type Inspection struct {
+	PackageKind      string   `json:"package_kind,omitempty"`
 	Installed        bool     `json:"installed"`
 	TrustedIdentity  bool     `json:"trusted_identity"`
 	Complete         bool     `json:"complete"`
@@ -111,7 +114,7 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 		os.RemoveAll(stage)
 		return StageResult{}, err
 	}
-	result := StageResult{Schema: SchemaVersion, Product: "Headroom", Version: manifest.Version, Platform: manifest.Platform, Architecture: manifest.Architecture, PackageAsset: manifest.AssetName, ManifestSHA256: manifestHash, PackageRoot: packageRoot}
+	result := StageResult{PackageKind: manifest.PackageKind, Schema: SchemaVersion, Product: "Headroom", Version: manifest.Version, Platform: manifest.Platform, Architecture: manifest.Architecture, PackageAsset: manifest.AssetName, ManifestSHA256: manifestHash, PackageRoot: packageRoot}
 	if err = WriteJSON(filepath.Join(stage, "verified-stage.json"), result); err != nil {
 		os.RemoveAll(stage)
 		return StageResult{}, err
@@ -283,7 +286,7 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	if state.Schema != SchemaVersion || state.Product != "Headroom" || !validVersion(state.ActiveVersion) || !validVersionPath(state) {
 		return result, errors.New("installed state identity is invalid")
 	}
-	expectedAsset, err := AssetName(state.ActiveVersion, state.Platform, state.Architecture)
+	expectedAsset, err := AssetNameForKind(state.PackageKind, state.ActiveVersion, state.Platform, state.Architecture)
 	if err != nil || expectedAsset != state.PackageAsset || !hashPattern.MatchString(state.ManifestSHA256) {
 		return result, errors.New("installed state package identity is invalid")
 	}
@@ -301,10 +304,11 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	}
 	manifest, err := DecodePackageManifest(file)
 	file.Close()
-	if err != nil || manifest.Version != state.ActiveVersion || manifest.Platform != state.Platform || manifest.Architecture != state.Architecture || manifest.AssetName != state.PackageAsset {
+	if err != nil || manifest.PackageKind != state.PackageKind || manifest.Version != state.ActiveVersion || manifest.Platform != state.Platform || manifest.Architecture != state.Architecture || manifest.AssetName != state.PackageAsset {
 		return result, errors.New("installed manifest identity is invalid")
 	}
 	result.TrustedIdentity = true
+	result.PackageKind = state.PackageKind
 	result.Version, result.VersionPath = state.ActiveVersion, state.VersionPath
 	result.Platform, result.Architecture, result.PackageAsset = state.Platform, state.Architecture, state.PackageAsset
 	ext := ""
@@ -402,6 +406,18 @@ func validVersionPath(state InstallState) bool {
 }
 
 func ActiveExecutable(installRoot string) (string, Inspection, error) {
+	return ActiveExecutableForRole(installRoot, RoleApplication)
+}
+
+const (
+	RoleApplication = "application"
+	RoleCLI         = "cli"
+	RoleServer      = "server"
+)
+
+// ActiveExecutableForRole resolves a fixed, inventoried component. A caller
+// cannot make an arbitrary path trusted by labeling it an update participant.
+func ActiveExecutableForRole(installRoot, role string) (string, Inspection, error) {
 	canonicalRoot, err := NormalizeInstallRoot(installRoot)
 	if err != nil {
 		return "", Inspection{}, err
@@ -420,15 +436,33 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 	if manifestErr != nil {
 		return "", inspection, manifestErr
 	}
-	executable := installedComponentPath(installRoot, inspection.VersionPath, manifest.Components.Application.Path)
+	packagePath := manifest.Components.Application.Path
+	switch role {
+	case "", RoleApplication:
+	case RoleCLI:
+		packagePath = PackageCLIPath(manifest.Platform, manifest.PackageKind)
+	case RoleServer:
+		packagePath = manifest.Components.Server.Path
+	default:
+		return "", inspection, errors.New("unknown Headroom component role")
+	}
+	record, listed := fileRecord(manifest.Files, packagePath)
+	if !listed || record.LinkTarget != "" {
+		return "", inspection, errors.New("requested Headroom component is not installed")
+	}
+	executable := installedComponentPath(installRoot, inspection.VersionPath, packagePath)
 	for _, missing := range inspection.Missing {
-		if !isAuxiliaryPath(missing) {
+		if !isAuxiliaryPath(missing) || missing == strings.TrimPrefix(packagePath, "bundle/") {
 			return "", inspection, fmt.Errorf("Headroom %s runtime is incomplete; reinstall %s", inspection.Version, inspection.PackageAsset)
 		}
 	}
 	info, err := os.Lstat(executable)
 	if err != nil || !info.Mode().IsRegular() {
 		return "", inspection, fmt.Errorf("Headroom %s application is missing; reinstall %s", inspection.Version, inspection.PackageAsset)
+	}
+	digest, err := digestFile(executable)
+	if err != nil || digest != record.SHA256 {
+		return "", inspection, errors.New("requested Headroom component failed verification")
 	}
 	return executable, inspection, nil
 }

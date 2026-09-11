@@ -381,7 +381,7 @@ func LoadVerifiedStage(installRoot, recordPath string) (StageResult, PackageMani
 	}
 	hash, err := digestFile(filepath.Join(packageRoot, PackageManifestName))
 	if err != nil || hash != stage.ManifestSHA256 || manifest.Version != stage.Version || manifest.Platform != stage.Platform ||
-		manifest.Architecture != stage.Architecture || manifest.AssetName != stage.PackageAsset {
+		manifest.Architecture != stage.Architecture || manifest.AssetName != stage.PackageAsset || manifest.PackageKind != stage.PackageKind {
 		return StageResult{}, PackageManifest{}, errors.New("verified stage identity changed")
 	}
 	if err = VerifyTree(packageRoot, manifest); err != nil {
@@ -815,7 +815,7 @@ func createGeneration(root string, stage StageResult, manifest PackageManifest) 
 		_ = os.RemoveAll(destination)
 		return InstallState{}, "", err
 	}
-	state := InstallState{Schema: SchemaVersion, Product: "Headroom", Platform: manifest.Platform, Architecture: manifest.Architecture,
+	state := InstallState{PackageKind: manifest.PackageKind, Schema: SchemaVersion, Product: "Headroom", Platform: manifest.Platform, Architecture: manifest.Architecture,
 		ActiveVersion: manifest.Version, VersionPath: versionPath, ManifestSHA256: stage.ManifestSHA256, PackageAsset: manifest.AssetName}
 	if _, err = inspectState(root, state); err != nil {
 		_ = os.RemoveAll(destination)

@@ -196,6 +196,9 @@ func (c UpdateClient) resolve(ctx context.Context, exactVersion string, inspecti
 	if inspection.Platform == "macos" {
 		manifestName = "Headroom-v" + version + "-release-all.json"
 	}
+	if inspection.PackageKind == PackageKindCLI {
+		manifestName = "Headroom-CLI-v" + version + "-release.json"
+	}
 	manifestAsset, ok := namedAsset(release.Assets, manifestName)
 	if !ok || manifestAsset.Size <= 0 || manifestAsset.Size > maxReleaseBytes || c.validateAssetURL(manifestAsset.URL, version, manifestName) != nil {
 		return ReleaseManifest{}, ReleasePackage{}, githubAsset{}, errNoCompatibleRelease
@@ -208,9 +211,9 @@ func (c UpdateClient) resolve(ctx context.Context, exactVersion string, inspecti
 		return ReleaseManifest{}, ReleasePackage{}, githubAsset{}, errors.New("release manifest size does not match release metadata")
 	}
 	manifest, err := DecodeReleaseManifest(strings.NewReader(string(manifestBytes)))
-	if err != nil || manifest.Version != version {
+	if err != nil || manifest.Version != version || manifest.PackageKind != inspection.PackageKind {
 		if err == nil {
-			err = errors.New("release tag and manifest version do not match")
+			err = errors.New("release tag, package kind and manifest version do not match")
 		}
 		return ReleaseManifest{}, ReleasePackage{}, githubAsset{}, err
 	}

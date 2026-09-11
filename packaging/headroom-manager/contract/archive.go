@@ -175,7 +175,7 @@ func finishInspection(manifest PackageManifest, found bool, roots map[string]boo
 	for value := range roots {
 		root = value
 	}
-	expected, _ := ArchiveRoot(manifest.Version, manifest.Platform, manifest.Architecture)
+	expected, _ := ArchiveRootForKind(manifest.PackageKind, manifest.Version, manifest.Platform, manifest.Architecture)
 	if root != expected {
 		return manifest, "", fmt.Errorf("archive root %q does not match %q", root, expected)
 	}
@@ -498,6 +498,21 @@ func VerifyTree(root string, manifest PackageManifest) error {
 	if manifest.Components.CredentialHelper != nil {
 		if err := verifyExecutableArchitecture(filepath.Join(root, filepath.FromSlash(manifest.Components.CredentialHelper.Path)), manifest.Platform, manifest.Architecture); err != nil {
 			return err
+		}
+	}
+	// Desktop schema stays compatible with older managers; new managers also
+	// validate the optional CLI executables before making them public entries.
+	if manifest.PackageKind == "" {
+		extension := ""
+		if manifest.Platform == "windows" {
+			extension = ".exe"
+		}
+		for _, name := range []string{PackageCLIPath(manifest.Platform, ""), "bootstrap/headroom-cli" + extension} {
+			if _, exists := fileRecord(manifest.Files, name); exists {
+				if err := verifyExecutableArchitecture(filepath.Join(root, filepath.FromSlash(name)), manifest.Platform, manifest.Architecture); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
