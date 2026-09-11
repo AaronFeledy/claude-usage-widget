@@ -731,9 +731,13 @@ func ActiveExecutableForRole(installRoot, role string) (string, Inspection, erro
 		if inspection.CLIEntryPath == "" {
 			return "", inspection, errors.New("trusted public CLI entry is not recorded")
 		}
-		if err := verifyStableEntry(installRoot, inspection.CLIEntryPath, manifest, "bootstrap/headroom-cli"); err != nil {
+		ext := ""
+		if manifest.Platform == "windows" {
+			ext = ".exe"
+		}
+		if err := verifyStableEntry(installRoot, inspection.CLIEntryPath, manifest, "bootstrap/headroom-cli"+ext); err != nil {
 			if manifest.PackageKind == PackageKindCLI {
-				err = verifyStableEntry(installRoot, inspection.CLIEntryPath, manifest, "bootstrap/headroom")
+				err = verifyStableEntry(installRoot, inspection.CLIEntryPath, manifest, "bootstrap/headroom"+ext)
 			}
 			if err != nil {
 				return "", inspection, err
