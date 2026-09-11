@@ -128,6 +128,16 @@ When the server cannot be reached, a red X replaces the tray's provider logo.
 Offline dashboard cards, the empty connection panel, and the footer divider turn
 red while retaining the last readings. Their normal appearance returns on recovery.
 
+When the ring or secondary dot enters Critical, the tray briefly catches fire
+for four seconds, then flashes slowly for three minutes. Opening or focusing
+Headroom, clicking or scrolling the tray, or opening its menu acknowledges the
+warning and stops the animation. Hovering also stops it when the desktop exposes
+tray hover or icon geometry (Windows and supported X11 trays). KDE/Wayland trays
+use the other engagement actions because their protocol does not report hover.
+The static warning color remains until usage recovers. Polls and reconnects do
+not restart an acknowledged warning; a new transition into Critical can alert
+again. A focused dashboard suppresses the animation.
+
 Click the tray icon to open or hide the frameless dashboard beside it. The popup
 stays above ordinary windows and dismisses when focus moves outside the app;
 settings and transient menus keep it open. KDE/Wayland uses native activation

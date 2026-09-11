@@ -1,6 +1,7 @@
 #include "trayvisual.h"
 #include "usage.h"
 #include <QPainter>
+#include <QPainterPath>
 #include <QPixmapCache>
 #include <cmath>
 
@@ -107,14 +108,74 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
 }
 
 namespace {
-QPixmap renderIcon(const TrayVisual::Model &model, int size) {
+void drawFire(QPainter &p, double intensity, double phase) {
+    constexpr double tau = 6.28318530717958647692;
+    const double flicker = std::sin(phase * tau);
+    const double sway = std::sin(phase * tau + 0.8) * 2.2;
+    const double scale = 0.72 + 0.28 * intensity;
+
+    p.save();
+    p.setOpacity(qBound(0.0, intensity * 1.35, 1.0));
+    p.translate(32, 52);
+    p.scale(scale, scale * (1.0 + 0.035 * flicker));
+    p.translate(-32, -52);
+
+    // Three nested, asymmetric teardrops remain recognizable as a flame at
+    // the smallest tray sizes. Phase gently bends the tips instead of adding
+    // random noise, so consecutive frames form a calm loop.
+    QPainterPath outer;
+    outer.moveTo(32, 54);
+    outer.cubicTo(20, 54, 13, 46, 17, 36);
+    outer.cubicTo(19, 31, 24 + sway, 27, 23 + sway, 18);
+    outer.cubicTo(32 + sway, 23, 34 + sway, 29, 35 + sway, 34);
+    outer.cubicTo(40 - sway, 29, 42 - sway, 25, 41 - sway, 20);
+    outer.cubicTo(51, 29, 54, 39, 49, 47);
+    outer.cubicTo(45, 53, 39, 54, 32, 54);
+    outer.closeSubpath();
+    p.setPen(QPen(QColor("#b8202e"), 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(QColor("#ff3b30"));
+    p.drawPath(outer);
+
+    QPainterPath middle;
+    middle.moveTo(32, 52);
+    middle.cubicTo(24, 52, 20, 47, 22, 40);
+    middle.cubicTo(23, 36, 28 + sway * 0.5, 32, 28 + sway * 0.5, 27);
+    middle.cubicTo(35 + sway * 0.4, 32, 37, 37, 36, 40);
+    middle.cubicTo(40, 37, 42, 34, 42, 31);
+    middle.cubicTo(47, 39, 44, 49, 37, 52);
+    middle.closeSubpath();
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor("#ff9500"));
+    p.drawPath(middle);
+
+    QPainterPath core;
+    core.moveTo(33, 51);
+    core.cubicTo(27, 51, 25, 47, 27, 43);
+    core.cubicTo(28, 40, 32 + sway * 0.25, 37, 32 + sway * 0.25, 34);
+    core.cubicTo(39, 40, 40, 47, 35, 51);
+    core.closeSubpath();
+    p.setBrush(QColor("#ffd60a"));
+    p.drawPath(core);
+    p.restore();
+}
+
+QPixmap renderIcon(const TrayVisual::Model &model, int size, const TrayVisual::AttentionFrame &frame) {
     using TrayVisual::Kind;
     QPixmap pixmap(size, size); pixmap.fill(Qt::transparent);
     QPainter p(&pixmap); p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
     p.scale(size / 64.0, size / 64.0);
     const bool meter = isMeter(model.kind);
+    const bool critical = meter && (model.level == Usage::WarningLevel::Critical
+                                    || model.secondary == Usage::WarningLevel::Critical);
+    const double fire = critical ? qBound(0.0, frame.fire, 1.0) : 0.0;
+    const bool flash = critical && frame.flash;
     const QColor foreground("#f8f8f2"), track("#44475a"), background("#282a36");
+    if (flash) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#671923"));
+        p.drawEllipse(QRectF(2.5, 2.5, 59, 59));
+    }
     p.setPen(QPen(track, 8, Qt::SolidLine, Qt::RoundCap));
     const QRectF ring(5.5, 5.5, 53, 53);
     p.drawEllipse(ring);
@@ -133,6 +194,11 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
             p.setPen(QPen(foreground, 3, Qt::SolidLine, Qt::FlatCap)); p.drawLine(inner, outer);
         }
     }
+    if (flash) {
+        p.setPen(QPen(QColor("#ffb347"), 3.5, Qt::SolidLine, Qt::RoundCap));
+        p.setBrush(Qt::NoBrush);
+        p.drawEllipse(QRectF(2.5, 2.5, 59, 59));
+    }
     if (model.kind == Kind::Offline) {
         p.setPen(QPen(QColor("#ff5555"), 6, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(QPointF(21, 21), QPointF(43, 43));
@@ -140,6 +206,7 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
         return pixmap;
     }
     const QPixmap provider = providerPixmap(model.provider);
+    if (fire > 0) p.setOpacity(1.0 - fire);
     if (!provider.isNull()) {
         const QSizeF logoSize = QSizeF(provider.size()).scaled(QSizeF(32, 32), Qt::KeepAspectRatio);
         const QRectF logo(QPointF(32 - logoSize.width() / 2, 32 - logoSize.height() / 2), logoSize);
@@ -149,6 +216,8 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
         QFont font("sans-serif"); font.setPixelSize(27); font.setWeight(QFont::DemiBold); p.setFont(font);
         p.drawText(QRect(16, 16, 32, 32), Qt::AlignCenter, "H");
     }
+    p.setOpacity(1.0);
+    if (fire > 0) drawFire(p, fire, frame.phase - std::floor(frame.phase));
     p.setPen(foreground); p.setFont(QFont("sans-serif", 10, QFont::DemiBold));
     if (!meter) {
         QString glyph; QColor color("#6272a4");
@@ -185,10 +254,10 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
 }
 }
 
-QIcon TrayVisual::icon(const Model &model) {
+QIcon TrayVisual::icon(const Model &model, const AttentionFrame &attention) {
     QIcon result;
     // Supply native tray sizes so the shell does not have to reduce a single
     // large bitmap, particularly at Windows fractional display scales.
-    for (const int size : {16, 20, 22, 24, 32, 40, 48, 64}) result.addPixmap(renderIcon(model, size));
+    for (const int size : {16, 20, 22, 24, 32, 40, 48, 64}) result.addPixmap(renderIcon(model, size, attention));
     return result;
 }

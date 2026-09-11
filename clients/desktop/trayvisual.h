@@ -17,8 +17,13 @@ struct Model {
     Usage::WarningLevel level = Usage::WarningLevel::Normal;
     Usage::WarningLevel secondary = Usage::WarningLevel::Normal;
 };
+struct AttentionFrame {
+    double fire = 0;
+    double phase = 0;
+    bool flash = false;
+};
 using Assessment = std::function<QVariantMap(const QString &, const QVariantMap &)>;
 Model build(const QVariantMap &state, const QVariantList &providers, const QString &primary,
             const Assessment &assessment, const QDateTime &now = QDateTime::currentDateTimeUtc());
-QIcon icon(const Model &model);
+QIcon icon(const Model &model, const AttentionFrame &attention = {});
 }

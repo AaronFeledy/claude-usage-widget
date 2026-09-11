@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "usage.h"
 #include "trayvisual.h"
+#include "trayattention.h"
 #include "startup.h"
 #include "appinfo.h"
 #include "updateservice.h"
@@ -25,6 +26,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSignalBlocker>
 #include <QSystemTrayIcon>
 
 int main(int argc, char **argv) {
@@ -111,18 +113,32 @@ int main(int argc, char **argv) {
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     TrayPopup popup(window, hasTray, &app);
-    const auto show = [&popup] { popup.show(); };
+    QSystemTrayIcon tray(TrayVisual::icon({}));
+    QMenu fallbackMenu;
+    QMenu *trayMenu = &fallbackMenu;
+    bool nativeTrayUsed = false;
+    TrayAttention attention([&] {
+        if (!hasTray || (window->isVisible() && app.applicationState() == Qt::ApplicationActive)
+            || trayMenu->isVisible()) return true;
+        // SNI/Wayland hosts do not expose icon hover or global pointer position.
+        // Never guess from stale Wayland coordinates. Windows and X11 can use
+        // the actual tray rectangle; Qt also sends tooltip events on X11.
+        const QString platform = QGuiApplication::platformName();
+        if (nativeTrayUsed || (platform != "windows" && platform != "xcb")) return false;
+        const QRect bounds = tray.geometry();
+        return bounds.isValid() && bounds.contains(QCursor::pos());
+    });
+    tray.installEventFilter(&attention);
+    const auto show = [&] { attention.acknowledge(); popup.show(); };
     QObject::connect(&instance, &InstanceService::activationRequested, &app, show);
     if (!capture && !isolated && controller.startupMigrationPending() &&
         startup.migrateLegacyRegistration(controller.startupPreference()))
         controller.completeStartupMigration();
-    QSystemTrayIcon tray(TrayVisual::icon({}));
-    QMenu fallbackMenu;
-    QMenu *trayMenu = &fallbackMenu;
 #ifdef HEADROOM_KDE_TRAY
     std::unique_ptr<KStatusNotifierItem> nativeTray;
     if (hasTray) {
         nativeTray = std::make_unique<KStatusNotifierItem>("headroom");
+        nativeTrayUsed = true;
         nativeTray->setTitle("Headroom");
         nativeTray->setCategory(KStatusNotifierItem::ApplicationStatus);
         nativeTray->setStandardActionsEnabled(false);
@@ -130,17 +146,34 @@ int main(int argc, char **argv) {
         trayMenu = new QMenu;
         nativeTray->setContextMenu(trayMenu);
         QObject::connect(nativeTray.get(), &KStatusNotifierItem::activateRequested, &app,
-            [&](bool, const QPoint &pos) { popup.toggle(pos, !pos.isNull()); });
+            [&](bool, const QPoint &pos) { attention.acknowledge(); popup.toggle(pos, !pos.isNull()); });
+        QObject::connect(nativeTray.get(), &KStatusNotifierItem::secondaryActivateRequested, &attention,
+            [&] { attention.acknowledge(); });
+        QObject::connect(nativeTray.get(), &KStatusNotifierItem::scrollRequested, &attention,
+            [&] { attention.acknowledge(); });
     }
 #endif
     QMenu &menu = *trayMenu;
+    QObject::connect(&menu, &QMenu::aboutToShow, &attention, &TrayAttention::acknowledge);
+    QObject::connect(&menu, &QMenu::triggered, &attention, [&] { attention.acknowledge(); });
+    QObject::connect(window, &QWindow::visibleChanged, &attention, [&](bool visible) {
+        if (visible) attention.acknowledge();
+    });
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged, &attention, [&](Qt::ApplicationState state) {
+        if (state == Qt::ApplicationActive && window->isVisible()) attention.acknowledge();
+    });
     menu.addAction("Open Headroom", &app, show); menu.addAction("Refresh usage", &controller, &Controller::refresh);
     menu.addAction("Settings…", &app, [&] {
         show();
         if (auto settings = window->findChild<QObject *>("settingsPanel")) QMetaObject::invokeMethod(settings, "open");
     });
     menu.addSeparator(); menu.addAction("Quit Headroom", &app, &QApplication::quit); tray.setContextMenu(&fallbackMenu);
-    QObject::connect(&tray, &QSystemTrayIcon::activated, &app, [&](QSystemTrayIcon::ActivationReason reason) { if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) { popup.toggle(tray.geometry().isValid() ? tray.geometry().center() : QCursor::pos()); } });
+    QObject::connect(&tray, &QSystemTrayIcon::activated, &app, [&](QSystemTrayIcon::ActivationReason reason) {
+        if (reason != QSystemTrayIcon::Unknown) attention.acknowledge();
+        if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
+            popup.toggle(tray.geometry().isValid() ? tray.geometry().center() : QCursor::pos());
+    });
+    QObject::connect(&tray, &QSystemTrayIcon::messageClicked, &attention, &TrayAttention::acknowledge);
     const auto notify = [&](const QString &title, const QString &message, int severity) {
         if (!hasTray) return;
 #ifdef HEADROOM_KDE_TRAY
@@ -153,19 +186,36 @@ int main(int argc, char **argv) {
     };
     QObject::connect(&controller, &Controller::notify, &app, [&](const QString &title, const QString &message) { notify(title, message, 0); });
     QObject::connect(&controller, &Controller::usageAlert, &app, notify);
-    auto updateTray = [&] {
-        const auto model = TrayVisual::build(controller.state(), controller.providers(), controller.primary(),
-            [&](const QString &provider, const QVariantMap &bucket) { return controller.concern(provider, bucket); });
+    TrayVisual::Model trayModel;
+    const auto renderTray = [&] {
+        const auto icon = TrayVisual::icon(trayModel, attention.frame());
 #ifdef HEADROOM_KDE_TRAY
         if (nativeTray) {
-            nativeTray->setIconByPixmap(TrayVisual::icon(model));
-            nativeTray->setToolTipTitle(model.tooltip.section('\n', 0, 0));
-            nativeTray->setToolTipSubTitle(model.tooltip.section('\n', 1));
+            nativeTray->setIconByPixmap(icon);
             return;
         }
 #endif
-        tray.setToolTip(model.tooltip);
-        tray.setIcon(TrayVisual::icon(model));
+        tray.setIcon(icon);
+    };
+    QObject::connect(&attention, &TrayAttention::frameChanged, &app, renderTray);
+    auto updateTray = [&] {
+        trayModel = TrayVisual::build(controller.state(), controller.providers(), controller.primary(),
+            [&](const QString &provider, const QVariantMap &bucket) { return controller.concern(provider, bucket); });
+        {
+            // The model and attention frame are one visual update. Timer-driven
+            // frames still render independently between provider polls.
+            const QSignalBlocker block(&attention);
+            attention.update(trayModel);
+        }
+        renderTray();
+#ifdef HEADROOM_KDE_TRAY
+        if (nativeTray) {
+            nativeTray->setToolTipTitle(trayModel.tooltip.section('\n', 0, 0));
+            nativeTray->setToolTipSubTitle(trayModel.tooltip.section('\n', 1));
+            return;
+        }
+#endif
+        tray.setToolTip(trayModel.tooltip);
     };
     QObject::connect(&controller, &Controller::changed, &app, updateTray);
     QObject::connect(&controller, &Controller::settingsChanged, &app, updateTray);
