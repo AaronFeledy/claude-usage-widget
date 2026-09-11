@@ -37,7 +37,9 @@ private slots:
     }
     void bankedResetMetadataIsOptionalAndSanitized() {
         auto provider = QJsonDocument::fromJson(TestUsage::snapshot()).array()[1].toObject();
-        auto verify = [&](const QJsonValue &metadata, bool include, qint64 expected) {
+        const QString fingerprint(64, QLatin1Char('a'));
+        auto verify = [&](const QJsonValue &metadata, bool include, qint64 expected,
+                          const QString &expectedFingerprint = {}) {
             if (include) provider["rate_limit_reset_credits"] = metadata;
             else provider.remove("rate_limit_reset_credits");
             QVariantList parsed;
@@ -46,7 +48,11 @@ private slots:
             if (expected < 0) {
                 QVERIFY(normalized.isNull());
             } else {
-                QCOMPARE(normalized.toMap()["available_count"].toLongLong(), expected);
+                const auto credits = normalized.toMap();
+                QCOMPARE(credits["available_count"].toLongLong(), expected);
+                QCOMPARE(credits["account_fingerprint"].toString(), expectedFingerprint);
+                QVERIFY(credits.contains("account_fingerprint"));
+                QCOMPARE(credits["account_fingerprint"].isNull(), expectedFingerprint.isEmpty());
             }
         };
 
@@ -55,6 +61,11 @@ private slots:
         verify(QJsonObject{{"available_count", 0}}, true, 0);
         verify(QJsonObject{{"available_count", 1}}, true, 1);
         verify(QJsonObject{{"available_count", 3}}, true, 3);
+        verify(QJsonObject{{"available_count", 2}, {"account_fingerprint", fingerprint}}, true, 2, fingerprint);
+        verify(QJsonObject{{"available_count", 2}, {"account_fingerprint", fingerprint.toUpper()}}, true, 2);
+        verify(QJsonObject{{"available_count", 2}, {"account_fingerprint", fingerprint + "\n"}}, true, 2);
+        verify(QJsonObject{{"available_count", 2}, {"account_fingerprint", QString(63, QLatin1Char('a'))}}, true, 2);
+        verify(QJsonObject{{"available_count", 2}, {"account_fingerprint", QJsonValue(QJsonValue::Null)}}, true, 2);
         verify(QJsonObject{{"available_count", -1}}, true, -1);
         verify(QJsonObject{{"available_count", 1.5}}, true, -1);
         verify(QJsonObject{{"available_count", "2"}}, true, -1);
@@ -471,6 +482,50 @@ private slots:
         QCOMPARE(usageRequests, stableUsage); QCOMPARE(healthRequests, stableHealth);
         QCOMPARE(controller.diagnosticText().count("Requesting usage snapshot."), 1);
         QCOMPARE(controller.state()["status"].toString(), QString("offline"));
+    }
+    void localRecoveryStaysOfflineUntilSnapshotAccepted() {
+        QTemporaryDir dir; QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        const quint16 port = server.serverPort();
+        server.close();
+
+        ManagedServerOptions options;
+        options.localUrl = QUrl(QString("http://127.0.0.1:%1/").arg(port));
+        options.executablePath = dir.filePath("must-not-spawn");
+        options.probeTimeoutMs = 1000;
+        Controller controller(dir.filePath("settings.json"), nullptr, false, options, disabledCredentials());
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("offline"));
+        QVERIFY(controller.providers().isEmpty());
+
+        QVERIFY(server.listen(QHostAddress::LocalHost, port));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            while (auto socket = server.nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+                    const QByteArray request = socket->property("request").toByteArray() + socket->readAll();
+                    socket->setProperty("request", request);
+                    if (!request.contains("\r\n\r\n") || socket->property("handled").toBool()) return;
+                    socket->setProperty("handled", true);
+                    const QByteArray body = request.startsWith("GET /api/v1/health ")
+                        ? QByteArray(R"({"status":"ok","version":"fixture","providers":[]})")
+                        : TestUsage::snapshot();
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                        + QByteArray::number(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+                    socket->disconnectFromHost();
+                });
+                connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+            }
+        });
+
+        QStringList observedStates;
+        connect(&controller, &Controller::changed, this, [&] {
+            observedStates.append(controller.state()["status"].toString());
+        });
+        controller.refresh();
+        QTRY_COMPARE(controller.state()["status"].toString(), QString("ready"));
+        QCOMPARE(controller.providers().size(), 4);
+        QVERIFY(!observedStates.contains(QStringLiteral("connecting")));
+        QVERIFY(observedStates.contains(QStringLiteral("offline")));
+        QCOMPARE(observedStates.last(), QStringLiteral("ready"));
     }
     void attachedLocalUsageAndVersionNeverDiscloseSavedToken() {
         QTemporaryDir dir; QTcpServer impostor;

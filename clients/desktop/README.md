@@ -248,7 +248,10 @@ Activate the label to open ChatGPT's usage and reset controls in a browser.
 At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
 is available. It requires explicit confirmation and uses the selected backend
 transport. Requests are never retried automatically; an uncertain manual retry
-reuses the saved request ID. Both the desktop and server must support resets.
+reuses the saved request ID for the same opaque account fingerprint, including
+after switching between equivalent HTTP and SSH connections. Completed requests
+are released when a fresh snapshot shows a later weekly window. Both the desktop
+and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows and Linux. Windows can forward supported Cursor and Grok browser cookies

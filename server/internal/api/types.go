@@ -26,7 +26,7 @@ type GrokCredentials interface {
 
 type CodexResetter interface {
 	ResetAttemptStatus(string) (retry, blocked bool)
-	ConsumeResetCredit(context.Context, string, string) (outcome string, ambiguous bool, err error)
+	ConsumeResetCredit(context.Context, string, string, string) (outcome string, ambiguous bool, err error)
 }
 
 type ProviderPoller interface {

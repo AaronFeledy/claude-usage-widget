@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,6 +78,20 @@ func Test_parseUsage_normalizes_rate_limit_reset_credits(t *testing.T) {
 				t.Fatalf("RateLimitResetCredits = %+v, want available_count %d", data.RateLimitResetCredits, *tt.want)
 			}
 		})
+	}
+}
+
+func Test_accountFingerprint_is_stable_trimmed_and_opaque(t *testing.T) {
+	first := accountFingerprint(" account-123 ")
+	second := accountFingerprint("account-123")
+	if first == nil || second == nil || *first != *second || len(*first) != 64 || strings.Contains(*first, "account-123") {
+		t.Fatalf("accountFingerprint() = %v and %v, want matching opaque SHA-256 values", first, second)
+	}
+	if accountFingerprint("  ") != nil {
+		t.Fatal("accountFingerprint(blank) must be nil")
+	}
+	if !matchesAccountFingerprint(" account-123 ", *first) || matchesAccountFingerprint("other-account", *first) {
+		t.Fatal("matchesAccountFingerprint must accept only the normalized source account")
 	}
 }
 

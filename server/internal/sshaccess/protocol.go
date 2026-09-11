@@ -181,7 +181,11 @@ func doRequest(ctx context.Context, home string, request requestFrame) (int, []b
 		DisableKeepAlives: true,
 	}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+	requestTimeout := 10 * time.Second
+	if request.Method == http.MethodPost && request.Path == "/api/v1/providers/codex/reset" {
+		requestTimeout = 70 * time.Second
+	}
+	client := &http.Client{Transport: transport, Timeout: requestTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return errors.New("redirect disabled")
 	}}
 	httpRequest, err := http.NewRequestWithContext(ctx, request.Method, "http://headroom"+request.Path, bytes.NewReader(request.Body))

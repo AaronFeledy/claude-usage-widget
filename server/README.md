@@ -57,11 +57,14 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `GET /api/v1/health` - server status, version, and provider health.
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one JSON field: `cookie` or `access_token`.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
-- `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID) and `confirmed` (`true`). New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
+- `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
 
 Successful ChatGPT (`Codex`) usage entries include read-only
 `rate_limit_reset_credits` metadata when the upstream response reports a valid
-banked-reset count. The field is `null` when unknown or on provider errors.
+banked-reset count. It contains `available_count` and a nullable, opaque
+`account_fingerprint` that binds a confirmed action to the observed account
+without exposing the provider account ID. The field is `null` when the count is
+unknown or on provider errors.
 
 The reset response contains `outcome`: `reset`, `already_redeemed`,
 `nothing_to_reset`, or `no_credit`. The server never automatically retries a
@@ -70,8 +73,10 @@ saves that ID before sending and uses its selected local, HTTP(S), or SSH transp
 
 Reset requests reject browser-origin headers and require JSON, the configured
 bearer authentication (or the trusted SSH peer), a fresh weekly reading of at
-least 95%, a positive credit count, and the same account identity for eligibility
-and consumption. An ambiguous attempt must be retried with its original UUID;
+least 95%, a positive credit count, and the same account fingerprint for
+eligibility and consumption. The fingerprint is checked against current
+credentials immediately before every provider request. An ambiguous attempt must
+be retried with its original UUID;
 the server remembers that guard for its process lifetime, while the upstream UUID
 remains the idempotency key across restarts.
 

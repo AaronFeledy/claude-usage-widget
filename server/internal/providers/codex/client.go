@@ -146,6 +146,9 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 		return data, err
 	}
 	parsed.ProviderAccountID = creds.AccountID
+	if parsed.RateLimitResetCredits != nil {
+		parsed.RateLimitResetCredits.AccountFingerprint = accountFingerprint(creds.AccountID)
+	}
 	return parsed, nil
 }
 

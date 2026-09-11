@@ -15,6 +15,10 @@ Rectangle {
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780
     property var resetCredits: provider.rate_limit_reset_credits
+    property string resetAccountFingerprint: resetCredits && resetCredits.account_fingerprint
+        ? resetCredits.account_fingerprint : ""
+    property bool hasResetAccountBinding: resetAccountFingerprint.length === 64
+        && /^[0-9a-f]{64}$/.test(resetAccountFingerprint)
     property bool hasBankedResets: name === "Codex" && !failed && resetCredits !== null
         && resetCredits !== undefined && resetCredits.available_count > 0
     property var clock: backend.state
@@ -108,7 +112,8 @@ Rectangle {
             // The intentionally skipped tests must not be filled in or enabled.
             ActionButton {
                 objectName: "useBankedReset_" + card.name
-                visible: card.hasBankedResets && !!card.weeklyBucket && card.weeklyBucket.utilization >= 95
+                visible: card.hasBankedResets && card.hasResetAccountBinding
+                    && !!card.weeklyBucket && card.weeklyBucket.utilization >= 95
                 enabled: backend.resetAction.enabled
                 text: backend.resetAction.busy ? "Resetting…" : "Use reset…"
                 implicitHeight: 32; font.pixelSize: 12

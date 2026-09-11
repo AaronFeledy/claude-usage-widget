@@ -76,7 +76,8 @@ type UsageData struct {
 // RateLimitResetCredits is read-only provider metadata. It is separate from
 // usage buckets because a banked reset is an available action, not usage.
 type RateLimitResetCredits struct {
-	AvailableCount int64 `json:"available_count"`
+	AvailableCount     int64   `json:"available_count"`
+	AccountFingerprint *string `json:"account_fingerprint"`
 }
 
 type Header struct {

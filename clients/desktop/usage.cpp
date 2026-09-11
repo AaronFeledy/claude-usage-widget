@@ -49,7 +49,11 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             constexpr double maxSafeInteger = 9007199254740991.0;
             if (countValue.isDouble() && std::isfinite(count) && count >= 0
                 && count <= maxSafeInteger && std::floor(count) == count) {
-                resetCredits = QJsonObject{{"available_count", count}};
+                const QString fingerprint = credits["account_fingerprint"].toString();
+                static const QRegularExpression fingerprintPattern(QStringLiteral("^[0-9a-f]{64}$"));
+                resetCredits = QJsonObject{{"available_count", count},
+                    {"account_fingerprint", fingerprint.size() == 64 && fingerprintPattern.match(fingerprint).hasMatch()
+                        ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)}};
             }
         }
         p["rate_limit_reset_credits"] = resetCredits;

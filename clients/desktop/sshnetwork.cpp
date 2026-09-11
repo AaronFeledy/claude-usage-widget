@@ -83,6 +83,8 @@ public:
             : operation == QNetworkAccessManager::PutOperation ? QByteArrayLiteral("PUT")
             : operation == QNetworkAccessManager::PostOperation ? QByteArrayLiteral("POST") : QByteArray();
         const QString path = request.url().path(QUrl::FullyDecoded);
+        const bool resetRequest = method == QByteArrayLiteral("POST")
+            && path == QStringLiteral("/api/v1/providers/codex/reset");
         QUrl address;
         if (!SshTransport::parseAddress(request.url().adjusted(QUrl::RemovePath).toString(QUrl::FullyEncoded), &address)
             || !allowed(method, path)) {
@@ -130,14 +132,14 @@ public:
             QTimer::singleShot(0, this, [this] { fail(QNetworkReply::ContentOperationNotPermittedError); });
             return;
         }
-        QTimer::singleShot(0, this, [this] {
+        QTimer::singleShot(0, this, [this, resetRequest] {
             if (isFinished() || m_aborted) { fail(QNetworkReply::OperationCanceledError); return; }
             if (m_process->program().isEmpty()) { fail(QNetworkReply::ConnectionRefusedError); return; }
             m_process->start();
             if (m_process->write(m_frame) != m_frame.size()) m_invalid = true;
             m_frame.fill('\0'); m_frame.clear();
             m_process->closeWriteChannel();
-            m_deadline->start(qMax(1, m_options.timeoutMs));
+            m_deadline->start(resetRequest ? 90000 : qMax(1, m_options.timeoutMs));
         });
     }
 

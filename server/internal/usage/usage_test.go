@@ -64,12 +64,14 @@ func Test_UsageData_MarshalJSON_computes_success_from_error_when_error_present(t
 }
 
 func Test_UsageData_MarshalJSON_emits_optional_reset_credit_metadata(t *testing.T) {
-	data := usage.UsageData{ProviderName: "Codex", RateLimitResetCredits: &usage.RateLimitResetCredits{AvailableCount: 3}}
+	fingerprint := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	data := usage.UsageData{ProviderName: "Codex", RateLimitResetCredits: &usage.RateLimitResetCredits{AvailableCount: 3, AccountFingerprint: &fingerprint}}
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		t.Fatalf("MarshalJSON returned error: %v", err)
 	}
 	assertJSONField(t, encoded, "rate_limit_reset_credits.available_count", `3`)
+	assertJSONField(t, encoded, "rate_limit_reset_credits.account_fingerprint", `"`+fingerprint+`"`)
 
 	errorText := "unavailable"
 	data.Error = &errorText

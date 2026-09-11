@@ -84,6 +84,7 @@ private:
     bool chatGptResetEligible() const;
     QString resetConnectionIdentity() const;
     QString resetReceiptPath() const;
+    QStringList legacyResetReceiptPaths() const;
     void observeResetUsage();
     void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary);

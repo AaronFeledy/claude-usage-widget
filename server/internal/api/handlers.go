@@ -18,8 +18,11 @@ import (
 
 const maxCredentialBodyBytes = 1 << 20
 const maxResetBodyBytes = 1024
+const resetOperationTimeout = 60 * time.Second
+const resetWriteTimeout = 65 * time.Second
 
 var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type handler struct {
 	cache         Cache
@@ -63,8 +66,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type codexResetRequest struct {
-	RequestID string `json:"request_id"`
-	Confirmed bool   `json:"confirmed"`
+	RequestID          string `json:"request_id"`
+	Confirmed          bool   `json:"confirmed"`
+	AccountFingerprint string `json:"account_fingerprint"`
 }
 
 type codexResetResponse struct {
@@ -77,6 +81,13 @@ type codexResetResponse struct {
 func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 	if h.codex == nil || h.poller == nil || !h.hasProvider("codex") {
 		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+	started := time.Now()
+	resetCtx, cancel := context.WithDeadline(r.Context(), started.Add(resetOperationTimeout))
+	defer cancel()
+	if err := http.NewResponseController(w).SetWriteDeadline(started.Add(resetWriteTimeout)); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "reset request unavailable")
 		return
 	}
 	if len(r.Header.Values("Origin")) > 0 || len(r.Header.Values("Sec-Fetch-Site")) > 0 {
@@ -96,12 +107,19 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if !request.Confirmed || !uuidPattern.MatchString(request.RequestID) {
-		writeError(w, http.StatusBadRequest, "request_id must be a UUID and confirmed must be true")
+	if !request.Confirmed || !uuidPattern.MatchString(request.RequestID) || !accountFingerprintPattern.MatchString(request.AccountFingerprint) {
+		writeError(w, http.StatusBadRequest, "request_id must be a UUID, confirmed must be true, and account_fingerprint must be lowercase SHA-256")
+		return
+	}
+	if resetCtx.Err() != nil {
+		writeError(w, http.StatusRequestTimeout, "reset request timed out")
 		return
 	}
 
-	h.resetMu.Lock()
+	if !h.resetMu.TryLock() {
+		writeError(w, http.StatusConflict, "another reset request is in progress")
+		return
+	}
 	defer h.resetMu.Unlock()
 	retry, blocked := h.codex.ResetAttemptStatus(request.RequestID)
 	if blocked {
@@ -110,14 +128,14 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 	}
 	expectedAccountID := ""
 	if !retry {
-		entry, ok, err := h.poller.PollProvider(r.Context(), "codex")
-		if err != nil || !ok || !eligibleForCodexReset(entry) {
+		entry, ok, err := h.poller.PollProvider(resetCtx, "codex")
+		if err != nil || !ok || !eligibleForCodexReset(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
 			writeError(w, http.StatusConflict, "fresh eligible ChatGPT usage is required")
 			return
 		}
 		expectedAccountID = entry.Data.ProviderAccountID
 	}
-	outcome, ambiguous, err := h.codex.ConsumeResetCredit(r.Context(), request.RequestID, expectedAccountID)
+	outcome, ambiguous, err := h.codex.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
 	if err != nil {
 		if ambiguous {
 			writeError(w, http.StatusBadGateway, "reset outcome unknown; retry with the same request_id")
@@ -126,9 +144,6 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	refreshCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	_, _, _ = h.poller.PollProvider(refreshCtx, "codex")
-	cancel()
 	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
 }
 
@@ -151,6 +166,8 @@ func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
 			err = decoder.Decode(&request.RequestID)
 		case "confirmed":
 			err = decoder.Decode(&request.Confirmed)
+		case "account_fingerprint":
+			err = decoder.Decode(&request.AccountFingerprint)
 		default:
 			return codexResetRequest{}, fmt.Errorf("invalid JSON")
 		}
@@ -159,7 +176,7 @@ func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
 		}
 	}
 	closing, err := decoder.Token()
-	if err != nil || closing != json.Delim('}') || len(seen) != 2 {
+	if err != nil || closing != json.Delim('}') || len(seen) != 3 {
 		return codexResetRequest{}, fmt.Errorf("invalid JSON")
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {

@@ -8,12 +8,23 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QRegularExpression>
 #include <QUuid>
 
 // IMPORTANT: DO NOT test the reset button, its endpoint, or any code that might
 // trigger a reset. It can burn a very valuable banked reset. The corresponding
 // skipped tests are deliberate safeguards, not missing tests to implement.
 namespace {
+bool validFingerprint(const QString &value) {
+    static const QRegularExpression pattern(QStringLiteral("^[0-9a-f]{64}$"));
+    return value.size() == 64 && pattern.match(value).hasMatch();
+}
+
+QString canonicalWindow(const QVariantMap &weekly) {
+    const auto reset = QDateTime::fromString(weekly.value("resets_at").toString(), Qt::ISODateWithMs);
+    return reset.isValid() ? reset.toUTC().toString(Qt::ISODateWithMs) : QString();
+}
+
 bool readReceipt(const QString &path, QJsonObject &receipt) {
     if (!QFileInfo::exists(path)) return true;
     QFile file(path);
@@ -42,7 +53,9 @@ QVariantMap Controller::chatGptWeekly() const {
         for (const auto &bucket : provider.value("buckets").toList()) {
             auto weekly = bucket.toMap();
             if (weekly.value("id").toString() != "weekly") continue;
-            weekly.insert("available_count", provider.value("rate_limit_reset_credits").toMap().value("available_count"));
+            const auto credits = provider.value("rate_limit_reset_credits").toMap();
+            weekly.insert("available_count", credits.value("available_count"));
+            weekly.insert("account_fingerprint", credits.value("account_fingerprint"));
             return weekly;
         }
     }
@@ -55,22 +68,40 @@ bool Controller::chatGptResetEligible() const {
         && QDateTime::currentSecsSinceEpoch() - m_lastGood <= qMax(120, m_interval * 2)
         && weekly.value("utilization").toDouble() >= 95
         && weekly.value("available_count").toDouble() > 0
+        && validFingerprint(weekly.value("account_fingerprint").toString())
         && m_resetBlockedReceipt != resetReceiptPath();
 }
 
 QString Controller::resetConnectionIdentity() const {
     // Confirmation is invalidated by a connection, token, or pinned-peer change.
     const auto bytes = m_mode.toUtf8() + '\0' + backendUrl().toUtf8() + '\0'
-        + backendToken().toUtf8() + '\0' + backendCertificate().toDer();
+        + backendToken().toUtf8() + '\0' + backendCertificate().toDer() + '\0'
+        + chatGptWeekly().value("account_fingerprint").toString().toUtf8();
     return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
 }
 
 QString Controller::resetReceiptPath() const {
-    // Local per-launch ports/tokens must not create a new redemption identity
-    // after a restart. Receipts contain no credentials or account output.
-    const auto address = m_mode == "local" ? QByteArray("local") : m_mode.toUtf8() + '\0' + Usage::endpoint(backendUrl()).toEncoded();
-    const auto key = QCryptographicHash::hash(address, QCryptographicHash::Sha256).toHex();
-    return m_settingsService.path() + ".reset-" + QString::fromLatin1(key) + ".json";
+    // The opaque server-derived fingerprint keeps one redemption identity for
+    // an account across local launches, transports, and equivalent addresses.
+    const QString fingerprint = chatGptWeekly().value("account_fingerprint").toString();
+    if (!validFingerprint(fingerprint)) return {};
+    return m_settingsService.path() + ".reset-account-" + fingerprint + ".json";
+}
+
+QStringList Controller::legacyResetReceiptPaths() const {
+    // Detect every receipt written before account binding, including one made
+    // through a different transport or address. None can be safely adopted
+    // because its UUID may already have reached another account.
+    const QFileInfo settings(m_settingsService.path());
+    const QString prefix = settings.fileName() + QStringLiteral(".reset-");
+    QStringList paths;
+    for (const auto &entry : QDir(settings.absolutePath()).entryInfoList(QDir::Files | QDir::NoDotAndDotDot)) {
+        const QString name = entry.fileName();
+        if (!name.startsWith(prefix) || !name.endsWith(QStringLiteral(".json"))) continue;
+        const QString key = name.mid(prefix.size(), name.size() - prefix.size() - QStringLiteral(".json").size());
+        if (validFingerprint(key)) paths.append(entry.absoluteFilePath());
+    }
+    return paths;
 }
 
 QVariantMap Controller::resetAction() const {
@@ -86,13 +117,32 @@ bool Controller::prepareChatGptReset() {
         m_resetMessage = "Refresh usage before using a reset. Weekly usage must be at least 95% and a banked reset must be available.";
         emit changed(); return false;
     }
+    const auto weekly = chatGptWeekly();
+    const QString fingerprint = weekly.value("account_fingerprint").toString();
+    const QString receiptPath = resetReceiptPath();
     QJsonObject receipt;
-    if (!readReceipt(resetReceiptPath(), receipt)) {
+    if (!readReceipt(receiptPath, receipt)) {
         m_resetMessage = "The previous reset request could not be read safely. Check your usage in ChatGPT.";
         emit changed(); return false;
     }
+    if (!receipt.isEmpty() && receipt.value("account_fingerprint").toString() != fingerprint) {
+        m_resetMessage = "The previous reset request is not bound to this ChatGPT account. Check your usage in ChatGPT.";
+        emit changed(); return false;
+    }
+    for (const QString &legacyPath : legacyResetReceiptPaths()) {
+        QJsonObject legacy;
+        if (!readReceipt(legacyPath, legacy)) {
+            m_resetMessage = "The previous reset request could not be read safely. Check your usage in ChatGPT.";
+        } else if (!legacy.value("completed").toBool()) {
+            m_resetMessage = "A previous reset request is not bound to a ChatGPT account and cannot be retried safely. Check it in ChatGPT.";
+        } else {
+            m_resetBlockedReceipt = legacyPath;
+            m_resetMessage = "A reset was already used. Waiting for updated weekly usage.";
+        }
+        emit changed(); return false;
+    }
     if (receipt.value("completed").toBool()) {
-        m_resetBlockedReceipt = resetReceiptPath();
+        m_resetBlockedReceipt = receiptPath;
         m_resetMessage = "A reset was already used. Waiting for updated weekly usage.";
         emit changed(); return false;
     }
@@ -107,14 +157,35 @@ void Controller::cancelChatGptResetConfirmation() {
 
 void Controller::observeResetUsage() {
     // Read-only usage polling never sends a redemption. Only a successful new
-    // reading below the threshold (or zero credits) releases a completed receipt.
+    // reading below the threshold, zero credits, or a later weekly window
+    // releases a completed account-bound receipt.
     const auto weekly = chatGptWeekly();
-    if (weekly.isEmpty() || (weekly.value("utilization").toDouble() >= 95
-        && (!weekly.value("available_count").isValid() || weekly.value("available_count").toDouble() > 0))) return;
+    if (weekly.isEmpty()) return;
+    const bool lowOrEmpty = weekly.value("utilization").toDouble() < 95
+        || (weekly.value("available_count").isValid() && weekly.value("available_count").toDouble() <= 0);
     const QString path = resetReceiptPath();
     QJsonObject receipt;
-    if (readReceipt(path, receipt) && receipt.value("completed").toBool() && QFile::remove(path)) {
-        if (m_resetBlockedReceipt == path) m_resetBlockedReceipt.clear();
+    const QString currentWindow = canonicalWindow(weekly);
+    if (!path.isEmpty() && readReceipt(path, receipt)) {
+        const QString receiptWindow = receipt.value("weekly_resets_at").toString();
+        const auto receiptReset = QDateTime::fromString(receiptWindow, Qt::ISODateWithMs);
+        const auto currentReset = QDateTime::fromString(currentWindow, Qt::ISODateWithMs);
+        const bool newWindow = receiptReset.isValid() && currentReset.isValid()
+            && currentReset.toUTC() > receiptReset.toUTC();
+        if (receipt.value("completed").toBool()
+            && receipt.value("account_fingerprint").toString() == weekly.value("account_fingerprint").toString()
+            && (lowOrEmpty || newWindow) && QFile::remove(path)) {
+            if (m_resetBlockedReceipt == path) m_resetBlockedReceipt.clear();
+        }
+    }
+    if (lowOrEmpty) {
+        for (const QString &legacyPath : legacyResetReceiptPaths()) {
+            QJsonObject legacy;
+            if (readReceipt(legacyPath, legacy) && legacy.value("completed").toBool()
+                && QFile::remove(legacyPath) && m_resetBlockedReceipt == legacyPath) {
+                m_resetBlockedReceipt.clear();
+            }
+        }
     }
 }
 
@@ -134,12 +205,27 @@ void Controller::consumeChatGptReset() {
     // automatically, follow redirects, or replace an uncertain request's UUID.
     if (!resetAction().value("canConfirm").toBool()) return;
     const QString receiptPath = resetReceiptPath();
+    const auto weekly = chatGptWeekly();
+    const QString fingerprint = weekly.value("account_fingerprint").toString();
     QJsonObject receipt;
     if (!readReceipt(receiptPath, receipt) || receipt.value("completed").toBool()) {
         m_resetMessage = "Check your previous reset in ChatGPT before continuing.";
         m_resetConfirmation.clear(); emit changed(); return;
     }
-    if (receipt.isEmpty()) receipt = {{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)}, {"completed", false}};
+    if (!receipt.isEmpty() && receipt.value("account_fingerprint").toString() != fingerprint) {
+        m_resetMessage = "The saved reset request does not match this ChatGPT account.";
+        m_resetConfirmation.clear(); emit changed(); return;
+    }
+    if (!legacyResetReceiptPaths().isEmpty()) {
+        m_resetMessage = "A previous reset request is not bound to a ChatGPT account and cannot be retried safely. Check it in ChatGPT.";
+        m_resetConfirmation.clear(); emit changed(); return;
+    }
+    const QString requestWindow = canonicalWindow(weekly);
+    if (receipt.isEmpty()) {
+        receipt = {{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+            {"completed", false}, {"account_fingerprint", fingerprint},
+            {"weekly_resets_at", requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow)}};
+    }
     if (!writeReceipt(receiptPath, receipt)) {
         m_resetMessage = "The reset request could not be saved safely. No reset was requested.";
         m_resetConfirmation.clear(); emit changed(); return;
@@ -152,12 +238,13 @@ void Controller::consumeChatGptReset() {
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Accept", "application/json");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-    request.setTransferTimeout(25000);
+    request.setTransferTimeout(95000);
     const ServerConnection transport = m_mode == "local" ? m_server.connection()
         : ServerConnection{QUrl(backendUrl()), backendToken().toUtf8(), QSslCertificate()};
     if (!transport.token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + transport.token);
     if (m_mode == "local") ServerTransport::secureRequest(request, transport.certificate);
-    const auto body = QJsonDocument(QJsonObject{{"request_id", receipt.value("request_id")}, {"confirmed", true}}).toJson(QJsonDocument::Compact);
+    const auto body = QJsonDocument(QJsonObject{{"request_id", receipt.value("request_id")},
+        {"confirmed", true}, {"account_fingerprint", fingerprint}}).toJson(QJsonDocument::Compact);
     cancel(); m_poll.stop(); m_resetBusy = true; m_resetConfirmation.clear(); m_resetMessage = "Using one banked reset…";
     emit changed();
     QNetworkAccessManager *network = m_mode == "local" ? &m_localNetwork
@@ -165,9 +252,9 @@ void Controller::consumeChatGptReset() {
     auto reply = network->post(request, body); m_resetReply = reply;
     if (m_mode == "local") ServerTransport::requirePinnedPeer(reply, transport.certificate);
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
-    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(30000);
+    connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
     connect(reply, &QNetworkReply::readyRead, this, [reply] { if (reply->bytesAvailable() > 4096) reply->abort(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, receiptPath, receipt]() mutable {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, receiptPath, receipt, requestWindow]() mutable {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const bool redirected = reply->attribute(QNetworkRequest::RedirectionTargetAttribute).isValid();
         const auto error = reply->error(); const auto bytes = reply->readAll();
@@ -175,6 +262,11 @@ void Controller::consumeChatGptReset() {
         const auto outcome = bytes.size() <= 4096 ? QJsonDocument::fromJson(bytes).object().value("outcome").toString() : QString();
         const bool terminal = outcome == "reset" || outcome == "already_redeemed" || outcome == "nothing_to_reset" || outcome == "no_credit";
         if (!redirected && error == QNetworkReply::NoError && status == 200 && terminal) {
+            // A reset outcome may represent a new spend after a delayed retry;
+            // bind it to the window in which this request was sent. An
+            // already_redeemed outcome retains the original receipt window.
+            if (outcome == "reset") receipt.insert("weekly_resets_at",
+                requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow));
             receipt.insert("completed", true);
             writeReceipt(receiptPath, receipt); // A failed write retains the original UUID for a safe manual retry.
             m_resetBlockedReceipt = receiptPath;

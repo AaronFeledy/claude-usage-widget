@@ -47,7 +47,7 @@ func copyResetCredits(value *usage.RateLimitResetCredits) *usage.RateLimitResetC
 	if value == nil {
 		return nil
 	}
-	return &usage.RateLimitResetCredits{AvailableCount: value.AvailableCount}
+	return &usage.RateLimitResetCredits{AvailableCount: value.AvailableCount, AccountFingerprint: copyString(value.AccountFingerprint)}
 }
 
 func copyBucket(bucket usage.UsageBucket) usage.UsageBucket {

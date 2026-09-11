@@ -3,8 +3,11 @@ package codex
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -12,6 +15,7 @@ import (
 )
 
 const maxResetResponseBytes = 64 << 10
+const accountFingerprintDomain = "headroom/codex/account-fingerprint/v1\x00"
 
 var errResetUnavailable = errors.New("reset request unavailable")
 var errDifferentResetPending = errors.New("a different reset request has an unknown outcome")
@@ -28,20 +32,26 @@ func (c *Client) ResetAttemptStatus(requestID string) (retry, blocked bool) {
 // ConsumeResetCredit can spend a valuable banked reset. Do not test this
 // method, the endpoint it calls, or code that may trigger it: even a test can
 // consume a real reset. The skipped safety test is intentional, not a TODO.
-func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAccountID string) (outcome string, ambiguous bool, err error) {
+func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAccountID, expectedAccountFingerprint string) (outcome string, ambiguous bool, err error) {
 	c.resetMu.Lock()
 	defer c.resetMu.Unlock()
 	creds, err := c.store.Current(ctx)
-	if err != nil || strings.TrimSpace(creds.AccountID) == "" {
+	accountID := strings.TrimSpace(creds.AccountID)
+	if err != nil || accountID == "" || !matchesAccountFingerprint(accountID, expectedAccountFingerprint) {
 		return "", false, errResetUnavailable
 	}
-	if expectedAccountID != "" && strings.TrimSpace(expectedAccountID) != strings.TrimSpace(creds.AccountID) {
+	if expectedAccountID != "" && strings.TrimSpace(expectedAccountID) != accountID {
 		return "", false, errResetUnavailable
 	}
-	if c.resetAttemptID == requestID && c.resetAccountID != creds.AccountID {
+	if c.resetAttemptID == requestID && c.resetAccountID != accountID {
 		return "", false, errResetUnavailable
 	}
 	if c.resetAttemptID == requestID && c.resetOutcome != "" {
+		// No new credit is consumed on this branch. Preserve the original
+		// receipt window when the desktop resolves a previously lost response.
+		if c.resetOutcome == "reset" {
+			return "already_redeemed", false, nil
+		}
 		return c.resetOutcome, false, nil
 	}
 	if c.resetAttemptID != "" && c.resetAttemptID != requestID && c.resetOutcome == "" {
@@ -68,7 +78,7 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	// From this point onward the request may have reached the provider. Keep the
 	// ID so only an idempotent retry can resolve an ambiguous result.
 	c.resetAttemptID = requestID
-	c.resetAccountID = creds.AccountID
+	c.resetAccountID = accountID
 	c.resetOutcome = ""
 	resp, err := client.Do(req)
 	if err != nil {
@@ -98,6 +108,21 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	}
 	c.resetOutcome = decoded.Code
 	return decoded.Code, false, nil
+}
+
+func accountFingerprint(accountID string) *string {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil
+	}
+	digest := sha256.Sum256([]byte(accountFingerprintDomain + accountID))
+	value := fmt.Sprintf("%x", digest)
+	return &value
+}
+
+func matchesAccountFingerprint(accountID, expected string) bool {
+	actual := accountFingerprint(accountID)
+	return actual != nil && subtle.ConstantTimeCompare([]byte(*actual), []byte(expected)) == 1
 }
 
 func validResetOutcome(outcome string) bool {

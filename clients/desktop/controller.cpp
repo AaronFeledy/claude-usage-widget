@@ -71,7 +71,13 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
         if (m_mode != "local" || m_server.isAvailable() || m_server.state() == "failed") return;
         if (m_loading) cancel();
         if (!m_waitingForUsageRetry) m_poll.stop();
-        m_status = "connecting"; m_message = "Preparing the local usage server…"; m_errorKind.clear();
+        // Keep an established failure visible while Local mode probes or starts
+        // its server. Recovery is complete only after a new snapshot is accepted.
+        if (m_status != QStringLiteral("offline")) {
+            m_status = QStringLiteral("connecting");
+            m_message = QStringLiteral("Preparing the local usage server…");
+            m_errorKind.clear();
+        }
         emit changed();
     });
     if (m_startPolling) QTimer::singleShot(0, this, &Controller::refresh);
@@ -145,7 +151,12 @@ void Controller::refresh() {
     m_poll.stop();
     if (m_mode == "local") {
         m_waitingForUsageRetry = false;
-        m_status = "connecting"; m_message = "Preparing the local usage server…"; m_errorKind.clear(); emit changed();
+        if (m_status != QStringLiteral("offline")) {
+            m_status = QStringLiteral("connecting");
+            m_message = QStringLiteral("Preparing the local usage server…");
+            m_errorKind.clear();
+        }
+        emit changed();
         m_server.ensureAvailable();
         return;
     }
