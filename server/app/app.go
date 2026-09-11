@@ -35,6 +35,17 @@ func Run(ctx context.Context, args, env []string, logger *slog.Logger, version s
 	})
 }
 
+// RunWithReady is Run with an in-process startup acknowledgement. Ready is
+// called once after configuration, provider construction, and all listeners
+// succeed, before polling starts. Returning an error closes those listeners and
+// aborts startup. Help and SSH stdio requests never acknowledge a server start.
+func RunWithReady(ctx context.Context, args, env []string, logger *slog.Logger, version string,
+	input io.Reader, output io.Writer, ready func() error) error {
+	return runContext(ctx, args, env, logger, desktopSessionOptions{
+		input: input, output: output, version: version, ready: ready,
+	})
+}
+
 func runContext(ctx context.Context, args []string, env []string, logger *slog.Logger, desktopOptions desktopSessionOptions) error {
 	desktopOptions = desktopOptions.withDefaults()
 	stdioMode, err := sshaccess.IsStdioMode(args)
@@ -103,6 +114,10 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 	if err != nil {
 		return err
 	}
+	defer listener.Close()
+	if err := acknowledgeReady(ctx, desktopOptions.ready); err != nil {
+		return err
+	}
 	servers := []server.RunOptions{{Listener: listener, Handler: handler, Logger: logger}}
 	if sshListener != nil {
 		servers = append(servers, server.RunOptions{Listener: sshListener, Handler: sshaccess.InjectAuthorization(cfg.AuthToken, handler), Logger: logger})
@@ -137,11 +152,24 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	if err := prepared.publishIdentity(); err != nil {
 		return err
 	}
+	if err := acknowledgeReady(ctx, options.ready); err != nil {
+		return err
+	}
 	return runServerAndPoller(ctx, appRuntime{
 		servers:  []server.RunOptions{{Listener: prepared.listener, Handler: handler, Logger: logger}},
 		poller:   providerPoller,
 		interval: cfg.PollInterval,
 	})
+}
+
+func acknowledgeReady(ctx context.Context, ready func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if ready != nil {
+		return ready()
+	}
+	return nil
 }
 
 type appRuntime struct {
