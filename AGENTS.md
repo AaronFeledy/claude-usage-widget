@@ -2,13 +2,13 @@
 
 ## Project overview
 
-Headroom is a shared Qt Quick tray app for Windows and Linux plus a Go usage API
+Headroom is a shared Qt Quick tray app for Windows, macOS, and Linux plus a Go usage API
 server. It monitors Claude, ChatGPT, Cursor, and Grok usage. The compatible API
 and configuration name for ChatGPT remains `Codex`.
 
 ## Layout
 
-- `clients/desktop/` — primary Qt 6.6+ Windows/Linux UI, local-server manager,
+- `clients/desktop/` — primary Qt 6.6+ Windows/macOS/Linux UI, local-server manager,
   Windows credential-helper client, startup, diagnostics, and package updater.
 - `packaging/headroom-manager/` — Go archive validator, stable launcher,
   installer, staged acquisition, transactional apply, rollback, and recovery.
@@ -19,7 +19,7 @@ and configuration name for ChatGPT remains `Codex`.
 - `server/` — Go 1.25 usage API, provider integrations, configuration, and
   Dockerfile.
 - `tests/windows/` — Linux-runnable C# lifecycle and browser fixtures.
-- `.github/workflows/headroom-packages.yml` — reusable three-target package and
+- `.github/workflows/headroom-packages.yml` — reusable five-target package and
   release gate used by PR and release entry workflows.
 - `docs/` — migration plan, desktop parity audit, and Home Assistant REST sensor
   guidance.
@@ -47,7 +47,7 @@ or expose cookies in arguments. Linux/WSL standalone servers opt in with
 `usage-server --ssh-stdio` receiver connects to the existing server through an
 owner-only per-account Unix socket and validates the peer UID. It never creates
 another provider poller or falls back to TCP. Native Windows receivers are not
-supported; Windows and Linux desktop clients can use Linux/WSL receivers.
+supported; Windows, macOS, and Linux desktop clients can use Linux/WSL receivers.
 Keep usage, version, and credential requests on the same selected transport.
 
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
@@ -74,7 +74,14 @@ trusted native per-user install. Capture, explicit-config, source, and
 system-managed sessions make no public update requests. Restart
 apply uses a two-way acknowledgement/commit, exact process identity, readiness,
 rollback, and durable recovery. Do not add a second archive validator outside
-the Go manager.
+the Go manager. macOS framework links are the only archive symlinks allowed:
+they must be manifest-listed and resolve within the same packaged framework.
+Mac payloads use Headroom.app/Contents/MacOS; the stable Finder launcher is
+~/Applications/Headroom.app and managed generations live under
+~/Library/Application Support/Headroom. Login startup writes only the owned
+LaunchAgent plist for the next login; do not bootstrap or bootout the current
+app when changing that preference. Preserve Apple framework structure for code
+signing. Ad-hoc signatures are not Developer ID signing or notarization.
 
 ## Release and version rules
 
@@ -83,10 +90,10 @@ manager, server, helper, package filenames, manifests, and release tag. Build
 metadata is preserved. Numeric components are separately derived for PE and
 .NET assembly versions and may not exceed 65534.
 
-The reusable package workflow builds Windows x64, Windows ARM64, and Linux
-x86_64 with Qt 6.8.3. It verifies the exact packages on native runners, runs the
-legacy harness and server Go/race/vet/build/Docker gates, and assembles three
-desktop packages, one release manifest, four standalone servers, both installers,
+The reusable package workflow builds Windows x64, Windows ARM64, Linux x86_64,
+and macOS x86_64/ARM64 (deployment target 12.0) with Qt 6.8.3. It verifies the exact packages on native runners, runs the
+legacy harness and server Go/race/vet/build/Docker gates, and assembles five
+desktop packages, legacy/full release manifests, six standalone servers, both installers,
 and `SHA256SUMS`. PR workflows have read-only contents permission and never
 publish. The release resolver is read-only; only the final gated job may create
 or verify the tag at the initiating commit and publish. Never publish a tag or

@@ -124,7 +124,7 @@ int main(int argc, char **argv) {
         // Never guess from stale Wayland coordinates. Windows and X11 can use
         // the actual tray rectangle; Qt also sends tooltip events on X11.
         const QString platform = QGuiApplication::platformName();
-        if (nativeTrayUsed || (platform != "windows" && platform != "xcb")) return false;
+        if (nativeTrayUsed || (platform != "windows" && platform != "xcb" && platform != "cocoa")) return false;
         const QRect bounds = tray.geometry();
         return bounds.isValid() && bounds.contains(QCursor::pos());
     });
@@ -167,9 +167,19 @@ int main(int argc, char **argv) {
         show();
         if (auto settings = window->findChild<QObject *>("settingsPanel")) QMetaObject::invokeMethod(settings, "open");
     });
-    menu.addSeparator(); menu.addAction("Quit Headroom", &app, &QApplication::quit); tray.setContextMenu(&fallbackMenu);
+    menu.addSeparator(); menu.addAction("Quit Headroom", &app, &QApplication::quit);
+#ifndef Q_OS_MACOS
+    tray.setContextMenu(&fallbackMenu);
+#endif
     QObject::connect(&tray, &QSystemTrayIcon::activated, &app, [&](QSystemTrayIcon::ActivationReason reason) {
         if (reason != QSystemTrayIcon::Unknown) attention.acknowledge();
+#ifdef Q_OS_MACOS
+        if (reason == QSystemTrayIcon::Context) {
+            const QPoint anchor = tray.geometry().isValid() ? tray.geometry().center() : QCursor::pos();
+            fallbackMenu.popup(anchor);
+            return;
+        }
+#endif
         if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick)
             popup.toggle(tray.geometry().isValid() ? tray.geometry().center() : QCursor::pos());
     });

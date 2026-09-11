@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"debug/elf"
+	"debug/macho"
 	"debug/pe"
 	"encoding/hex"
 	"fmt"
@@ -27,6 +28,7 @@ type archiveEntry struct {
 	size      int64
 	mode      os.FileMode
 	directory bool
+	link      string
 }
 
 func InspectArchive(filename string) (PackageManifest, string, error) {
@@ -139,14 +141,18 @@ func inspectTar(filename string) (PackageManifest, string, error) {
 		seen[name] = true
 		roots[strings.SplitN(name, "/", 2)[0]] = true
 		directory := header.Typeflag == tar.TypeDir
-		if !directory && header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+		link := ""
+		if header.Typeflag == tar.TypeSymlink {
+			link = header.Linkname
+		}
+		if !directory && link == "" && header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
 			return manifest, "", fmt.Errorf("archive links and special entries are forbidden: %s", name)
 		}
 		if header.Size < 0 || header.Size > maxPackageFileBytes || total > maxPackageBytes-header.Size {
 			return manifest, "", fmt.Errorf("archive entry has invalid size: %s", name)
 		}
 		total += header.Size
-		entries = append(entries, archiveEntry{name: name, size: header.Size, mode: os.FileMode(header.Mode), directory: directory})
+		entries = append(entries, archiveEntry{name: name, size: header.Size, mode: os.FileMode(header.Mode), directory: directory, link: link})
 		if strings.HasSuffix(name, "/"+PackageManifestName) {
 			if found {
 				return manifest, "", fmt.Errorf("multiple package manifests")
@@ -196,17 +202,26 @@ func finishInspection(manifest PackageManifest, found bool, roots map[string]boo
 		}
 		record, ok := records[rel]
 		if !ok {
+			if entry.link != "" {
+				return manifest, "", fmt.Errorf("archive links are forbidden outside declared macOS frameworks: %s", rel)
+			}
 			return manifest, "", fmt.Errorf("unlisted archive file %s", rel)
 		}
-		if entry.size != record.Size {
+		if entry.link != "" {
+			if manifest.Platform != "macos" || record.LinkTarget != entry.link {
+				return manifest, "", fmt.Errorf("unlisted archive link %s", rel)
+			}
+		} else if record.LinkTarget != "" {
+			return manifest, "", fmt.Errorf("framework link stored as regular file: %s", rel)
+		} else if entry.size != record.Size {
 			return manifest, "", fmt.Errorf("size mismatch for %s", rel)
 		}
 		seen[rel] = true
 	}
 	for _, entry := range entries {
-		if !entry.directory {
+		if !entry.directory && entry.link == "" {
 			rel := strings.TrimPrefix(entry.name, root+"/")
-			if record, ok := records[rel]; ok && manifest.Platform == "linux" && record.Mode != fmt.Sprintf("%04o", entry.mode.Perm()) {
+			if record, ok := records[rel]; ok && manifest.Platform != "windows" && record.Mode != fmt.Sprintf("%04o", entry.mode.Perm()) {
 				return manifest, "", fmt.Errorf("mode mismatch for %s", rel)
 			}
 		}
@@ -243,7 +258,7 @@ func ExtractAndVerify(filename, destination string, expected Expectations) (Pack
 	if strings.HasSuffix(filename, ".zip") {
 		err = extractZip(filename, destination)
 	} else {
-		err = extractTar(filename, destination)
+		err = extractTar(filename, destination, manifest, root)
 	}
 	if err != nil {
 		return manifest, "", err
@@ -328,7 +343,7 @@ func extractZip(filename, destination string) error {
 	return nil
 }
 
-func extractTar(filename, destination string) error {
+func extractTar(filename, destination string, manifest PackageManifest, archiveRoot string) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -343,6 +358,8 @@ func extractTar(filename, destination string) error {
 	count := 0
 	total := int64(0)
 	seen := map[string]bool{}
+	type pendingLink struct{ name, target string }
+	var links []pendingLink
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -355,7 +372,8 @@ func extractTar(filename, destination string) error {
 		name := strings.TrimSuffix(header.Name, "/")
 		fold := strings.ToLower(name)
 		directory := header.Typeflag == tar.TypeDir
-		if count > maxPackageEntries || !validArchiveName(name) || seen[fold] || !directory && header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA || header.Size < 0 || header.Size > maxPackageFileBytes || total > maxPackageBytes-header.Size {
+		link := header.Typeflag == tar.TypeSymlink
+		if count > maxPackageEntries || !validArchiveName(name) || seen[fold] || !directory && !link && header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA || header.Size < 0 || header.Size > maxPackageFileBytes || total > maxPackageBytes-header.Size {
 			return fmt.Errorf("unsafe archive entry %q", header.Name)
 		}
 		seen[fold] = true
@@ -367,10 +385,27 @@ func extractTar(filename, destination string) error {
 			}
 			continue
 		}
+		if link {
+			rel := strings.TrimPrefix(name, archiveRoot+"/")
+			record, ok := fileRecord(manifest.Files, rel)
+			if manifest.Platform != "macos" || !ok || record.LinkTarget != header.Linkname {
+				return fmt.Errorf("unsafe archive link %q", header.Name)
+			}
+			links = append(links, pendingLink{target, header.Linkname})
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		if err := copyExclusive(target, reader, os.FileMode(header.Mode).Perm()); err != nil {
+			return err
+		}
+	}
+	for _, link := range links {
+		if err := os.MkdirAll(filepath.Dir(link.name), 0o755); err != nil {
+			return err
+		}
+		if err := os.Symlink(link.target, link.name); err != nil {
 			return err
 		}
 	}
@@ -407,7 +442,7 @@ func VerifyTree(root string, manifest PackageManifest) error {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if info.Mode()&os.ModeType != 0 {
+		if info.Mode()&os.ModeType != 0 && info.Mode()&os.ModeSymlink == 0 {
 			return fmt.Errorf("package links and special files are forbidden: %s", rel)
 		}
 		actual[rel] = info
@@ -425,10 +460,20 @@ func VerifyTree(root string, manifest PackageManifest) error {
 		if !ok {
 			return fmt.Errorf("missing package file %s", record.Path)
 		}
-		if info.Size() != record.Size {
+		if record.LinkTarget != "" {
+			if info.Mode()&os.ModeSymlink == 0 {
+				return fmt.Errorf("framework link is not a symlink: %s", record.Path)
+			}
+			target, err := os.Readlink(filepath.Join(root, filepath.FromSlash(record.Path)))
+			if err != nil || target != record.LinkTarget {
+				return fmt.Errorf("framework link target mismatch: %s", record.Path)
+			}
+			continue
+		}
+		if !info.Mode().IsRegular() || info.Size() != record.Size {
 			return fmt.Errorf("size mismatch for %s", record.Path)
 		}
-		if manifest.Platform == "linux" && fmt.Sprintf("%04o", info.Mode().Perm()) != record.Mode {
+		if manifest.Platform != "windows" && fmt.Sprintf("%04o", info.Mode().Perm()) != record.Mode {
 			return fmt.Errorf("mode mismatch for %s", record.Path)
 		}
 		file, err := os.Open(filepath.Join(root, filepath.FromSlash(record.Path)))
@@ -474,6 +519,31 @@ func verifyExecutableArchitecture(filename, platform, architecture string) error
 		}
 		return nil
 	}
+	if platform == "macos" {
+		expected := macho.CpuAmd64
+		if architecture == "arm64" {
+			expected = macho.CpuArm64
+		}
+		file, err := macho.Open(filename)
+		if err == nil {
+			defer file.Close()
+			if file.Cpu != expected {
+				return fmt.Errorf("wrong Mach-O architecture for %s", filepath.Base(filename))
+			}
+			return nil
+		}
+		fat, fatErr := macho.OpenFat(filename)
+		if fatErr != nil {
+			return fmt.Errorf("inspect Mach-O %s: %w", filepath.Base(filename), err)
+		}
+		defer fat.Close()
+		for _, arch := range fat.Arches {
+			if arch.Cpu == expected {
+				return nil
+			}
+		}
+		return fmt.Errorf("wrong Mach-O architecture for %s", filepath.Base(filename))
+	}
 	file, err := elf.Open(filename)
 	if err != nil {
 		return fmt.Errorf("inspect ELF %s: %w", filepath.Base(filename), err)
@@ -498,6 +568,9 @@ func WriteArchive(root, output string) error {
 		}
 		writer := zip.NewWriter(file)
 		walkErr := walkArchiveFiles(root, func(rel, name string, info os.FileInfo) error {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("symlink forbidden in zip: %s", rel)
+			}
 			header, err := zip.FileInfoHeader(info)
 			if err != nil {
 				return err
@@ -535,7 +608,15 @@ func WriteArchive(root, output string) error {
 		gz.ModTime = gzip.Header{}.ModTime
 		writer := tar.NewWriter(gz)
 		walkErr := walkArchiveFiles(root, func(rel, name string, info os.FileInfo) error {
-			header, err := tar.FileInfoHeader(info, "")
+			link := ""
+			if info.Mode()&os.ModeSymlink != 0 {
+				var err error
+				link, err = os.Readlink(name)
+				if err != nil {
+					return err
+				}
+			}
+			header, err := tar.FileInfoHeader(info, link)
 			if err != nil {
 				return err
 			}
@@ -543,6 +624,9 @@ func WriteArchive(root, output string) error {
 			header.ModTime = header.ModTime.UTC()
 			if err = writer.WriteHeader(header); err != nil {
 				return err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return nil
 			}
 			src, err := os.Open(name)
 			if err != nil {
@@ -575,10 +659,7 @@ func walkArchiveFiles(root string, visit func(string, string, os.FileInfo) error
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink forbidden: %s", name)
-		}
-		if info.Mode().IsRegular() {
+		if info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			names = append(names, name)
 		}
 		return nil
@@ -588,7 +669,7 @@ func walkArchiveFiles(root string, visit func(string, string, os.FileInfo) error
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		info, err := os.Stat(name)
+		info, err := os.Lstat(name)
 		if err != nil {
 			return err
 		}

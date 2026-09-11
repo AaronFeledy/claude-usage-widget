@@ -66,6 +66,9 @@ int main(int argc, char **argv) {
 #ifdef Q_OS_WIN
         const QString platform = QStringLiteral("windows");
         const QString asset = QStringLiteral("Headroom-v0.1.0-windows-") + (architecture == QStringLiteral("x86_64") ? QStringLiteral("x64.zip") : QStringLiteral("arm64.zip"));
+#elif defined(Q_OS_MACOS)
+        const QString platform = QStringLiteral("macos");
+        const QString asset = QStringLiteral("Headroom-v0.1.0-macos-") + architecture + QStringLiteral(".tar.gz");
 #else
         const QString platform = QStringLiteral("linux");
         const QString asset = QStringLiteral("Headroom-v0.1.0-linux-x86_64.tar.gz");
@@ -99,6 +102,8 @@ int main(int argc, char **argv) {
     if (architecture == QStringLiteral("aarch64")) architecture = QStringLiteral("arm64");
 #ifdef Q_OS_WIN
     const QString platform = QStringLiteral("windows");
+#elif defined(Q_OS_MACOS)
+    const QString platform = QStringLiteral("macos");
 #else
     const QString platform = QStringLiteral("linux");
 #endif

@@ -17,6 +17,9 @@
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#elif defined(Q_OS_MACOS)
+#include <cerrno>
+#include <signal.h>
 #endif
 
 class ScopedEnvironment {
@@ -81,6 +84,8 @@ static bool processExists(qint64 pid)
     const bool exists = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
     CloseHandle(process);
     return exists;
+#elif defined(Q_OS_MACOS)
+    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
 #else
     return QFileInfo::exists(QStringLiteral("/proc/%1").arg(pid));
 #endif

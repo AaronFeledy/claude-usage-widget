@@ -4,8 +4,21 @@ set -eu
 repo=AaronFeledy/claude-usage-widget
 package_path=
 manifest_path=
-install_root=${XDG_DATA_HOME:-"$HOME/.local/share"}/headroom
-entry_path=$HOME/.local/bin/headroom
+platform=linux
+architecture=x86_64
+case $(uname -s)/$(uname -m) in
+  Linux/x86_64|Linux/amd64) ;;
+  Darwin/arm64) platform=macos; architecture=arm64 ;;
+  Darwin/x86_64) platform=macos ;;
+  *) echo 'Headroom supports Linux x86_64 and macOS Intel/Apple Silicon.' >&2; exit 1 ;;
+esac
+if [ "$platform" = macos ]; then
+  install_root="$HOME/Library/Application Support/Headroom"
+  entry_path=$HOME/Applications/Headroom.app/Contents/MacOS/headroom
+else
+  install_root=${XDG_DATA_HOME:-"$HOME/.local/share"}/headroom
+  entry_path=$HOME/.local/bin/headroom
+fi
 no_launch=0
 dry_run=0
 while [ "$#" -gt 0 ]; do
@@ -20,7 +33,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case $(uname -m) in x86_64|amd64) ;; *) echo 'Headroom currently supports Linux x86_64 only.' >&2; exit 1 ;; esac
 if [ "$dry_run" -eq 1 ]; then
   printf 'Would validate and install Headroom at %s with stable entry %s\n' "$install_root" "$entry_path"
   exit 0
@@ -135,12 +147,13 @@ if [ -n "$package_path" ]; then
   cp -- "$manifest_path" "$release_json"
 else
   download "https://api.github.com/repos/$repo/releases/latest" "$github_json"
-  release_url=$(python3 - "$github_json" <<'PY'
+  release_url=$(python3 - "$github_json" "$platform" <<'PY'
 import json, re, sys
 d=json.load(open(sys.argv[1], encoding='utf-8'))
 m=re.fullmatch(r'v(.+)', str(d.get('tag_name','')))
 if not m: raise SystemExit('latest release tag is not a Headroom version tag')
-n=f'Headroom-v{m.group(1)}-release.json'
+suffix='release-all.json' if sys.argv[2]=='macos' else 'release.json'
+n=f'Headroom-v{m.group(1)}-{suffix}'
 a=[x for x in d.get('assets',[]) if x.get('name') == n]
 if len(a)!=1: raise SystemExit('release manifest asset is missing or ambiguous')
 print(a[0]['browser_download_url'])
@@ -149,7 +162,7 @@ PY
   download "$release_url" "$release_json" 4194304
 fi
 [ "$(wc -c < "$release_json")" -le 4194304 ] || { echo 'release manifest is too large' >&2; exit 1; }
-metadata=$(python3 - "$release_json" <<'PY'
+metadata=$(python3 - "$release_json" "$platform" "$architecture" <<'PY'
 import json, re, sys
 d=json.load(open(sys.argv[1], encoding='utf-8'))
 semver=r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
@@ -157,9 +170,10 @@ v=str(d.get('version',''))
 prerelease=v.split('+',1)[0].split('-',1)
 bad_numeric_prerelease=len(prerelease)==2 and any(x.isdigit() and len(x)>1 and x.startswith('0') for x in prerelease[1].split('.'))
 if d.get('schema') != 1 or d.get('product') != 'Headroom' or not re.fullmatch(semver,v) or bad_numeric_prerelease: raise SystemExit('unrecognized release manifest')
-n=f'Headroom-v{v}-linux-x86_64.tar.gz'
-p=[x for x in d.get('packages',[]) if x.get('platform')=='linux' and x.get('architecture')=='x86_64' and x.get('asset_name')==n]
-if len(p)!=1 or type(p[0].get('size')) is not int or not (0 < p[0]['size'] <= 2147483648) or not re.fullmatch(r'[0-9a-f]{64}',str(p[0].get('sha256',''))): raise SystemExit('Linux package metadata is missing or invalid')
+platform, architecture = sys.argv[2:]
+n=f'Headroom-v{v}-{platform}-{architecture}.tar.gz'
+p=[x for x in d.get('packages',[]) if x.get('platform')==platform and x.get('architecture')==architecture and x.get('asset_name')==n]
+if len(p)!=1 or type(p[0].get('size')) is not int or not (0 < p[0]['size'] <= 2147483648) or not re.fullmatch(r'[0-9a-f]{64}',str(p[0].get('sha256',''))): raise SystemExit('Native package metadata is missing or invalid')
 print(v); print(n); print(p[0]['size']); print(p[0]['sha256'])
 PY
 )
@@ -182,23 +196,88 @@ PY
   download "$package_url" "$archive" "$expected_size"
 fi
 [ "$(wc -c < "$archive")" = "$expected_size" ] || { echo 'package size does not match release manifest' >&2; exit 1; }
-actual_hash=$(sha256sum "$archive" | cut -d ' ' -f 1)
+actual_hash=$(python3 - "$archive" <<'PY'
+import hashlib, sys
+with open(sys.argv[1], 'rb') as source:
+    digest=hashlib.sha256()
+    for chunk in iter(lambda: source.read(1048576), b''): digest.update(chunk)
+print(digest.hexdigest())
+PY
+)
 [ "$actual_hash" = "$expected_hash" ] || { echo 'package hash does not match release manifest' >&2; exit 1; }
 
 root_name=${asset_name%.tar.gz}
 manager_entry=$root_name/bootstrap/headroom-package
-listing=$(tar -tvzf "$archive" "$manager_entry")
-[ "$(printf '%s\n' "$listing" | wc -l)" -eq 1 ] || { echo 'package bootstrap entry is missing or ambiguous' >&2; exit 1; }
-manager_size=$(printf '%s\n' "$listing" | awk '{print $3}')
-case "$listing" in -*) ;; *) echo 'package bootstrap entry is not a regular file' >&2; exit 1 ;; esac
-[ "$manager_size" -gt 0 ] && [ "$manager_size" -le 67108864 ] || { echo 'package bootstrap entry is oversized' >&2; exit 1; }
 manager=$private_root/headroom-package
-tar -xOzf "$archive" "$manager_entry" > "$manager"
-[ "$(wc -c < "$manager")" = "$manager_size" ] && [ "$(wc -c < "$manager")" -le 67108864 ] || { echo 'package bootstrap extraction size mismatch' >&2; exit 1; }
+# Only bootstrap the exact bounded regular entry after checking archive digest.
+# Full archive validation and extraction belong exclusively to the Go manager.
+python3 - "$archive" "$manager_entry" "$manager" <<'PY'
+import sys, tarfile
+with tarfile.open(sys.argv[1], 'r:gz') as archive:
+    candidates=[entry for entry in archive if entry.name == sys.argv[2]]
+    if len(candidates) != 1 or not candidates[0].isfile() or not 0 < candidates[0].size <= 67108864:
+        raise SystemExit('package bootstrap entry is missing, ambiguous, or unsafe')
+    entry=candidates[0]
+    with archive.extractfile(entry) as source, open(sys.argv[3], 'xb') as output:
+        remaining=entry.size
+        while remaining:
+            chunk=source.read(min(65536, remaining))
+            if not chunk: raise SystemExit('package bootstrap entry is truncated')
+            output.write(chunk); remaining-=len(chunk)
+PY
 chmod 0700 "$manager"
+macos_entry() {
+  python3 - "$entry_path" "$install_root" "$1" <<'PY'
+import json, os, pathlib, plistlib, stat, sys, tempfile
+entry=pathlib.Path(sys.argv[1])
+if not (entry.name == 'headroom' and entry.parent.name == 'MacOS' and entry.parent.parent.name == 'Contents' and entry.parent.parent.parent.suffix == '.app'):
+    raise SystemExit(0)  # A custom command-line entry needs no Finder wrapper.
+contents=entry.parent.parent
+resources=contents/'Resources'
+info_path=contents/'Info.plist'
+for path in (contents.parent, contents, resources, info_path, resources/'headroom.icns'):
+    if path.is_symlink(): raise SystemExit('refusing a linked Mac launcher bundle entry')
+    if path.exists():
+        mode=path.stat()
+        if mode.st_uid != os.getuid(): raise SystemExit('Mac launcher bundle entry belongs to another user')
+        if path in (contents.parent, contents, resources) and not stat.S_ISDIR(mode.st_mode):
+            raise SystemExit('Mac launcher bundle directory is invalid')
+        if path in (info_path, resources/'headroom.icns') and not stat.S_ISREG(mode.st_mode):
+            raise SystemExit('Mac launcher bundle file is invalid')
+if info_path.exists():
+    if info_path.stat().st_size > 65536: raise SystemExit('Mac launcher metadata is oversized')
+    with info_path.open('rb') as source: previous=plistlib.load(source)
+    if previous.get('CFBundleIdentifier') != 'io.headroom.launcher':
+        raise SystemExit('Headroom will not overwrite another Mac application')
+if sys.argv[3] == 'check': raise SystemExit(0)
+state=json.loads((pathlib.Path(sys.argv[2])/'install-state.json').read_text())
+payload=pathlib.Path(sys.argv[2])/state['version_path']/'Headroom.app'/'Contents'
+# This wrapper is the stable launcher, not a separately versioned product.
+info={'CFBundleExecutable':'headroom', 'CFBundleIdentifier':'io.headroom.launcher',
+      'CFBundleName':'Headroom', 'CFBundleDisplayName':'Headroom',
+      'CFBundlePackageType':'APPL', 'CFBundleIconFile':'headroom.icns',
+      'LSUIElement':True, 'LSMinimumSystemVersion':'12.0'}
+resources.mkdir(exist_ok=True)
+def write_atomic(path, data):
+    fd, name=tempfile.mkstemp(prefix='.headroom-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as output:
+            output.write(data); output.flush(); os.fsync(output.fileno())
+        os.chmod(name, 0o644)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name): os.unlink(name)
+write_atomic(resources/'headroom.icns', (payload/'Resources'/'headroom.icns').read_bytes())
+write_atomic(info_path, plistlib.dumps(info))
+PY
+}
+if [ "$platform" = macos ]; then macos_entry check; fi
 "$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
-  --version "$version" --platform linux --arch x86_64 --asset "$asset_name"
+  --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
 
+if [ "$platform" = macos ]; then
+  macos_entry write
+else
 applications=${XDG_DATA_HOME:-"$HOME/.local/share"}/applications
 mkdir -p -- "$applications"
 desktop_tmp=$private_root/headroom.desktop
@@ -217,6 +296,7 @@ Terminal=false
 Categories=Utility;
 EOF
 install -m 0644 "$desktop_tmp" "$applications/headroom.desktop"
+fi
 printf 'Installed Headroom %s at %s\n' "$version" "$install_root"
 if [ "$no_launch" -eq 1 ]; then
   printf 'Quit any running Headroom window and launch %s to use the installed generation.\n' "$entry_path"
@@ -227,11 +307,12 @@ else
   ready_ok=0
   attempts=0
   while [ "$attempts" -lt 100 ]; do
-    if [ -s "$ready" ] && python3 - "$ready" "$install_root" "$nonce" <<'PY'
+    if [ -s "$ready" ] && python3 - "$ready" "$install_root" "$nonce" "$platform" <<'PY'
 import json, os, sys
 marker=json.load(open(sys.argv[1], encoding='utf-8'))
 state=json.load(open(os.path.join(sys.argv[2], 'install-state.json'), encoding='utf-8'))
-expected=os.path.realpath(os.path.join(sys.argv[2], state['version_path'], 'bin', 'headroom'))
+app_path=('Headroom.app', 'Contents', 'MacOS', 'headroom') if sys.argv[4]=='macos' else ('bin','headroom')
+expected=os.path.realpath(os.path.join(sys.argv[2], state['version_path'], *app_path))
 actual=os.path.realpath(marker.get('executable',''))
 if marker.get('nonce') != sys.argv[3] or marker.get('version') != state.get('active_version') or actual != expected or not isinstance(marker.get('pid'), int) or marker['pid'] <= 0:
     raise SystemExit(1)

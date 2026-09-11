@@ -16,6 +16,15 @@ func TestMain(m *testing.M) {
 }
 
 func runTests(m *testing.M) int {
+	if runtime.GOOS == "darwin" {
+		// macOS commonly advertises /var/folders via the /var symlink. Keep
+		// fixtures on real paths; production install roots still reject links.
+		temp, err := filepath.EvalSymlinks(os.TempDir())
+		if err != nil || os.Setenv("TMPDIR", temp) != nil {
+			fmt.Fprintln(os.Stderr, "cannot canonicalize macOS test directory", err)
+			return 2
+		}
+	}
 	root, err := os.MkdirTemp("", "headroom-native-fixture-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -33,7 +42,7 @@ import ("encoding/json"; "os"; "path/filepath"; "strconv"; "strings"; "time")
 func main() {
  var ready string
  for i:=1; i<len(os.Args); i++ { if os.Args[i]=="--headroom-ready-file" && i+1<len(os.Args) { ready=os.Args[i+1]; i++ } }
- executable,_:=os.Executable(); generation:=filepath.Base(filepath.Dir(filepath.Dir(executable))); version:=strings.Split(generation,".generation-")[0]
+ executable,_:=os.Executable(); directory:=filepath.Dir(filepath.Dir(executable)); if filepath.Base(directory)=="Contents" { directory=filepath.Dir(filepath.Dir(directory)) }; generation:=filepath.Base(directory); version:=strings.Split(generation,".generation-")[0]
  if os.Getenv("HEADROOM_FIXTURE_CRASH_VERSION")==version { os.Exit(8) }
  if ready!="" && os.Getenv("HEADROOM_FIXTURE_NO_READY_VERSION")!=version { b,_:=json.Marshal(map[string]any{"nonce":os.Getenv("HEADROOM_READY_NONCE"),"pid":os.Getpid(),"version":version,"executable":executable}); _=os.WriteFile(ready,append(b,'\n'),0600) }
  if value:=os.Getenv("HEADROOM_FIXTURE_SLEEP_MS"); value!="" { if n,e:=strconv.Atoi(value); e==nil { time.Sleep(time.Duration(n)*time.Millisecond) } }

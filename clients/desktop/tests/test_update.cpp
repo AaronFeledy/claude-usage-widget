@@ -13,9 +13,10 @@ private:
     QString m_record;
     UpdateServiceOptions options() const {
         UpdateServiceOptions value;
+        const QString root = QFileInfo(m_dir.path()).canonicalFilePath();
         value.managerPath = QStringLiteral(UPDATE_FIXTURE_PATH);
-        value.installRoot = m_dir.path();
-        value.launcherPath = m_dir.filePath(QStringLiteral("headroom"));
+        value.installRoot = root;
+        value.launcherPath = QDir(root).filePath(QStringLiteral("headroom"));
         value.packageVersion = QStringLiteral("0.1.0");
         value.timeoutMs = 1000;
         value.cancelGraceMs = 100;
@@ -49,17 +50,28 @@ private slots:
         QCOMPARE(system.statusText(), QStringLiteral("This installation is managed by your system package manager."));
     }
     void externalStableEntryIsValidatedWithoutPathEquality() {
-        const QString root = m_dir.filePath(QStringLiteral("native identity"));
+        const QString rootAlias = m_dir.filePath(QStringLiteral("native identity"));
+        QVERIFY(QDir().mkpath(rootAlias));
+        const QString root = QFileInfo(rootAlias).canonicalFilePath();
 #ifdef Q_OS_WIN
         const QString appName = QStringLiteral("headroom.exe");
         const QString internalName = QStringLiteral("headroom.exe");
         const QString external = m_dir.filePath(QStringLiteral("custom entry.exe"));
+#elif defined(Q_OS_MACOS)
+        const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
+        const QString internalName = QStringLiteral("headroom-launcher");
+        const QString external = m_dir.filePath(QStringLiteral("custom entry"));
 #else
         const QString appName = QStringLiteral("headroom");
         const QString internalName = QStringLiteral("headroom-launcher");
         const QString external = m_dir.filePath(QStringLiteral("custom entry"));
 #endif
-        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/bin/") + appName);
+        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/")
+#ifdef Q_OS_MACOS
+            + appName);
+#else
+            + QStringLiteral("bin/") + appName);
+#endif
         const QString internal = QDir(root).filePath(internalName);
         QVERIFY(QDir().mkpath(QFileInfo(application).absolutePath()));
         auto write = [](const QString &path, const QByteArray &data) { QFile file(path); return file.open(QIODevice::WriteOnly) && file.write(data) == data.size(); };
@@ -72,15 +84,25 @@ private slots:
         QTRY_COMPARE(service.state(), QStringLiteral("current")); QCOMPARE(service.updateMethod(), QStringLiteral("automatic"));
     }
     void damagedOfficialLauncherRequestsExternalInstallerRepair() {
-        const QString root = m_dir.filePath(QStringLiteral("damaged official identity"));
+        const QString rootAlias = m_dir.filePath(QStringLiteral("damaged official identity"));
+        QVERIFY(QDir().mkpath(rootAlias));
+        const QString root = QFileInfo(rootAlias).canonicalFilePath();
 #ifdef Q_OS_WIN
         const QString appName = QStringLiteral("headroom.exe");
         const QString external = m_dir.filePath(QStringLiteral("damaged entry.exe"));
+#elif defined(Q_OS_MACOS)
+        const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
+        const QString external = m_dir.filePath(QStringLiteral("damaged entry"));
 #else
         const QString appName = QStringLiteral("headroom");
         const QString external = m_dir.filePath(QStringLiteral("damaged entry"));
 #endif
-        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/bin/") + appName);
+        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/")
+#ifdef Q_OS_MACOS
+            + appName);
+#else
+            + QStringLiteral("bin/") + appName);
+#endif
         QVERIFY(QDir().mkpath(QFileInfo(application).absolutePath()));
         QFile app(application); QVERIFY(app.open(QIODevice::WriteOnly)); QVERIFY(app.write("application") > 0); app.close();
         auto value = options(); value.installRoot = QDir::toNativeSeparators(root); value.launcherPath = QDir::toNativeSeparators(external);

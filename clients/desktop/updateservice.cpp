@@ -47,6 +47,8 @@ UpdateService::UpdateService(bool allowPublicTraffic, UpdateServiceOptions optio
     if (m_options.managerPath.isEmpty()) {
 #ifdef Q_OS_WIN
         m_options.managerPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("headroom-package.exe"));
+#elif defined(Q_OS_MACOS)
+        m_options.managerPath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../../../bin/headroom-package"));
 #else
         m_options.managerPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("headroom-package"));
 #endif
@@ -370,6 +372,8 @@ bool UpdateService::validateInstalledApplicationIdentity(const QJsonObject &resu
     const QString versionPath = result.value(QStringLiteral("version_path")).toString();
 #ifdef Q_OS_WIN
     const QString nativePlatform = QStringLiteral("windows");
+#elif defined(Q_OS_MACOS)
+    const QString nativePlatform = QStringLiteral("macos");
 #else
     const QString nativePlatform = QStringLiteral("linux");
 #endif
@@ -384,10 +388,18 @@ bool UpdateService::validateInstalledApplicationIdentity(const QJsonObject &resu
         || !result.value(QStringLiteral("trusted_identity")).toBool()) return false;
 #ifdef Q_OS_WIN
     const QString appName = QStringLiteral("headroom.exe");
+#elif defined(Q_OS_MACOS)
+    const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
 #else
     const QString appName = QStringLiteral("headroom");
 #endif
-    const QString expectedApp = QDir(root).filePath(versionPath + QStringLiteral("/bin/") + appName);
+    const QString expectedApp = QDir(root).filePath(versionPath + QLatin1Char('/')
+#ifdef Q_OS_MACOS
+        + appName
+#else
+        + QStringLiteral("bin/") + appName
+#endif
+    );
     const QString runningApplication = m_options.applicationPath.isEmpty() ? QCoreApplication::applicationFilePath() : m_options.applicationPath;
     return QFileInfo(runningApplication).canonicalFilePath() == QFileInfo(expectedApp).canonicalFilePath();
 }
@@ -424,6 +436,7 @@ void UpdateService::handleInspection(const QJsonObject &result) {
     for (const auto &item : missing) {
         const QString path = item.toString();
         if (path == QStringLiteral("bin/usage-server") || path == QStringLiteral("bin/usage-server.exe")
+            || path == QStringLiteral("Headroom.app/Contents/MacOS/usage-server")
             || path == QStringLiteral("bin/headroom-credential-helper.exe") || path == QStringLiteral("bootstrap/headroom")
             || path == QStringLiteral("bootstrap/headroom.exe") || path == QStringLiteral("bootstrap/headroom-package")
             || path == QStringLiteral("bootstrap/headroom-package.exe") || path == QStringLiteral("bootstrap/association")) m_repairable = true;
@@ -548,7 +561,12 @@ void UpdateService::applyDeferredTrafficState() {
 
 QString UpdateService::guidePath() const {
     const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList candidates {QDir(appDir).filePath(QStringLiteral("../share/headroom/update-guide.html")),
+    const QStringList candidates {
+#ifdef Q_OS_MACOS
+        QDir(appDir).filePath(QStringLiteral("../Resources/update-guide.html")),
+        QDir(appDir).filePath(QStringLiteral("../../../share/headroom/update-guide.html")),
+#endif
+        QDir(appDir).filePath(QStringLiteral("../share/headroom/update-guide.html")),
         QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("headroom/update-guide.html")),
         QDir(appDir).filePath(QStringLiteral("../update-guide.html"))};
     for (const auto &candidate : candidates) if (!candidate.isEmpty() && QFileInfo::exists(candidate)) return QFileInfo(candidate).absoluteFilePath();

@@ -117,6 +117,8 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 }
 
 func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logger, options desktopSessionOptions) error {
+	ctx, stopParentWatch := desktopParentContext(ctx)
+	defer stopParentWatch()
 	prepared, err := prepareDesktopSession(ctx, cfg.ListenAddr, options)
 	if err != nil {
 		return err

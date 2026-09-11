@@ -141,11 +141,16 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 		if err != nil {
 			return PreparedApply{}, err
 		}
-		serverName := "usage-server"
-		if inspection.Platform == "windows" {
-			serverName += ".exe"
+		manifestFile, openErr := os.Open(filepath.Join(root, filepath.FromSlash(inspection.VersionPath), PackageManifestName))
+		if openErr != nil {
+			return PreparedApply{}, openErr
 		}
-		expectedChild := filepath.Join(root, filepath.FromSlash(inspection.VersionPath), "bin", serverName)
+		manifest, decodeErr := DecodePackageManifest(manifestFile)
+		manifestFile.Close()
+		if decodeErr != nil {
+			return PreparedApply{}, decodeErr
+		}
+		expectedChild := installedComponentPath(root, inspection.VersionPath, manifest.Components.Server.Path)
 		if !samePath(request.OwnedChildExecutable, expectedChild) {
 			return PreparedApply{}, errors.New("owned child is not the active bundled usage server")
 		}
@@ -955,19 +960,15 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 	if previousErr != nil || !previousInspection.TrustedIdentity {
 		return errors.New("apply rollback identity is invalid")
 	}
-	previousApp := "headroom"
-	if journal.Previous.Platform == "windows" {
-		previousApp += ".exe"
+	previousManifest, manifestErr := installedManifest(root, *journal.Previous)
+	if manifestErr != nil {
+		return errors.New("apply prior manifest is invalid")
 	}
-	if !samePath(journal.Request.CurrentExecutable, filepath.Join(root, filepath.FromSlash(journal.Previous.VersionPath), "bin", previousApp)) {
+	if !samePath(journal.Request.CurrentExecutable, installedComponentPath(root, journal.Previous.VersionPath, previousManifest.Components.Application.Path)) {
 		return errors.New("apply prior executable is invalid")
 	}
 	if journal.Request.OwnedChildPID > 0 {
-		server := "usage-server"
-		if journal.Previous.Platform == "windows" {
-			server += ".exe"
-		}
-		if !samePath(journal.Request.OwnedChildExecutable, filepath.Join(root, filepath.FromSlash(journal.Previous.VersionPath), "bin", server)) {
+		if !samePath(journal.Request.OwnedChildExecutable, installedComponentPath(root, journal.Previous.VersionPath, previousManifest.Components.Server.Path)) {
 			return errors.New("apply owned child executable is invalid")
 		}
 	}
@@ -984,11 +985,8 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 		return errors.New("apply candidate process identity is invalid")
 	}
 	if journal.CandidatePID > 0 && journal.Candidate != nil {
-		name := "headroom"
-		if journal.Candidate.Platform == "windows" {
-			name += ".exe"
-		}
-		if !samePath(journal.CandidateExe, filepath.Join(root, filepath.FromSlash(journal.Candidate.VersionPath), "bin", name)) {
+		candidateManifest, candidateErr := installedManifest(root, *journal.Candidate)
+		if candidateErr != nil || !samePath(journal.CandidateExe, installedComponentPath(root, journal.Candidate.VersionPath, candidateManifest.Components.Application.Path)) {
 			return errors.New("apply candidate executable is invalid")
 		}
 	}
@@ -1287,11 +1285,11 @@ func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func
 	if err != nil {
 		return err
 	}
-	name := "headroom"
-	if state.Platform == "windows" {
-		name += ".exe"
+	manifest, err := installedManifest(request.InstallRoot, state)
+	if err != nil {
+		return err
 	}
-	executable := filepath.Join(request.InstallRoot, filepath.FromSlash(state.VersionPath), "bin", name)
+	executable := installedComponentPath(request.InstallRoot, state.VersionPath, manifest.Components.Application.Path)
 	for _, missing := range inspection.Missing {
 		if !isAuxiliaryPath(missing) {
 			return errors.New("target app/runtime is incomplete")

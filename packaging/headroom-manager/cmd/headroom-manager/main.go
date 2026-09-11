@@ -292,13 +292,19 @@ func createRelease(args []string) (any, error) {
 	set := flag.NewFlagSet("create-release", flag.ContinueOnError)
 	output := set.String("output", "", "release manifest output")
 	version := set.String("version", buildVersion, "version")
+	legacy := set.Bool("legacy", false, "create the legacy Windows/Linux release manifest")
 	var packages listFlag
 	set.Var(&packages, "package", "package archive (repeatable)")
 	if err := set.Parse(args); err != nil {
 		return nil, err
 	}
-	if filepath.Base(*output) != "Headroom-v"+*version+"-release.json" {
-		return nil, fmt.Errorf("release manifest output must be named Headroom-v%s-release.json", *version)
+	wantName := "Headroom-v" + *version + "-release-all.json"
+	wantCount := 5
+	if *legacy {
+		wantName, wantCount = "Headroom-v"+*version+"-release.json", 3
+	}
+	if filepath.Base(*output) != wantName {
+		return nil, fmt.Errorf("release manifest output must be named %s", wantName)
 	}
 	release := contract.ReleaseManifest{Schema: contract.SchemaVersion, Product: "Headroom", Version: *version}
 	for _, archive := range packages {
@@ -318,6 +324,12 @@ func createRelease(args []string) (any, error) {
 	sort.Slice(release.Packages, func(i, j int) bool {
 		return release.Packages[i].Platform+"/"+release.Packages[i].Architecture < release.Packages[j].Platform+"/"+release.Packages[j].Architecture
 	})
+	if len(release.Packages) != wantCount {
+		if *legacy {
+			return nil, fmt.Errorf("legacy release manifest requires Windows x64/ARM64 and Linux x86_64 packages")
+		}
+		return nil, fmt.Errorf("full release manifest requires Windows x64/ARM64, Linux x86_64, and macOS x86_64/ARM64 packages")
+	}
 	encoded, err := json.Marshal(release)
 	if err != nil {
 		return nil, err
@@ -360,6 +372,9 @@ func defaultInstallRoot() string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Headroom")
 	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Headroom")
+	}
 	data := os.Getenv("XDG_DATA_HOME")
 	if data == "" {
 		data = filepath.Join(os.Getenv("HOME"), ".local", "share")
@@ -369,6 +384,9 @@ func defaultInstallRoot() string {
 func defaultEntryPath() string {
 	if runtime.GOOS == "windows" {
 		return filepath.Join(defaultInstallRoot(), "headroom.exe")
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(os.Getenv("HOME"), "Applications", "Headroom.app", "Contents", "MacOS", "headroom")
 	}
 	return filepath.Join(os.Getenv("HOME"), ".local", "bin", "headroom")
 }

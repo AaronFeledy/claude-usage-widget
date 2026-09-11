@@ -193,6 +193,9 @@ func (c UpdateClient) resolve(ctx context.Context, exactVersion string, inspecti
 		return ReleaseManifest{}, ReleasePackage{}, githubAsset{}, errNoCompatibleRelease
 	}
 	manifestName := "Headroom-v" + version + "-release.json"
+	if inspection.Platform == "macos" {
+		manifestName = "Headroom-v" + version + "-release-all.json"
+	}
 	manifestAsset, ok := namedAsset(release.Assets, manifestName)
 	if !ok || manifestAsset.Size <= 0 || manifestAsset.Size > maxReleaseBytes || c.validateAssetURL(manifestAsset.URL, version, manifestName) != nil {
 		return ReleaseManifest{}, ReleasePackage{}, githubAsset{}, errNoCompatibleRelease

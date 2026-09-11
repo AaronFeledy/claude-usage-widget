@@ -1,6 +1,6 @@
 # Headroom
 
-Headroom is a Windows and Linux tray app for Claude, ChatGPT, Cursor, and Grok
+Headroom is a Windows, macOS, and Linux tray app for Claude, ChatGPT, Cursor, and Grok
 usage. The shared Qt interface shows every usage meter returned by the bundled
 Go server, keeps the chosen provider order, estimates pace within reset windows,
 and alerts when usage moves into Warning or Critical.
@@ -15,7 +15,9 @@ and alerts when usage moves into Warning or Critical.
 | --- | --- | --- |
 | Windows x64 | Windows 10 1809 or newer | Local managed server |
 | Windows ARM64 | Windows 11 ARM64 | Local managed server |
-| Linux x86_64 | Ubuntu 22.04 desktop ABI; X11 and Wayland plugins | Remote server |
+| Linux x86_64 | Ubuntu 22.04 desktop ABI; X11 and Wayland plugins | Local managed server |
+| macOS Apple Silicon | macOS 12+; native ARM64 | Local managed server |
+| macOS Intel | macOS 12+; native x86_64 | Local managed server |
 
 Official packages bundle Qt 6.8.3, the matching `usage-server`, and the stable
 launcher/package manager. Linux uses baseline system graphics, desktop, C++,
@@ -34,7 +36,11 @@ Windows PowerShell 5.1 or newer:
 irm https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.ps1 | iex
 ```
 
-Linux x86_64:
+Linux x86_64 or macOS (Apple Silicon and Intel):
+
+The shell installer requires `curl`, `tar`, and Python 3. On a Mac without
+Python 3, install it first (for example, through Apple Command Line Tools or
+your existing package manager).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.sh | sh
@@ -50,6 +56,11 @@ See [desktop build instructions](clients/desktop/README.md) for source builds.
 Windows installs under `%LOCALAPPDATA%\Headroom` and adds a Start menu shortcut.
 Linux installs under `${XDG_DATA_HOME:-$HOME/.local/share}/headroom`, places the
 stable entry at `~/.local/bin/headroom`, and adds an application-menu entry.
+macOS installs its managed files under `~/Library/Application Support/Headroom`
+and creates a stable `~/Applications/Headroom.app` entry for Finder and login
+startup. Mac packages are ad-hoc signed for code integrity; they are not yet
+Developer ID signed or notarized by Apple. Use the installer for the managed
+application rather than dragging the internal versioned bundle out of its archive.
 Custom roots are supported by the installer options documented in
 [packaging](packaging/README.md).
 
@@ -63,7 +74,7 @@ the same restart instruction and performs no activation attempt.
 ## Local and remote operation
 
 ```text
-Local mode (default on Windows and Linux)
+Local mode (default on Windows, macOS, and Linux)
 
   Headroom ── verified TLS when bundled ──> usage-server on localhost
       │                                  │
@@ -93,7 +104,7 @@ servers remain independently owned. The standalone server binds to
 `127.0.0.1:7823` by default and refuses any non-loopback bind without a bearer
 token. Its existing HTTP API and configuration remain compatible.
 
-Windows and Linux start in Local mode at `http://127.0.0.1:7823`. Existing saved
+Windows, macOS, and Linux start in Local mode at `http://127.0.0.1:7823`. Existing saved
 connection settings take precedence over the default. **SSH is the recommended
 remote option**; **HTTP(S)** remains available for direct connections. Browser
 credential forwarding to a direct remote server requires HTTPS.
@@ -136,8 +147,9 @@ Headroom stores settings atomically at:
 
 - Windows: `%APPDATA%\Headroom\Headroom\settings.json`
 - Linux: `${XDG_CONFIG_HOME:-$HOME/.config}/Headroom/Headroom/settings.json`
+- macOS: `~/Library/Application Support/Headroom/Headroom/settings.json`
 
-The file contains a remote bearer token in plaintext. Linux writes it and its
+The file contains a remote bearer token in plaintext. Linux and macOS write it and its
 migration backups with mode `0600`; Windows uses the current user's roaming app
 data and inherited Windows access controls. Diagnostics retain at most 500
 controlled, redacted events in memory and never record raw requests, response
@@ -145,7 +157,9 @@ bodies, tokens, URLs, provider credentials, or account output.
 
 **Start Headroom when I sign in** registers the stable launcher, so an update
 does not rewrite startup configuration. It uses the current user's Run entry on
-Windows and an XDG autostart file on Linux.
+Windows, an XDG autostart file on Linux, and a current-user LaunchAgent plist
+on macOS. The Mac setting takes effect at the next login and never quits the
+running app when disabled.
 
 An official per-user install performs one delayed startup update check. When a
 newer stable release exists, it automatically downloads and fully verifies the
@@ -176,7 +190,7 @@ profiles. It uses the current Windows user's browser encryption context and
 returns only the requested cookie over a bounded private child-process channel.
 It cannot read another user's profile or bypass unsupported newer encrypted
 values. Headroom forwards a result only to its verified bundled server session,
-a configured HTTPS server, or the SSH receiver and never persists it. Linux does
+a configured HTTPS server, or the SSH receiver and never persists it. Linux and macOS do
 not include this helper; use server-side credential files or the documented
 [WSL credential sync](server/deploy/wsl/README.md).
 

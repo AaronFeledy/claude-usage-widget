@@ -22,7 +22,7 @@ func TestTransactionalApplyAndReadinessUseActualGeneration(t *testing.T) {
 	}
 	current := startInstalledFixture(t, installRoot)
 	inspection := InspectInstall(installRoot)
-	ownedPath := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "usage-server"+nativeExtension())
+	ownedPath := installedTestComponent(t, installRoot, inspection.VersionPath, true)
 	owned := startFixturePath(t, ownedPath)
 	unrelatedPath := filepath.Join(root, "unrelated", "bin", "usage-server"+nativeExtension())
 	if err := os.MkdirAll(filepath.Dir(unrelatedPath), 0755); err != nil {

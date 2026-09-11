@@ -10,7 +10,7 @@ class StartupService : public QObject {
     Q_PROPERTY(bool available READ available NOTIFY availableChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
 public:
-    enum class Platform { Current, Linux, Windows };
+    enum class Platform { Current, Linux, Mac, Windows };
     explicit StartupService(QString configHome = {}, QString executable = {},
                             bool allowChanges = true, QObject *parent = nullptr,
                             Platform platform = Platform::Current, QString registryPath = {});
@@ -19,7 +19,8 @@ public:
     QString error() const { return m_error; }
     QString entryPath() const { return m_entryPath; }
     static QString defaultExecutablePath();
-    static QString packagedExecutablePath(const QString &applicationPath);
+    static QString packagedExecutablePath(const QString &applicationPath,
+                                          Platform platform = Platform::Current);
     void setAllowChanges(bool allowed);
     void setPreferenceWriter(std::function<QString(bool)> writer) { m_preferenceWriter = std::move(writer); }
     Q_INVOKABLE bool setEnabled(bool enabled);
@@ -40,8 +41,8 @@ private:
     QString m_error;
     QString m_registryPath;
     std::function<QString(bool)> m_preferenceWriter;
+    Platform m_platform;
     bool m_allowChanges;
-    bool m_windows;
     bool m_platformSupported = true;
     bool m_enabled = false;
 };

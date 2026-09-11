@@ -14,7 +14,7 @@ import (
 )
 
 func TestAssetNamesAndStrictVersions(t *testing.T) {
-	cases := map[string]string{"windows/x86_64": "Headroom-v2.3.4-windows-x64.zip", "windows/arm64": "Headroom-v2.3.4-windows-arm64.zip", "linux/x86_64": "Headroom-v2.3.4-linux-x86_64.tar.gz"}
+	cases := map[string]string{"windows/x86_64": "Headroom-v2.3.4-windows-x64.zip", "windows/arm64": "Headroom-v2.3.4-windows-arm64.zip", "linux/x86_64": "Headroom-v2.3.4-linux-x86_64.tar.gz", "macos/x86_64": "Headroom-v2.3.4-macos-x86_64.tar.gz", "macos/arm64": "Headroom-v2.3.4-macos-arm64.tar.gz"}
 	for target, want := range cases {
 		parts := strings.Split(target, "/")
 		got, err := AssetName("2.3.4", parts[0], parts[1])
@@ -34,6 +34,67 @@ func TestCanonicalPathsRejectPortableAliases(t *testing.T) {
 		if canonicalRelative(bad) {
 			t.Errorf("accepted unsafe path %q", bad)
 		}
+	}
+}
+
+func macOSManifestFixture() PackageManifest {
+	version := "2.3.4"
+	paths := []string{
+		"bootstrap/headroom", "bootstrap/headroom-package",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/QtCore",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Resources",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Versions/A/QtCore",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Versions/A/Resources/Info.plist",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Versions/Current",
+		"bundle/Headroom.app/Contents/Info.plist",
+		"bundle/Headroom.app/Contents/MacOS/headroom", "bundle/Headroom.app/Contents/MacOS/usage-server",
+		"bundle/Headroom.app/Contents/PlugIns/iconengines/libqsvgicon.dylib",
+		"bundle/Headroom.app/Contents/PlugIns/imageformats/libqsvg.dylib",
+		"bundle/Headroom.app/Contents/PlugIns/platforms/libqcocoa.dylib",
+		"bundle/Headroom.app/Contents/PlugIns/platforms/libqoffscreen.dylib",
+		"bundle/Headroom.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib",
+		"bundle/Headroom.app/Contents/Resources/headroom.icns",
+		"bundle/Headroom.app/Contents/Resources/qml/QtQuick/Controls/Basic/qmldir",
+		"bundle/bin/headroom-package", "bundle/share/headroom/THIRD_PARTY_NOTICES.txt",
+		"bundle/share/licenses/headroom/LICENSE", "bundle/share/licenses/qt/attributions/index.json",
+	}
+	links := map[string]string{
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/QtCore":           "Versions/Current/QtCore",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Resources":        "Versions/Current/Resources",
+		"bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Versions/Current": "A",
+	}
+	files := make([]File, 0, len(paths))
+	for _, name := range paths {
+		record := File{Path: name, Size: 1, SHA256: strings.Repeat("a", 64), Mode: "0644"}
+		if target := links[name]; target != "" {
+			record.Size, record.SHA256, record.Mode, record.LinkTarget = int64(len(target)), hashString(target), "", target
+		}
+		if target := links[name]; target == "" && (name == "bootstrap/headroom" || name == "bootstrap/headroom-package" || name == "bundle/Headroom.app/Contents/MacOS/headroom" || name == "bundle/Headroom.app/Contents/MacOS/usage-server" || name == "bundle/bin/headroom-package" || strings.HasSuffix(name, "/QtCore") || strings.HasSuffix(name, ".dylib")) {
+			record.Mode = "0755"
+		}
+		files = append(files, record)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	manifest := PackageManifest{Schema: SchemaVersion, Product: "Headroom", Version: version, Platform: "macos", Architecture: "arm64", AssetName: "Headroom-v2.3.4-macos-arm64.tar.gz", QtVersion: "6.8.3", Baseline: "macOS 12",
+		Components: Components{Application: Component{packageApplicationPath("macos"), version}, Server: Component{packageServerPath("macos"), version}, Launcher: Component{"bootstrap/headroom", version}, Manager: Component{"bootstrap/headroom-package", version}}, Files: files}
+	return manifest
+}
+
+func TestMacOSManifestRequiresNativeBundleAndScopedFrameworkLinks(t *testing.T) {
+	manifest := macOSManifestFixture()
+	if err := ValidateManifest(manifest); err != nil {
+		t.Fatalf("valid macOS manifest rejected: %v", err)
+	}
+	broken := manifest
+	broken.Files = append([]File(nil), manifest.Files...)
+	for index := range broken.Files {
+		if broken.Files[index].LinkTarget != "" {
+			broken.Files[index].LinkTarget = "../../../../outside"
+			break
+		}
+	}
+	if err := ValidateManifest(broken); err == nil {
+		t.Fatal("escaping framework link accepted")
 	}
 }
 
@@ -64,7 +125,7 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	if !inspection.TrustedIdentity || !inspection.Complete {
 		t.Fatalf("unexpected inspection: %+v", inspection)
 	}
-	expectedApplication := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "headroom"+nativeExtension())
+	expectedApplication := installedTestComponent(t, installRoot, inspection.VersionPath, false)
 	if inspection.ActiveExecutable != expectedApplication {
 		t.Fatalf("active executable = %q, want %q", inspection.ActiveExecutable, expectedApplication)
 	}
@@ -77,7 +138,7 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 		t.Fatal(state)
 	}
 	inspection = InspectInstall(installRoot)
-	server := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "usage-server"+nativeExtension())
+	server := installedTestComponent(t, installRoot, inspection.VersionPath, true)
 	if err = os.Remove(server); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +185,7 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 		t.Fatalf("stable manager repair failed: %v", err)
 	}
 	inspection = InspectInstall(installRoot)
-	app := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "headroom"+nativeExtension())
+	app := installedTestComponent(t, installRoot, inspection.VersionPath, false)
 	if err = os.WriteFile(app, []byte("corrupt"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +268,57 @@ func TestMaterializeLinksKeepsSonameAsRegularFile(t *testing.T) {
 	info, err := os.Lstat(link)
 	if err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("SONAME was not materialized: %v %v", info, err)
+	}
+}
+
+func TestMaterializeLinksPreservesFrameworkLinks(t *testing.T) {
+	root := t.TempDir()
+	framework := filepath.Join(root, "QtCore.framework")
+	version := filepath.Join(framework, "Versions", "A")
+	if err := os.MkdirAll(filepath.Join(version, "Resources"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(version, "QtCore"), []byte("framework binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(version, "Resources", "Info.plist"), []byte("plist"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("A", filepath.Join(framework, "Versions", "Current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("Versions", "Current", "QtCore"), filepath.Join(framework, "QtCore")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("Versions", "Current", "Resources"), filepath.Join(framework, "Resources")); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeLinks(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{filepath.Join(framework, "Versions", "Current"), filepath.Join(framework, "QtCore"), filepath.Join(framework, "Resources")} {
+		info, err := os.Lstat(name)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s framework link was not preserved: %v, %v", name, info, err)
+		}
+	}
+}
+
+func TestMaterializeLinksRejectsEscapingDirectory(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	outside := filepath.Join(parent, "outside")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeLinks(root); err == nil {
+		t.Fatal("escaping directory link was accepted")
 	}
 }
 
@@ -305,6 +417,15 @@ func TestReleaseManifestRejectsInvalidArchiveSizes(t *testing.T) {
 	}
 }
 
+func TestReleaseManifestAcceptsLegacyThreeTargetSet(t *testing.T) {
+	release := validReleaseManifest(t, "5.6.7")
+	release.Packages = release.Packages[:3]
+	data, _ := json.Marshal(release)
+	if _, err := DecodeReleaseManifest(strings.NewReader(string(data))); err != nil {
+		t.Fatalf("legacy release manifest rejected: %v", err)
+	}
+}
+
 func TestInspectRejectsArchiveSizeBounds(t *testing.T) {
 	for name, size := range map[string]int64{"empty": 0, "oversized": MaxArchiveBytes + 1} {
 		t.Run(name, func(t *testing.T) {
@@ -333,8 +454,8 @@ func TestManifestRejectsMissingRuntimeCaseCollisionAndUnsafeMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	required := "bundle/qml/QtQuick/Controls/Basic/qmldir"
-	if manifest.Platform == "linux" {
-		required = "bundle/qml/QtQuick/Controls/Basic/qmldir"
+	if manifest.Platform == "macos" {
+		required = "bundle/Headroom.app/Contents/Resources/qml/QtQuick/Controls/Basic/qmldir"
 	}
 	missing := manifest
 	missing.Files = removeFileRecord(missing.Files, required)
@@ -405,7 +526,7 @@ func removeFileRecord(files []File, name string) []File {
 func validReleaseManifest(t *testing.T, version string) ReleaseManifest {
 	t.Helper()
 	manifest := ReleaseManifest{Schema: SchemaVersion, Product: "Headroom", Version: version}
-	for _, target := range [][2]string{{"windows", "x86_64"}, {"windows", "arm64"}, {"linux", "x86_64"}} {
+	for _, target := range [][2]string{{"windows", "x86_64"}, {"windows", "arm64"}, {"linux", "x86_64"}, {"macos", "x86_64"}, {"macos", "arm64"}} {
 		platform, arch := target[0], target[1]
 		asset, _ := AssetName(version, platform, arch)
 		root, _ := ArchiveRoot(version, platform, arch)
@@ -414,8 +535,8 @@ func validReleaseManifest(t *testing.T, version string) ReleaseManifest {
 			ext = ".exe"
 		}
 		components := Components{
-			Application: Component{Path: "bundle/bin/headroom" + ext, Version: version},
-			Server:      Component{Path: "bundle/bin/usage-server" + ext, Version: version},
+			Application: Component{Path: packageApplicationPath(platform), Version: version},
+			Server:      Component{Path: packageServerPath(platform), Version: version},
 			Launcher:    Component{Path: "bootstrap/headroom" + ext, Version: version},
 			Manager:     Component{Path: "bootstrap/headroom-package" + ext, Version: version},
 		}
@@ -455,7 +576,7 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 		t.Fatal(err)
 	}
 	ext := nativeExtension()
-	names := []string{"bundle/bin/headroom" + ext, "bundle/bin/usage-server" + ext, "bundle/bin/headroom-package" + ext, "bootstrap/headroom" + ext, "bootstrap/headroom-package" + ext}
+	names := []string{packageApplicationPath(platform), packageServerPath(platform), "bundle/bin/headroom-package" + ext, "bootstrap/headroom" + ext, "bootstrap/headroom-package" + ext}
 	if platform == "windows" {
 		names = append(names, "bundle/bin/headroom-credential-helper.exe")
 	}
@@ -465,8 +586,10 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 	runtimeFiles := []string{"bundle/qml/QtQuick/Controls/Basic/qmldir"}
 	if platform == "windows" {
 		runtimeFiles = append(runtimeFiles, "bundle/bin/msvcp140.dll", "bundle/bin/vcruntime140.dll", "bundle/plugins/platforms/qwindows.dll", "bundle/plugins/platforms/qoffscreen.dll", "bundle/plugins/tls/qschannelbackend.dll", "bundle/plugins/imageformats/qsvg.dll", "bundle/plugins/iconengines/qsvgicon.dll")
-	} else {
+	} else if platform == "linux" {
 		runtimeFiles = []string{"bundle/qml/QtQuick/Controls/Basic/qmldir", "bundle/plugins/platforms/libqxcb.so", "bundle/plugins/platforms/libqwayland-generic.so", "bundle/plugins/platforms/libqoffscreen.so", "bundle/plugins/tls/libqopensslbackend.so", "bundle/plugins/imageformats/libqsvg.so", "bundle/plugins/iconengines/libqsvgicon.so"}
+	} else {
+		runtimeFiles = []string{"bundle/Headroom.app/Contents/Info.plist", "bundle/Headroom.app/Contents/Resources/headroom.icns", "bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Versions/A/QtCore", "bundle/Headroom.app/Contents/Frameworks/QtCore.framework/Versions/A/Resources/Info.plist", "bundle/Headroom.app/Contents/PlugIns/platforms/libqcocoa.dylib", "bundle/Headroom.app/Contents/PlugIns/platforms/libqoffscreen.dylib", "bundle/Headroom.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib", "bundle/Headroom.app/Contents/PlugIns/imageformats/libqsvg.dylib", "bundle/Headroom.app/Contents/PlugIns/iconengines/libqsvgicon.dylib", "bundle/Headroom.app/Contents/Resources/qml/QtQuick/Controls/Basic/qmldir"}
 	}
 	for _, name := range runtimeFiles {
 		full := filepath.Join(root, filepath.FromSlash(name))
@@ -475,6 +598,15 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 		}
 		if err = os.WriteFile(full, []byte("synthetic runtime\n"), 0644); err != nil {
 			t.Fatal(err)
+		}
+	}
+	if platform == "macos" {
+		for _, record := range macOSManifestFixture().Files {
+			if record.LinkTarget != "" {
+				if err := os.Symlink(record.LinkTarget, filepath.Join(root, filepath.FromSlash(record.Path))); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 	}
 	os.WriteFile(filepath.Join(root, "bundle", "share", "headroom", "THIRD_PARTY_NOTICES.txt"), []byte("synthetic notice\n"), 0644)
@@ -505,6 +637,24 @@ func nativeExtension() string {
 		return ".exe"
 	}
 	return ""
+}
+
+func installedTestComponent(t *testing.T, root, versionPath string, server bool) string {
+	t.Helper()
+	file, err := os.Open(filepath.Join(root, filepath.FromSlash(versionPath), PackageManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := DecodePackageManifest(file)
+	file.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	component := manifest.Components.Application.Path
+	if server {
+		component = manifest.Components.Server.Path
+	}
+	return installedComponentPath(root, versionPath, component)
 }
 
 func writeMutatedTar(t *testing.T, root, output string, extra *tar.Header, extraSource string) {

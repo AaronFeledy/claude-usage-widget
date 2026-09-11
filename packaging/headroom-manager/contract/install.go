@@ -277,6 +277,9 @@ func InspectInstall(installRoot string) Inspection {
 
 func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	result := Inspection{Installed: true}
+	if err := validateInstallTargets(installRoot, ""); err != nil {
+		return result, err
+	}
 	if state.Schema != SchemaVersion || state.Product != "Headroom" || !validVersion(state.ActiveVersion) || !validVersionPath(state) {
 		return result, errors.New("installed state identity is invalid")
 	}
@@ -285,6 +288,9 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 		return result, errors.New("installed state package identity is invalid")
 	}
 	manifestPath := filepath.Join(installRoot, filepath.FromSlash(state.VersionPath), PackageManifestName)
+	if err := validateInstallTargets(manifestPath, ""); err != nil {
+		return result, err
+	}
 	digest, err := digestFile(manifestPath)
 	if err != nil || digest != state.ManifestSHA256 {
 		return result, errors.New("installed manifest digest is invalid")
@@ -310,19 +316,28 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 		result.LauncherPath = filepath.Join(installRoot, "headroom.exe")
 	}
 	versionRoot := filepath.Join(installRoot, filepath.FromSlash(state.VersionPath))
-	applicationName := "headroom"
-	if state.Platform == "windows" {
-		applicationName += ".exe"
-	}
-	result.ActiveExecutable = filepath.Join(versionRoot, "bin", applicationName)
+	result.ActiveExecutable = installedComponentPath(installRoot, state.VersionPath, manifest.Components.Application.Path)
 	for _, record := range manifest.Files {
 		if !strings.HasPrefix(record.Path, "bundle/") {
 			continue
 		}
 		relative := strings.TrimPrefix(record.Path, "bundle/")
 		name := filepath.Join(versionRoot, filepath.FromSlash(relative))
+		// Framework symlinks are allowed only as declared leaf records. Never
+		// follow a replaced directory while verifying installed content.
+		if err := validateInstallTargets(filepath.Dir(name), ""); err != nil {
+			result.TrustedIdentity = false
+			return result, err
+		}
 		info, statErr := os.Lstat(name)
-		modeMismatch := state.Platform == "linux" && fmt.Sprintf("%04o", infoMode(info)) != record.Mode
+		if record.LinkTarget != "" {
+			target, linkErr := os.Readlink(name)
+			if statErr != nil || linkErr != nil || info.Mode()&os.ModeSymlink == 0 || target != record.LinkTarget {
+				result.Missing = append(result.Missing, relative)
+			}
+			continue
+		}
+		modeMismatch := state.Platform != "windows" && fmt.Sprintf("%04o", infoMode(info)) != record.Mode
 		if statErr != nil || !info.Mode().IsRegular() || info.Size() != record.Size || modeMismatch {
 			result.Missing = append(result.Missing, relative)
 			continue
@@ -396,11 +411,16 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 	if !inspection.TrustedIdentity {
 		return "", inspection, errors.New("Headroom installation identity is not valid")
 	}
-	name := "headroom"
-	if inspection.Platform == "windows" {
-		name += ".exe"
+	manifestFile, manifestErr := os.Open(filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), PackageManifestName))
+	if manifestErr != nil {
+		return "", inspection, manifestErr
 	}
-	executable := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", name)
+	manifest, manifestErr := DecodePackageManifest(manifestFile)
+	manifestFile.Close()
+	if manifestErr != nil {
+		return "", inspection, manifestErr
+	}
+	executable := installedComponentPath(installRoot, inspection.VersionPath, manifest.Components.Application.Path)
 	for _, missing := range inspection.Missing {
 		if !isAuxiliaryPath(missing) {
 			return "", inspection, fmt.Errorf("Headroom %s runtime is incomplete; reinstall %s", inspection.Version, inspection.PackageAsset)
@@ -415,7 +435,7 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 
 func isAuxiliaryPath(path string) bool {
 	switch filepath.ToSlash(path) {
-	case "bin/usage-server", "bin/usage-server.exe", "bin/headroom-credential-helper.exe",
+	case "bin/usage-server", "bin/usage-server.exe", "bin/headroom-credential-helper.exe", "Headroom.app/Contents/MacOS/usage-server",
 		"bootstrap/headroom", "bootstrap/headroom.exe", "bootstrap/headroom-package", "bootstrap/headroom-package.exe", "bootstrap/association":
 		return true
 	}
@@ -500,6 +520,25 @@ func copyTree(source, destination string) error {
 			return err
 		}
 		target := filepath.Join(destination, rel)
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(name)
+			packagePath := "bundle/" + filepath.ToSlash(rel)
+			if err != nil || !validFrameworkLink(packagePath, link) {
+				return fmt.Errorf("links outside a macOS framework are forbidden: %s", rel)
+			}
+			resolved, resolveErr := filepath.EvalSymlinks(name)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			resolved, resolveErr = filepath.Abs(resolved)
+			if resolveErr != nil || !strings.HasPrefix(resolved, filepath.Clean(source)+string(os.PathSeparator)) {
+				return fmt.Errorf("framework link escapes verified payload: %s", rel)
+			}
+			if err = os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		}
 		if info.Mode()&os.ModeType != 0 && !info.IsDir() {
 			return fmt.Errorf("links and special files are forbidden: %s", rel)
 		}

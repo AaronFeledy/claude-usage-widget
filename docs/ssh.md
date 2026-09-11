@@ -1,6 +1,6 @@
 # Connect through SSH
 
-SSH mode connects the Windows or Linux Headroom app to a usage server on Linux
+SSH mode connects the Windows, macOS, or Linux Headroom app to a usage server on Linux
 or WSL. It encrypts usage requests, server version checks, and supported browser
 credential recovery. Local mode and direct HTTP(S) connections remain available.
 
@@ -35,8 +35,9 @@ executes the fixed command `usage-server --ssh-stdio`; this receiver connects to
 the existing service and does not start another provider poller. One server per
 account can enable the fixed SSH socket.
 
-Native Windows servers do not support this receiver yet. Windows **clients**
-can connect to Linux or WSL receivers. Use HTTPS for a native Windows backend.
+Native Windows and macOS servers do not support this receiver. Windows and
+macOS **clients** can connect to Linux or WSL receivers. Use HTTPS for a remote
+native Windows or macOS backend.
 SSH access cannot be combined with the bundled local `--desktop-session` mode.
 
 ## Prepare the client

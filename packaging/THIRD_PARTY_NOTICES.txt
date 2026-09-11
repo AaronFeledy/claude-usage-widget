@@ -31,7 +31,9 @@ Go runtime and server dependencies
 ----------------------------------
 The stable launcher, package validator and usage-server include the Go runtime.
 The Go runtime license and the exact protobuf v1.36.11 and YAML v3.0.1 license
-and notice files are included under share/licenses/go.
+and notice files are included under share/licenses/go. macOS packages also
+include golang.org/x/sys for native process identity; its BSD license is
+preserved under share/licenses/go/x-sys.
 
 Microsoft Visual C++ runtime (Windows packages)
 -----------------------------------------------

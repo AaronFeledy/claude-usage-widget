@@ -1,6 +1,6 @@
 # Headroom desktop client
 
-A shared Windows and Linux Qt Quick client for the Headroom usage API. It has a
+A shared Windows, macOS, and Linux Qt Quick client for the Headroom usage API. It has a
 frameless tray popup, system-tray meter, official provider icons, reset
 countdowns, pacing warnings, notifications, local-server lifecycle management,
 diagnostics, and verified package updates. Windows packages can read supported
@@ -8,7 +8,7 @@ Cursor and Grok browser cookies through a separate current-user helper.
 
 ## Build and run
 
-Requires CMake 3.21+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,
+Requires CMake 3.21.1+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,
 Widgets, Network, SVG image support, and Test. On Arch / EndeavourOS these come
 from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
 `qt6-wayland` for a Wayland session). KDE tray anchoring uses the optional
@@ -16,6 +16,9 @@ from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
 Building with those optional packages enables KDE tray attachment. Without
 them, the client uses Qt tray activation and the positioning available from the
 desktop.
+
+macOS builds require macOS 12 or newer and Qt 6.8.3 or newer. CMake creates a
+menu-bar-only application bundle with the `io.headroom.Headroom` identifier.
 
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -39,6 +42,17 @@ already discoverable in the shell, and add the kit's `bin` directory to `PATH`
 when running the source-built app and tests. The exact Qt 6.8.3 native package recipe is in
 [headroom-packages.yml](../../.github/workflows/headroom-packages.yml).
 
+On macOS 12 or newer, configure with the Qt 6.8.3 kit for the host architecture.
+Release packages build separate Apple silicon and Intel bundles:
+
+```bash
+cmake -S clients/desktop -B clients/desktop/build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"
+cmake --build clients/desktop/build --parallel
+ctest --test-dir clients/desktop/build --output-on-failure
+open clients/desktop/build/headroom.app
+```
+
 On Linux, install the executable, application-menu entry, and icon for your
 user:
 
@@ -56,7 +70,7 @@ verified per-user installer and stable launcher described in the repository
 
 ## Connect
 
-Windows and Linux start in **Local** mode at `http://127.0.0.1:7823`, attaching to
+Windows, macOS, and Linux start in **Local** mode at `http://127.0.0.1:7823`, attaching to
 an existing server or starting an adjacent packaged server. Saved connection
 settings take precedence. To connect directly, choose **HTTP(S)**, enter the
 server's base HTTP(S) address and bearer token, then choose **Save & connect**.
@@ -90,8 +104,8 @@ if longer), with normal polling restored after success. Manual Refresh bypasses
 the wait.
 
 Configuration is saved atomically at `~/.config/Headroom/Headroom/settings.json`
-on Linux, honoring `XDG_CONFIG_HOME`, and `%APPDATA%\Headroom\Headroom\settings.json`
-on Windows. Linux settings and migration backups use owner-only (`0600`)
+on Linux, honoring `XDG_CONFIG_HOME`, `~/Library/Application Support/Headroom/Headroom/settings.json`
+on macOS, and `%APPDATA%\Headroom\Headroom\settings.json` on Windows. Linux and macOS settings and migration backups use owner-only (`0600`)
 permissions. Windows uses the current user's roaming application-data directory;
 POSIX mode bits are not used as a claim about Windows ACLs. These files contain
 the bearer token in plaintext. Tokens never appear in the exposed UI state or error messages. Leave the token
@@ -160,12 +174,15 @@ without an invented percentage.
 
 Keyboard shortcuts: **Ctrl+R** refreshes, **Ctrl+,** opens settings, **Ctrl+Q** quits,
 and **Escape** closes settings or hides the window to the tray.
+On macOS, Qt maps those Control shortcuts to the standard Command key.
 
 ## Desktop settings and diagnostics
 
 **Start Headroom when I sign in** enables an XDG autostart entry on Linux or the
 current user's `Headroom` Run entry on Windows, launching the quoted executable
-with `--background`. This toggle applies immediately and is disabled in capture
+with `--background`. On macOS it atomically manages the owner-only
+`~/Library/LaunchAgents/io.headroom.Headroom.plist` entry for the next login.
+This toggle is disabled in capture
 and isolated-config modes. On the first normal Windows launch, Headroom imports
 schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new
 settings file is absent. The legacy file remains untouched and a create-once
@@ -264,12 +281,12 @@ are released when a fresh snapshot shows a later weekly window. Both the desktop
 and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
-Windows and Linux. Windows can forward supported Cursor and Grok browser cookies
+Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies
 from Chrome, Edge, Brave, and Firefox through the bundled helper, but only to
 the verified bundled server session, a configured HTTPS server, or the SSH
 receiver. The helper
 uses the current Windows user's browser encryption context; it cannot read other
-users' profiles or bypass unsupported newer encrypted values, and Linux has no
+users' profiles or bypass unsupported newer encrypted values, and macOS and Linux have no
 browser helper. Official per-user packages
 share the verified update flow described above. The WSL service remains a
 separately managed deployment documented in
