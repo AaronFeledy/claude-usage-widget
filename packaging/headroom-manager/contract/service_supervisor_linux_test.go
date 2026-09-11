@@ -22,6 +22,13 @@ func TestSystemdManagedServiceRequiresFixedUserUnitPID(t *testing.T) {
 	if _, err = managedServiceSupervisor([]string{"SYSTEMD_EXEC_PID=1235"}, 1235); err == nil {
 		t.Fatal("different fixed-unit MainPID was accepted")
 	}
+	callCount := len(calls)
+	if supervisor, err = managedServiceSupervisor([]string{"SYSTEMD_EXEC_PID=1234", "INVOCATION_ID=inherited"}, 9999); err != nil || supervisor != "" {
+		t.Fatalf("inherited supervisor marker = %q, %v", supervisor, err)
+	}
+	if len(calls) != callCount {
+		t.Fatal("inherited mismatched SYSTEMD_EXEC_PID queried the fixed unit")
+	}
 	if supervisor, err = managedServiceSupervisor([]string{"PATH=/usr/bin"}, 1234); err != nil || supervisor != "" {
 		t.Fatalf("ordinary service supervisor = %q, %v", supervisor, err)
 	}

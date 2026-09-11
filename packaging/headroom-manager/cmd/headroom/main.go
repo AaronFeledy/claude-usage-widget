@@ -49,6 +49,11 @@ func main() {
 }
 
 func managedServe(ctx context.Context, args, env []string, logger *slog.Logger, version string, stdin io.Reader, stdout io.Writer) error {
+	// A help-looking flag value (for example a config filename) must not
+	// bypass ownership registration for a server that will actually run.
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+		return serverapp.Run(ctx, args, env, logger, version, stdin, stdout)
+	}
 	if token := os.Getenv("HEADROOM_MANAGED_SERVICE_RESTART"); token != "" {
 		record, err := contract.AcceptManagedServiceRestart(os.Getenv("HEADROOM_INSTALL_ROOT"), token, args)
 		if err != nil {

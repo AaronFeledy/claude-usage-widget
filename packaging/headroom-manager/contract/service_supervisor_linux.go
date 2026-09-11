@@ -18,18 +18,40 @@ import (
 const managedUserUnit = "headroom.service"
 
 func managedServiceSupervisor(environment []string, pid int) (string, error) {
-	systemd := false
+	invocation := false
+	execPID := ""
 	for _, item := range environment {
-		key, _, ok := strings.Cut(item, "=")
-		if ok && (key == "INVOCATION_ID" || key == "SYSTEMD_EXEC_PID") {
-			systemd = true
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		if key == "INVOCATION_ID" {
+			invocation = value != ""
+		}
+		if key == "SYSTEMD_EXEC_PID" {
+			execPID = value
 		}
 	}
-	if !systemd {
+	if execPID != "" {
+		advertised, err := strconv.Atoi(execPID)
+		if err != nil || advertised != pid {
+			// Desktop terminals and shells can inherit their parent's systemd
+			// markers. They do not make ordinary child processes supervised.
+			return "", nil
+		}
+		if err = validateManagedServiceSupervisor(managedSystemdUser, pid); err != nil {
+			return "", errors.New("systemd-managed serve requires the fixed per-user headroom.service unit")
+		}
+		return managedSystemdUser, nil
+	}
+	if !invocation {
 		return "", nil
 	}
-	if err := validateManagedServiceSupervisor(managedSystemdUser, pid); err != nil {
-		return "", errors.New("systemd-managed serve requires the fixed per-user headroom.service unit")
+	// Older systemd versions may provide only INVOCATION_ID. Treat it as
+	// supervised solely when the fixed unit independently reports this PID.
+	mainPID, err := managedServiceSupervisorPID(managedSystemdUser)
+	if err != nil || mainPID != pid {
+		return "", nil
 	}
 	return managedSystemdUser, nil
 }
