@@ -96,10 +96,12 @@ def main():
     parser.add_argument("architecture", choices=("x86_64", "arm64"))
     for name in ("build_dir", "work_dir", "output_dir", "server", "launcher", "manager", "qt_root", "qt_source_cache"):
         parser.add_argument(name, type=Path)
+    parser.add_argument("cli", type=Path)
+    parser.add_argument("cli_launcher", type=Path)
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("macOS package assembly requires a native Mac")
-    for name in ("build_dir", "work_dir", "output_dir", "server", "launcher", "manager", "qt_root", "qt_source_cache"):
+    for name in ("build_dir", "work_dir", "output_dir", "server", "launcher", "manager", "qt_root", "qt_source_cache", "cli", "cli_launcher"):
         setattr(args, name, getattr(args, name).resolve())
     run(args.manager, "asset-name", "--version", args.version, "--platform", "macos", "--arch", args.architecture)
     stem = f"Headroom-v{args.version}-macos-{args.architecture}"
@@ -121,6 +123,8 @@ def main():
     copy_file(args.launcher, root / "bootstrap/headroom", True)
     copy_file(args.manager, root / "bootstrap/headroom-package", True)
     copy_file(args.manager, bundle / "bin/headroom-package", True)
+    copy_file(args.cli, app / "Contents/MacOS/headroom-cli", True)
+    copy_file(args.cli_launcher, root / "bootstrap/headroom-cli", True)
     # Deploy with Qt's tool, then explicitly include offline smoke and native
     # TLS plugins. A second pass fixes their framework references as well.
     plugins = ("platforms/libqcocoa.dylib", "platforms/libqoffscreen.dylib",
@@ -166,9 +170,10 @@ def main():
             copy_file(module_cache / module / name, share / "licenses/go" / destination / name)
     # The manager's Darwin process identity uses x/sys. Derive its pinned
     # module location rather than guessing a version here.
-    xsys = json.loads(subprocess.check_output(
-        ["go", "list", "-m", "-json", "golang.org/x/sys"], cwd="packaging/headroom-manager", text=True))
-    copy_file(Path(xsys["Dir"]) / "LICENSE", share / "licenses/go/x-sys/LICENSE")
+    for module in ("sys", "term"):
+        info = json.loads(subprocess.check_output(
+            ["go", "list", "-m", "-json", "golang.org/x/" + module], cwd="packaging/headroom-manager", text=True))
+        copy_file(Path(info["Dir"]) / "LICENSE", share / f"licenses/go/x-{module}/LICENSE")
 
     # Keep native framework symlinks intact. They are part of Apple's signing
     # format and are checked by the manager's scoped macOS link contract.
@@ -176,8 +181,12 @@ def main():
     # Developer ID. This is not Developer ID signing or Apple notarization.
     run(sys.executable, "packaging/check_macos_runtime.py", root, args.architecture)
     for executable in (root / "bootstrap/headroom", root / "bootstrap/headroom-package",
-                       bundle / "bin/headroom-package", app / "Contents/MacOS/usage-server"):
+                       root / "bootstrap/headroom-cli", bundle / "bin/headroom-package",
+                       app / "Contents/MacOS/usage-server", app / "Contents/MacOS/headroom-cli"):
         run("codesign", "--force", "--sign", "-", executable)
+    # Retain the exact signed public router for first-upgrade migration by an
+    # older manager, which only copies the generation's bundle subtree.
+    copy_file(root / "bootstrap/headroom-cli", bundle / "bin/headroom-cli-launcher", True)
     run("codesign", "--force", "--deep", "--sign", "-", app)
     run("codesign", "--verify", "--deep", "--strict", app)
     archive = args.output_dir / (stem + ".tar.gz")

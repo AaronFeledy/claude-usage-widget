@@ -6,18 +6,20 @@ package_path=
 manifest_path=
 platform=linux
 architecture=x86_64
+package_kind=
+entry_path=
+cli_entry_path=$HOME/.local/bin/headroom
 case $(uname -s)/$(uname -m) in
   Linux/x86_64|Linux/amd64) ;;
+  Linux/aarch64|Linux/arm64) architecture=arm64 ;;
   Darwin/arm64) platform=macos; architecture=arm64 ;;
   Darwin/x86_64) platform=macos ;;
-  *) echo 'Headroom supports Linux x86_64 and macOS Intel/Apple Silicon.' >&2; exit 1 ;;
+  *) echo 'Headroom supports Linux x86_64/ARM64 and macOS Intel/Apple Silicon; Linux ARM64 requires --cli.' >&2; exit 1 ;;
 esac
 if [ "$platform" = macos ]; then
   install_root="$HOME/Library/Application Support/Headroom"
-  entry_path=$HOME/Applications/Headroom.app/Contents/MacOS/headroom
 else
   install_root=${XDG_DATA_HOME:-"$HOME/.local/share"}/headroom
-  entry_path=$HOME/.local/bin/headroom
 fi
 no_launch=0
 dry_run=0
@@ -27,14 +29,26 @@ while [ "$#" -gt 0 ]; do
     --release-manifest) manifest_path=$2; shift 2 ;;
     --install-root) install_root=$2; shift 2 ;;
     --entry-path) entry_path=$2; shift 2 ;;
+    --cli-entry-path) cli_entry_path=$2; shift 2 ;;
+    --cli) package_kind=cli; no_launch=1; shift ;;
     --no-launch) no_launch=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if [ "$platform/$architecture" = linux/arm64 ] && [ "$package_kind" != cli ]; then
+  echo 'Linux ARM64 supports the CLI package; use --cli.' >&2; exit 1
+fi
+if [ -z "$entry_path" ]; then
+  if [ "$package_kind" = cli ]; then entry_path=$cli_entry_path
+  elif [ "$platform" = macos ]; then entry_path=$HOME/Applications/Headroom.app/Contents/MacOS/headroom
+  else entry_path=$install_root/headroom-launcher
+  fi
+fi
+if [ "$package_kind" = cli ]; then cli_entry_path=$entry_path; fi
 
 if [ "$dry_run" -eq 1 ]; then
-  printf 'Would validate and install Headroom at %s with stable entry %s\n' "$install_root" "$entry_path"
+  printf 'Would validate and install Headroom at %s with application entry %s and CLI entry %s\n' "$install_root" "$entry_path" "$cli_entry_path"
   exit 0
 fi
 command -v curl >/dev/null && command -v python3 >/dev/null && command -v tar >/dev/null || { echo 'curl, python3, and tar are required.' >&2; exit 1; }
@@ -147,13 +161,14 @@ if [ -n "$package_path" ]; then
   cp -- "$manifest_path" "$release_json"
 else
   download "https://api.github.com/repos/$repo/releases/latest" "$github_json"
-  release_url=$(python3 - "$github_json" "$platform" <<'PY'
+  release_url=$(python3 - "$github_json" "$platform" "$package_kind" <<'PY'
 import json, re, sys
 d=json.load(open(sys.argv[1], encoding='utf-8'))
 m=re.fullmatch(r'v(.+)', str(d.get('tag_name','')))
 if not m: raise SystemExit('latest release tag is not a Headroom version tag')
-suffix='release-all.json' if sys.argv[2]=='macos' else 'release.json'
-n=f'Headroom-v{m.group(1)}-{suffix}'
+prefix='Headroom-CLI' if sys.argv[3]=='cli' else 'Headroom'
+suffix='release-all.json' if sys.argv[2]=='macos' and sys.argv[3]!='cli' else 'release.json'
+n=f'{prefix}-v{m.group(1)}-{suffix}'
 a=[x for x in d.get('assets',[]) if x.get('name') == n]
 if len(a)!=1: raise SystemExit('release manifest asset is missing or ambiguous')
 print(a[0]['browser_download_url'])
@@ -162,7 +177,7 @@ PY
   download "$release_url" "$release_json" 4194304
 fi
 [ "$(wc -c < "$release_json")" -le 4194304 ] || { echo 'release manifest is too large' >&2; exit 1; }
-metadata=$(python3 - "$release_json" "$platform" "$architecture" <<'PY'
+metadata=$(python3 - "$release_json" "$platform" "$architecture" "$package_kind" <<'PY'
 import json, re, sys
 d=json.load(open(sys.argv[1], encoding='utf-8'))
 semver=r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
@@ -170,8 +185,10 @@ v=str(d.get('version',''))
 prerelease=v.split('+',1)[0].split('-',1)
 bad_numeric_prerelease=len(prerelease)==2 and any(x.isdigit() and len(x)>1 and x.startswith('0') for x in prerelease[1].split('.'))
 if d.get('schema') != 1 or d.get('product') != 'Headroom' or not re.fullmatch(semver,v) or bad_numeric_prerelease: raise SystemExit('unrecognized release manifest')
-platform, architecture = sys.argv[2:]
-n=f'Headroom-v{v}-{platform}-{architecture}.tar.gz'
+platform, architecture, kind = sys.argv[2:]
+if d.get('package_kind','') != kind: raise SystemExit('release package kind does not match the selected installation')
+prefix='Headroom-CLI' if kind=='cli' else 'Headroom'
+n=f'{prefix}-v{v}-{platform}-{architecture}.tar.gz'
 p=[x for x in d.get('packages',[]) if x.get('platform')==platform and x.get('architecture')==architecture and x.get('asset_name')==n]
 if len(p)!=1 or type(p[0].get('size')) is not int or not (0 < p[0]['size'] <= 2147483648) or not re.fullmatch(r'[0-9a-f]{64}',str(p[0].get('sha256',''))): raise SystemExit('Native package metadata is missing or invalid')
 print(v); print(n); print(p[0]['size']); print(p[0]['sha256'])
@@ -271,9 +288,14 @@ write_atomic(resources/'headroom.icns', (payload/'Resources'/'headroom.icns').re
 write_atomic(info_path, plistlib.dumps(info))
 PY
 }
-if [ "$platform" = macos ]; then macos_entry check; fi
+if [ "$platform" = macos ] && [ "$package_kind" != cli ]; then macos_entry check; fi
 "$manager" install --archive "$archive" --install-root "$install_root" --entry-path "$entry_path" \
-  --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
+  --cli-entry-path "$cli_entry_path" --version "$version" --platform "$platform" --arch "$architecture" --asset "$asset_name"
+
+if [ "$package_kind" = cli ]; then
+  printf 'Installed Headroom %s at %s\nRun %s for usage, %s serve for the server, or %s update to update.\n' "$version" "$install_root" "$cli_entry_path" "$cli_entry_path" "$cli_entry_path"
+  exit 0
+fi
 
 if [ "$platform" = macos ]; then
   macos_entry write
