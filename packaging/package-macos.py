@@ -3,7 +3,9 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -33,19 +35,59 @@ def canonical_app_bundle(bundle):
     return app
 
 
-def materialize_qml_plugin_links(app):
-    plugins = (app / "Contents/PlugIns").resolve(strict=True)
-    for path in (app / "Contents/Resources/qml").rglob("*"):
-        if not path.is_symlink():
-            continue
-        target = path.resolve(strict=True)
-        if path.suffix != ".dylib" or not target.is_relative_to(plugins) or not target.is_file():
+def relocate_qml_plugins(app):
+    # Qt deploys QML plugins centrally with @loader_path dependencies relative
+    # to Contents/PlugIns. Keep them there: copying them beside each qmldir
+    # breaks those load commands. qmldir's documented plugin-path argument
+    # locates the central binary without links outside the framework contract.
+    plugin_directory = app / "Contents/PlugIns"
+    qml = app / "Contents/Resources/qml"
+    if plugin_directory.is_symlink() or not plugin_directory.is_dir():
+        raise ValueError("QML plugin directory is missing or unsafe")
+    if qml.is_symlink() or not qml.is_dir():
+        raise ValueError("QML import directory is missing or unsafe")
+    plugins = plugin_directory.resolve(strict=True)
+    plugin_line = re.compile(r"^(optional )?plugin ([A-Za-z0-9_]+)$")
+    declared_entries = set()
+
+    for qmldir in sorted(qml.rglob("qmldir")):
+        if qmldir.is_symlink() or not qmldir.is_file():
+            raise ValueError("unexpected QML module definition: " + str(qmldir.relative_to(app)))
+        lines = qmldir.read_text().splitlines()
+        changed = False
+        for index, line in enumerate(lines):
+            if not line.startswith("plugin ") and not line.startswith("optional plugin "):
+                continue
+            match = plugin_line.fullmatch(line)
+            if not match:
+                raise ValueError("unexpected QML plugin directive: " + str(qmldir.relative_to(app)))
+            name = match.group(2)
+            local = qmldir.parent / f"lib{name}.dylib"
+            if local in declared_entries:
+                raise ValueError("duplicate QML plugin declaration: " + str(local.relative_to(app)))
+            declared_entries.add(local)
+            central = plugins / local.name
+            if central.is_symlink() or not central.is_file():
+                raise ValueError("expected deployed QML plugin is missing: " + str(central.relative_to(app)))
+            if local.is_symlink():
+                if local.resolve(strict=True) != central:
+                    raise ValueError("unexpected QML deployment link: " + str(local.relative_to(app)))
+            elif not local.is_file():
+                raise ValueError("expected QML module plugin is missing: " + str(local.relative_to(app)))
+
+            relative_plugins = Path(os.path.relpath(plugins, qmldir.parent)).as_posix()
+            prefix = "optional " if match.group(1) else ""
+            lines[index] = f"{prefix}plugin {name} {relative_plugins}"
+            local.unlink()
+            changed = True
+        if changed:
+            qmldir.write_text("\n".join(lines) + "\n")
+
+    for path in qml.rglob("*"):
+        if path.is_symlink():
             raise ValueError("unexpected QML deployment link: " + str(path.relative_to(app)))
-        # Qt's CMake deploy step links QML plugins into Contents/PlugIns.
-        # Package those as regular files; only framework links are permitted
-        # by the archive contract. Do this before code signing the app.
-        path.unlink()
-        copy_file(target, path, True)
+        if path.suffix == ".dylib" and path not in declared_entries:
+            raise ValueError("undeclared QML plugin: " + str(path.relative_to(app)))
 
 
 def main():
@@ -94,7 +136,7 @@ def main():
     for relative in plugins:
         if not (app / "Contents/PlugIns" / relative).is_file():
             raise ValueError("required deployed plugin is missing: " + relative)
-    materialize_qml_plugin_links(app)
+    relocate_qml_plugins(app)
 
     share = bundle / "share"
     copy_file(Path("packaging/THIRD_PARTY_NOTICES.txt"), share / "headroom/THIRD_PARTY_NOTICES.txt")
