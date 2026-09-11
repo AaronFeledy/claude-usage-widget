@@ -162,6 +162,53 @@ private slots:
         QCOMPARE(info.serverVersion(), QStringLiteral("test"));
         QCOMPARE(info.serverStatus(), QStringLiteral("Server healthy"));
     }
+    void remoteUpdateNoticeUsesSemanticVersions_data() {
+        QTest::addColumn<QString>("desktop");
+        QTest::addColumn<QString>("server");
+        QTest::addColumn<bool>("warn");
+        QTest::newRow("newer") << "2.0.0" << "1.9.9" << true;
+        QTest::newRow("numeric") << "1.10.0" << "1.9.0" << true;
+        QTest::newRow("same") << "1.2.3" << "1.2.3" << false;
+        QTest::newRow("older-desktop") << "1.2.3" << "2.0.0" << false;
+        QTest::newRow("build-metadata") << "1.2.3+new" << "1.2.3+old" << false;
+        QTest::newRow("release") << "1.2.3" << "1.2.3-rc.1" << true;
+        QTest::newRow("prerelease") << "1.2.3-rc.1" << "1.2.3" << false;
+        QTest::newRow("prerelease-numeric") << "1.2.3-rc.10" << "1.2.3-rc.9" << true;
+        QTest::newRow("prerelease-segments") << "1.2.3-rc.1" << "1.2.3-rc" << true;
+        QTest::newRow("dev") << "dev" << "1.0.0" << false;
+        QTest::newRow("unknown-server") << "2.0.0" << "dev" << false;
+        QTest::newRow("leading-zero") << "2.0.0" << "01.0.0" << false;
+        QTest::newRow("bad-prerelease") << "2.0.0" << "1.0.0-01" << false;
+    }
+    void remoteUpdateNoticeUsesSemanticVersions() {
+        QFETCH(QString, desktop); QFETCH(QString, server); QFETCH(bool, warn);
+        QCoreApplication::setApplicationVersion(desktop);
+        HttpFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
+        fixture.body = QJsonDocument(QJsonObject{{"status", "ok"}, {"version", server}}).toJson();
+        AppInfo info;
+        info.setBackend(fixture.url(), {}, QSslCertificate(), true); info.refreshServer();
+        QTRY_VERIFY(!info.checkingServer());
+        QCOMPARE(!info.serverUpdateNotice().isEmpty(), warn);
+        if (warn) QVERIFY(info.serverUpdateNotice().contains("headroom update"));
+        // Local ownership is an explicit connection property, never a hostname inference.
+        info.setBackend(fixture.url(), {}, QSslCertificate(), false);
+        QVERIFY(info.serverUpdateNotice().isEmpty());
+        QCoreApplication::setApplicationVersion("0.1.0");
+    }
+    void remoteUpdateNoticeClearsAfterServerUpgradeOrConnectionChange() {
+        QCoreApplication::setApplicationVersion("2.0.0");
+        HttpFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
+        AppInfo info;
+        info.setBackend(fixture.url(), {}, QSslCertificate(), true); info.refreshServer();
+        QTRY_VERIFY(!info.checkingServer());
+        QVERIFY(!info.serverUpdateNotice().isEmpty());
+        fixture.body = R"({"status":"ok","version":"2.0.0"})";
+        info.refreshServer(); QTRY_VERIFY(!info.checkingServer());
+        QVERIFY(info.serverUpdateNotice().isEmpty());
+        info.setBackend("ssh://another-host", {}, QSslCertificate(), true);
+        QVERIFY(info.serverUpdateNotice().isEmpty());
+        QCoreApplication::setApplicationVersion("0.1.0");
+    }
 };
 QTEST_GUILESS_MAIN(AppInfoTest)
 #include "test_appinfo.moc"

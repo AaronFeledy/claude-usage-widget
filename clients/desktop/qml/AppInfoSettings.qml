@@ -19,6 +19,11 @@ ColumnLayout {
         ActionButton { text: appInfo.checkingServer ? "Checking…" : "Check server"; enabled: !appInfo.checkingServer; quiet: true; onClicked: appInfo.refreshServer() }
     }
     Text { text: updateService.statusText; Layout.fillWidth: true; wrapMode: Text.WordWrap; color: updateService.state === "failed" ? Theme.red : Theme.muted; font.pixelSize: 12; textFormat: Text.PlainText }
+    Text {
+        visible: appInfo.serverUpdateNotice.length > 0
+        text: appInfo.serverUpdateNotice; Layout.fillWidth: true; wrapMode: Text.WordWrap
+        color: Theme.orange; font.pixelSize: 12; textFormat: Text.PlainText
+    }
     Flow {
         Layout.fillWidth: true; spacing: 8
         ActionButton { visible: updateService.canCheck || (updateService.busy && updateService.state !== "applying"); text: updateService.busy ? (updateService.state === "downloading" ? "Working…" : "Checking…") : "Check for updates"; enabled: updateService.canCheck; onClicked: updateService.checkForUpdates() }
