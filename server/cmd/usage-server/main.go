@@ -90,7 +90,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		}
 		defer sshListener.Close()
 	}
-	providerPoller, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	providerPoller, codexClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
 	if err != nil {
 		return err
 	}
@@ -98,6 +98,7 @@ func runContext(ctx context.Context, args []string, env []string, logger *slog.L
 		Cache:         providerPoller,
 		Cursor:        cursorClient,
 		Grok:          grokProvider,
+		Codex:         codexClient,
 		Poller:        providerPoller,
 		Logger:        logger,
 		AuthToken:     cfg.AuthToken,
@@ -122,7 +123,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 	}
 	defer prepared.listener.Close()
 	cfg.AuthToken = prepared.request.Token
-	providerPoller, cursorClient, grokProvider, names, err := buildPoller(cfg)
+	providerPoller, codexClient, cursorClient, grokProvider, names, err := buildPoller(cfg)
 	if err != nil {
 		return err
 	}
@@ -130,6 +131,7 @@ func runDesktopSession(ctx context.Context, cfg config.Config, logger *slog.Logg
 		Cache:         providerPoller,
 		Cursor:        cursorClient,
 		Grok:          grokProvider,
+		Codex:         codexClient,
 		Poller:        providerPoller,
 		Logger:        logger,
 		AuthToken:     cfg.AuthToken,
@@ -152,13 +154,14 @@ type appRuntime struct {
 	interval time.Duration
 }
 
-func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, *grok.Provider, []string, error) {
+func buildPoller(cfg config.Config) (*poller.Poller, *codex.Client, *cursor.Client, *grok.Provider, []string, error) {
 	allowLocalDiscovery, err := api.IsLoopbackListenAddr(cfg.ListenAddr)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	providerPoller := poller.New(poller.Options{})
 	var cursorClient *cursor.Client
+	var codexClient *codex.Client
 	var grokProvider *grok.Provider
 	names := []string{}
 	for name, providerCfg := range cfg.Providers {
@@ -167,20 +170,23 @@ func buildPoller(cfg config.Config) (*poller.Poller, *cursor.Client, *grok.Provi
 		}
 		provider, err := buildProvider(name, providerCfg, allowLocalDiscovery)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		if c, ok := provider.(*cursor.Client); ok {
 			cursorClient = c
+		}
+		if c, ok := provider.(*codex.Client); ok {
+			codexClient = c
 		}
 		if g, ok := provider.(*grok.Provider); ok {
 			grokProvider = g
 		}
 		if err := providerPoller.Register(provider, true); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		names = append(names, provider.Name())
 	}
-	return providerPoller, cursorClient, grokProvider, names, nil
+	return providerPoller, codexClient, cursorClient, grokProvider, names, nil
 }
 
 func buildProvider(name string, providerCfg config.ProviderConfig, allowLocalDiscovery bool) (usage.Provider, error) {

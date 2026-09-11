@@ -39,6 +39,7 @@ func copyUsageData(data usage.UsageData) usage.UsageData {
 		Error:                 copyString(data.Error),
 		NeedsReauth:           data.NeedsReauth,
 		RateLimitResetCredits: copyResetCredits(data.RateLimitResetCredits),
+		ProviderAccountID:     data.ProviderAccountID,
 	}
 }
 

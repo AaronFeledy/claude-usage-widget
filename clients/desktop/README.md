@@ -240,9 +240,15 @@ percentage or pacing marker. The existing Windows pacing indicators are retained
 Headroom uses the server's provider names, subtitles, bucket labels, variable
 meter counts, status text, and authentication errors. Live accounts may return
 different bucket layouts. Both clients retain pacing and provider ordering.
-When ChatGPT reports banked usage resets, Headroom shows the available count by
-the provider name. The count is read-only, is not a usage meter, and stays hidden
-when the server cannot determine it or that provider is unavailable.
+When ChatGPT reports one or more banked usage resets, Headroom shows the available
+count by the provider name. The label turns red only while ChatGPT's weekly meter
+is in the shared Critical warning state. The count is read-only, is not a usage
+meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
+Activate the label to open ChatGPT's usage and reset controls in a browser.
+At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
+is available. It requires explicit confirmation and uses the selected backend
+transport. Requests are never retried automatically; an uncertain manual retry
+reuses the saved request ID. Both the desktop and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows and Linux. Windows can forward supported Cursor and Grok browser cookies

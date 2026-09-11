@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Rectangle {
     id: card
     required property var provider
+    signal resetRequested()
     objectName: "providerCard_" + name
     property string name: provider.provider_name
     property string displayName: backend.displayName(name)
@@ -15,7 +16,16 @@ Rectangle {
     property bool stacked: width < 780
     property var resetCredits: provider.rate_limit_reset_credits
     property bool hasBankedResets: name === "Codex" && !failed && resetCredits !== null
-        && resetCredits !== undefined && resetCredits.available_count !== undefined
+        && resetCredits !== undefined && resetCredits.available_count > 0
+    property var clock: backend.state
+    property var weeklyBucket: {
+        for (let bucket of provider.buckets || []) if (bucket.id === "weekly") return bucket
+        return null
+    }
+    property var weeklyConcern: {
+        card.clock
+        return card.weeklyBucket ? backend.concern(card.name, card.weeklyBucket) : ({})
+    }
     implicitHeight: body.implicitHeight + 36
     radius: 12
     color: Theme.surface
@@ -71,16 +81,39 @@ Rectangle {
                 }
             }
             Text {
+                function openUsage() { Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
                 objectName: "bankedResets_" + card.name
                 visible: card.hasBankedResets
                 textFormat: Text.PlainText
-                text: !card.hasBankedResets ? "" : card.resetCredits.available_count === 0 ? "No banked resets"
-                    : card.resetCredits.available_count === 1 ? "1 banked reset"
+                text: !card.hasBankedResets ? "" : card.resetCredits.available_count === 1 ? "1 banked reset"
                     : card.resetCredits.available_count + " banked resets"
-                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
-                HoverHandler { id: bankedResetHover }
+                color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
+                font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+                font.underline: bankedResetHover.hovered || activeFocus
+                activeFocusOnTab: visible
+                Accessible.role: Accessible.Link
+                Accessible.name: text
+                Accessible.description: "Open ChatGPT usage and reset controls"
+                Accessible.onPressAction: openUsage()
+                Keys.onReturnPressed: openUsage()
+                Keys.onEnterPressed: openUsage()
+                Keys.onSpacePressed: openUsage()
+                TapHandler { onTapped: parent.openUsage() }
+                HoverHandler { id: bankedResetHover; cursorShape: Qt.PointingHandCursor }
                 ToolTip.visible: bankedResetHover.hovered
-                ToolTip.text: "Available usage resets. Use them in ChatGPT."
+                ToolTip.text: "Open ChatGPT usage and reset controls"
+            }
+            // IMPORTANT: DO NOT test this button, the endpoint, or any code
+            // that might trigger a reset. It can burn a very valuable reset.
+            // The intentionally skipped tests must not be filled in or enabled.
+            ActionButton {
+                objectName: "useBankedReset_" + card.name
+                visible: card.hasBankedResets && !!card.weeklyBucket && card.weeklyBucket.utilization >= 95
+                enabled: backend.resetAction.enabled
+                text: backend.resetAction.busy ? "Resetting…" : "Use reset…"
+                implicitHeight: 32; font.pixelSize: 12
+                Layout.alignment: Qt.AlignLeft
+                onClicked: card.resetRequested()
             }
             Item {
                 Layout.preferredWidth: 35; Layout.preferredHeight: 28

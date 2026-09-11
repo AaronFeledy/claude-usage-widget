@@ -35,6 +35,28 @@ inline QByteArray snapshot() {
     return QJsonDocument(providers).toJson();
 }
 
+inline QByteArray snapshotWithCodex(double sessionUsed, double weeklyUsed, int resetCount, const QString &weeklyReset) {
+    auto providers = QJsonDocument::fromJson(snapshot()).array();
+    auto codex = providers[1].toObject();
+    auto buckets = codex["buckets"].toArray();
+    for (int i = 0; i < buckets.size(); ++i) {
+        auto bucket = buckets[i].toObject();
+        if (bucket["id"] == "session") {
+            bucket["utilization"] = sessionUsed;
+            bucket["resets_at"] = QJsonValue(QJsonValue::Null);
+        }
+        if (bucket["id"] == "weekly") {
+            bucket["utilization"] = weeklyUsed;
+            bucket["resets_at"] = weeklyReset;
+        }
+        buckets[i] = bucket;
+    }
+    codex["buckets"] = buckets;
+    codex["rate_limit_reset_credits"] = QJsonObject{{"available_count", resetCount}};
+    providers[1] = codex;
+    return QJsonDocument(providers).toJson();
+}
+
 }
 
 class ControllerFixture final : public Controller {
@@ -47,6 +69,10 @@ public:
         QVariantList providers;
         if (!Usage::parse(m_payload, providers)) qFatal("Invalid test usage fixture");
         acceptSnapshot(providers);
+    }
+    void replaceSnapshot(QByteArray payload) {
+        m_payload = std::move(payload);
+        refresh();
     }
 private:
     static CredentialServiceOptions disabledCredentials() {

@@ -30,6 +30,8 @@ bool allowed(const QByteArray &method, const QString &path)
     if (method == "GET") return path == QStringLiteral("/api/v1/usage") || path == QStringLiteral("/api/v1/health");
     if (method == "PUT") return path == QStringLiteral("/api/v1/providers/cursor/credentials")
         || path == QStringLiteral("/api/v1/providers/grok/credentials");
+    // DO NOT test this endpoint or any code that could trigger a valuable banked reset.
+    if (method == "POST") return path == QStringLiteral("/api/v1/providers/codex/reset");
     return false;
 }
 
@@ -78,7 +80,8 @@ public:
         open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 
         const QByteArray method = operation == QNetworkAccessManager::GetOperation ? QByteArrayLiteral("GET")
-            : operation == QNetworkAccessManager::PutOperation ? QByteArrayLiteral("PUT") : QByteArray();
+            : operation == QNetworkAccessManager::PutOperation ? QByteArrayLiteral("PUT")
+            : operation == QNetworkAccessManager::PostOperation ? QByteArrayLiteral("POST") : QByteArray();
         const QString path = request.url().path(QUrl::FullyDecoded);
         QUrl address;
         if (!SshTransport::parseAddress(request.url().adjusted(QUrl::RemovePath).toString(QUrl::FullyEncoded), &address)

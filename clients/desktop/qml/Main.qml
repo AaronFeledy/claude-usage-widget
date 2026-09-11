@@ -44,6 +44,54 @@ ApplicationWindow {
     SettingsPanel { id: settings; objectName: "settingsPanel"; onDiagnosticsRequested: diagnostics.open() }
     DiagnosticsPanel { id: diagnostics; objectName: "diagnosticsPanel" }
 
+    // IMPORTANT: DO NOT test this button/confirmation, its endpoint, or any
+    // code that might trigger a reset: doing so can burn a very valuable reset.
+    // This restriction belongs in source and skip-only tests, never in UI copy.
+    Popup {
+        id: resetConfirmation
+        objectName: "resetConfirmation"
+        property var action: backend.resetAction
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(440, parent.width - 32)
+        modal: true; focus: true; padding: 24
+        closePolicy: Popup.CloseOnEscape
+        onOpened: resetCancel.forceActiveFocus()
+        onClosed: backend.cancelChatGptResetConfirmation()
+        background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
+        Overlay.modal: Rectangle { color: Theme.overlay }
+        contentItem: ColumnLayout {
+            spacing: 18
+            Text { text: "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Text {
+                visible: resetConfirmation.action.canConfirm
+                text: "Use one banked reset for the ChatGPT account connected to your usage server? This spends a reset and cannot be undone."
+                color: Theme.muted; font.pixelSize: 13; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            Text {
+                visible: text.length > 0
+                text: resetConfirmation.action.message
+                textFormat: Text.PlainText; color: Theme.foreground; font.pixelSize: 13
+                wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ActionButton { text: "Usage page"; quiet: true; onClicked: Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
+                Item { Layout.fillWidth: true }
+                ActionButton { id: resetCancel; text: resetConfirmation.action.canConfirm ? "Cancel" : "Close"; onClicked: resetConfirmation.close() }
+            }
+            // DO NOT activate for testing. This is the only UI call site that
+            // can spend a banked reset; skipped tests are intentional safeguards.
+            ActionButton {
+                objectName: "confirmBankedReset"
+                visible: resetConfirmation.action.canConfirm || resetConfirmation.action.busy
+                enabled: resetConfirmation.action.canConfirm
+                text: resetConfirmation.action.busy ? "Using reset…" : "Use one reset"
+                accent: true; Layout.fillWidth: true
+                onClicked: backend.consumeChatGptReset()
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent; spacing: 0
         ScrollView {
@@ -58,7 +106,14 @@ ApplicationWindow {
                         id: providerRows; objectName: "providerRows"
                         visible: window.providers.length > 0
                         Layout.fillWidth: true; spacing: 12
-                        Repeater { model: window.shownProviders; ProviderCard { required property var modelData; provider: modelData; offline: window.serverOffline; Layout.fillWidth: true } }
+                        Repeater {
+                            model: window.shownProviders
+                            ProviderCard {
+                                required property var modelData
+                                provider: modelData; offline: window.serverOffline; Layout.fillWidth: true
+                                onResetRequested: { backend.prepareChatGptReset(); resetConfirmation.open() }
+                            }
+                        }
                     }
                     Rectangle {
                         objectName: "connectionPlaceholder"

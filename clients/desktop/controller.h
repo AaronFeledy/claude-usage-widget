@@ -20,6 +20,7 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
+    Q_PROPERTY(QVariantMap resetAction READ resetAction NOTIFY changed)
 public:
     explicit Controller(const QString &configPath = {}, QObject *parent = nullptr,
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
@@ -45,6 +46,12 @@ public:
     qint64 ownedServerProcessId() const { return m_server.ownedProcessId(); }
     QString ownedServerExecutablePath() const { return m_server.ownedExecutablePath(); }
     Q_INVOKABLE virtual void refresh();
+    QVariantMap resetAction() const;
+    // DO NOT test this button, endpoint, or any code that could trigger a reset.
+    // A reset is valuable and irreversible; the skip-only tests are intentional.
+    Q_INVOKABLE bool prepareChatGptReset();
+    Q_INVOKABLE void cancelChatGptResetConfirmation();
+    Q_INVOKABLE void consumeChatGptReset();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {});
@@ -73,6 +80,12 @@ private:
     void cancel();
     void requestUsage();
     void syncConnection();
+    QVariantMap chatGptWeekly() const;
+    bool chatGptResetEligible() const;
+    QString resetConnectionIdentity() const;
+    QString resetReceiptPath() const;
+    void observeResetUsage();
+    void cancelResetRequest();
     QString writeSettings(const QString &mode, const QString &url, const QString &token, const QString &sshUrl, int interval, bool notifications, const QString &primary);
     QStringList m_order;
     SettingsService m_settingsService;
@@ -94,5 +107,8 @@ private:
     ManagedServer m_server;
     CredentialService m_credentials;
     QPointer<QNetworkReply> m_reply;
+    QPointer<QNetworkReply> m_resetReply;
+    QString m_resetConfirmation, m_resetMessage, m_resetBlockedReceipt;
+    bool m_resetBusy = false;
     QTimer m_poll, m_clock;
 };

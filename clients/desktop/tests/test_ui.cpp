@@ -13,6 +13,7 @@
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QQuickItem>
+#include <QDesktopServices>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -26,6 +27,13 @@ QQuickItem *findItem(QQuickItem *root, const QString &name) {
     for (auto child : root->childItems()) if (auto found = findItem(child, name)) return found;
     return nullptr;
 }
+class UrlCapture : public QObject {
+    Q_OBJECT
+public:
+    QList<QUrl> urls;
+public slots:
+    void capture(const QUrl &url) { urls.append(url); }
+};
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
@@ -131,27 +139,6 @@ private slots:
         }
         auto chatgpt = findItem(window->contentItem(), "providerLabel_Codex");
         QVERIFY(chatgpt); QCOMPARE(chatgpt->property("text").toString(), QString("ChatGPT"));
-        auto chatgptCard = findItem(window->contentItem(), "providerCard_Codex"); QVERIFY(chatgptCard);
-        auto bankedResets = findItem(window->contentItem(), "bankedResets_Codex"); QVERIFY(bankedResets);
-        QTRY_VERIFY(bankedResets->isVisible());
-        QCOMPARE(bankedResets->property("text").toString(), QString("3 banked resets"));
-        QVERIFY(window->grabWindow().save(capture("headroom-banked-resets.png")));
-        const auto originalChatgpt = chatgptCard->property("provider").toMap();
-        auto changedChatgpt = originalChatgpt;
-        changedChatgpt.remove("rate_limit_reset_credits");
-        QVERIFY(chatgptCard->setProperty("provider", changedChatgpt));
-        QTRY_VERIFY(!bankedResets->isVisible());
-        for (const auto countAndText : QList<QPair<int, QString>>{{0, "No banked resets"}, {1, "1 banked reset"}, {3, "3 banked resets"}}) {
-            changedChatgpt["rate_limit_reset_credits"] = QVariantMap{{"available_count", countAndText.first}};
-            QVERIFY(chatgptCard->setProperty("provider", changedChatgpt));
-            QTRY_VERIFY(bankedResets->isVisible());
-            QCOMPARE(bankedResets->property("text").toString(), countAndText.second);
-        }
-        changedChatgpt["error"] = "Unavailable";
-        QVERIFY(chatgptCard->setProperty("provider", changedChatgpt));
-        QTRY_VERIFY(!bankedResets->isVisible());
-        QVERIFY(chatgptCard->setProperty("provider", originalChatgpt));
-        QTRY_VERIFY(bankedResets->isVisible());
         auto source = findItem(window->contentItem(), "dragHandle_Codex");
         auto target = findItem(window->contentItem(), "dragHandle_Claude");
         QVERIFY(source); QVERIFY(target);
@@ -295,6 +282,88 @@ private slots:
         QVERIFY(window->grabWindow().save(capture("headroom-offline-empty.png")));
         QVERIFY(window->setProperty("state", connectedState));
         QTRY_COMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#44475a"));
+    }
+    void bankedResetsFollowWeeklyCriticalState() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const auto capture = [&](const QString &name) {
+            const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+            if (!requested.isEmpty()) { QDir().mkpath(requested); return QDir(requested).filePath(name); }
+            return dir.filePath(name);
+        };
+        ControllerFixture controller(dir.filePath("settings.json"));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+
+        auto resetLabel = [&] {
+            return findItem(window->contentItem(), "bankedResets_Codex");
+        };
+        auto label = resetLabel(); QVERIFY(label);
+        QTRY_VERIFY(label->isVisible());
+        QCOMPARE(label->property("text").toString(), QString("3 banked resets"));
+        const QColor muted = label->property("color").value<QColor>();
+        QVERIFY(muted != QColor("#ff5555"));
+        QVERIFY(window->grabWindow().save(capture("headroom-banked-resets.png")));
+
+        const QString halfWeekReset = QDateTime::currentDateTimeUtc().addSecs(7 * 86400 / 2).toString(Qt::ISODate);
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, halfWeekReset));
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+
+        auto missing = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
+        auto missingCodex = missing[1].toObject(); missingCodex.remove("rate_limit_reset_credits"); missing[1] = missingCodex;
+        controller.replaceSnapshot(QJsonDocument(missing).toJson());
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+
+        auto failed = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
+        auto failedCodex = failed[1].toObject(); failedCodex["error"] = "Unavailable"; failedCodex["is_success"] = false; failed[1] = failedCodex;
+        controller.replaceSnapshot(QJsonDocument(failed).toJson());
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 1, halfWeekReset));
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());
+        QCOMPARE(label->property("text").toString(), QString("1 banked reset"));
+        QCOMPARE(label->property("color").value<QColor>(), muted);
+
+        for (const auto &[weekly, severity] : QList<QPair<int, int>>{{56, 1}, {68, 2}, {80, 3}, {73, 3}, {68, 2}}) {
+            controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, weekly, 3, halfWeekReset));
+            label = resetLabel(); QVERIFY(label);
+            QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "weekly"}})["severity"].toInt(), severity);
+            const QColor expected = severity == 3 ? QColor("#ff5555") : muted;
+            QTRY_COMPARE(label->property("color").value<QColor>(), expected);
+            QCOMPARE(label->property("text").toString(), QString("3 banked resets"));
+            if (severity == 3 && weekly == 80)
+                QVERIFY(window->grabWindow().save(capture("headroom-banked-resets-critical.png")));
+        }
+
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(90, 41, 3, halfWeekReset));
+        label = resetLabel(); QVERIFY(label);
+        QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "session"}})["severity"].toInt(), 3);
+        QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "weekly"}})["severity"].toInt(), 0);
+        QTRY_COMPARE(label->property("color").value<QColor>(), muted);
+
+        UrlCapture opened;
+        QDesktopServices::setUrlHandler("https", &opened, "capture");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                          label->mapToScene(QPointF(label->width() / 2, label->height() / 2)).toPoint());
+        QVERIFY(label->property("activeFocusOnTab").toBool());
+        label->forceActiveFocus(); QTRY_VERIFY(label->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Return);
+        QTest::keyClick(window, Qt::Key_Space);
+        QDesktopServices::unsetUrlHandler("https");
+        QCOMPARE(opened.urls, QList<QUrl>({QUrl("https://chatgpt.com/codex/settings/usage"),
+            QUrl("https://chatgpt.com/codex/settings/usage"), QUrl("https://chatgpt.com/codex/settings/usage")}));
     }
     void preservesAndDisplaysCustomInterval() {
         QTemporaryDir dir; QVERIFY(dir.isValid());

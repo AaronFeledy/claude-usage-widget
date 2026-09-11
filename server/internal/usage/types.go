@@ -68,6 +68,9 @@ type UsageData struct {
 	Error                 *string
 	NeedsReauth           bool
 	RateLimitResetCredits *RateLimitResetCredits
+	// ProviderAccountID binds sensitive provider actions to the account whose
+	// usage was checked. It is internal-only and must never enter API JSON.
+	ProviderAccountID string `json:"-"`
 }
 
 // RateLimitResetCredits is read-only provider metadata. It is separate from

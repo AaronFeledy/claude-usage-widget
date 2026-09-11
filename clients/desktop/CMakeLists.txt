@@ -61,7 +61,7 @@ if(MSVC)
 endif()
 
 qt_add_library(headroom-core STATIC
-    controller.cpp usage.cpp warning.cpp trayvisual.cpp startup.cpp appinfo.cpp updateservice.cpp popup.cpp
+    controller.cpp resetaction.cpp usage.cpp warning.cpp trayvisual.cpp startup.cpp appinfo.cpp updateservice.cpp popup.cpp
     settings.cpp instance.cpp managedserver.cpp jobobject.cpp credentialservice.cpp sshnetwork.cpp)
 target_link_libraries(headroom-core PUBLIC Qt6::Quick Qt6::Network Qt6::Svg)
 target_include_directories(headroom-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -176,6 +176,12 @@ if(BUILD_TESTING)
     add_test(NAME headroom-ui-tests COMMAND headroom-ui-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-ui-tests.xml,junitxml")
     set_tests_properties(headroom-ui-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    # DO NOT enable/implement reset action tests: they can burn a valuable reset.
+    qt_add_executable(headroom-reset-prohibited-tests tests/test_reset_prohibited.cpp)
+    set_target_properties(headroom-reset-prohibited-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_link_libraries(headroom-reset-prohibited-tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME headroom-reset-prohibited-tests COMMAND headroom-reset-prohibited-tests)
+    set_tests_properties(headroom-reset-prohibited-tests PROPERTIES DISABLED TRUE)
     add_test(NAME headroom-tests COMMAND headroom-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-tests.xml,junitxml")
     set_tests_properties(headroom-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

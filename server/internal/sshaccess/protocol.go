@@ -163,6 +163,10 @@ func allowedRequest(request requestFrame) bool {
 		return len(request.Body) == 0
 	case "PUT /api/v1/providers/cursor/credentials", "PUT /api/v1/providers/grok/credentials":
 		return true
+	// This route can spend a very valuable banked reset. Do not test the reset
+	// button, endpoint, or code that may trigger it. Its skipped test is intentional.
+	case "POST /api/v1/providers/codex/reset":
+		return true
 	default:
 		return false
 	}
@@ -184,7 +188,7 @@ func doRequest(ctx context.Context, home string, request requestFrame) (int, []b
 	if err != nil {
 		return 0, nil, err
 	}
-	if request.Method == http.MethodPut {
+	if request.Method == http.MethodPut || request.Method == http.MethodPost {
 		httpRequest.Header.Set("Content-Type", "application/json")
 	}
 	response, err := client.Do(httpRequest)

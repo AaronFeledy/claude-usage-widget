@@ -54,12 +54,14 @@ Controller::Controller(const QString &configPath, QObject *parent, bool allowAut
     });
     connect(&m_server, &ManagedServer::unavailable, this, [this](const QString &message, const QString &kind) {
         if (m_mode != "local") return;
+        cancelResetRequest();
         cancel(); m_poll.stop(); m_waitingForUsageRetry = false;
         m_status = "offline"; m_message = message; m_errorKind = kind;
         log("Local server", message); emit changed();
     });
     connect(&m_server, &ManagedServer::connectionChanged, this, [this] {
         if (m_mode != QStringLiteral("local")) return;
+        cancelResetRequest();
         cancel();
         m_localNetwork.clearConnectionCache();
         syncConnection();
@@ -139,7 +141,7 @@ void Controller::fail(const QString &message, const QString &kind) {
     emit changed();
 }
 void Controller::refresh() {
-    if (m_loading) return;
+    if (m_loading || m_resetBusy) return;
     m_poll.stop();
     if (m_mode == "local") {
         m_waitingForUsageRetry = false;
@@ -151,7 +153,7 @@ void Controller::refresh() {
     requestUsage();
 }
 void Controller::requestUsage() {
-    if (m_loading) return;
+    if (m_loading || m_resetBusy) return;
     m_poll.stop();
     const QString baseUrl = backendUrl();
     const auto url = Usage::endpoint(baseUrl);
@@ -202,6 +204,7 @@ void Controller::acceptSnapshot(const QVariantList &providers) {
     for (const auto &provider : providers) if (!provider.toMap()["is_success"].toBool()) ++failed;
     log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
     m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
+    observeResetUsage();
     updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
     m_credentials.consider(m_providers);
 }
@@ -209,8 +212,11 @@ Controller::~Controller() {
     // The network manager outlives every other member, so an in-flight reply must be
     // disconnected and aborted before the members its handler touches are destroyed.
     cancel();
+    cancelResetRequest();
 }
 QString Controller::saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl) {
+    if (m_resetBusy) return "Wait for the reset request to finish before changing connections.";
+    m_resetConfirmation.clear();
     if (mode != "local" && mode != "remote" && mode != "ssh") mode = "remote";
     url = url.trimmed(); token = token.trimmed(); sshUrl = sshUrl.trimmed();
     if (mode == QStringLiteral("ssh")) { url = m_url; token = m_token; }

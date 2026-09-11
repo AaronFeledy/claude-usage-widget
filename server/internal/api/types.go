@@ -24,6 +24,11 @@ type GrokCredentials interface {
 	SetCookieHeader(string)
 }
 
+type CodexResetter interface {
+	ResetAttemptStatus(string) (retry, blocked bool)
+	ConsumeResetCredit(context.Context, string, string) (outcome string, ambiguous bool, err error)
+}
+
 type ProviderPoller interface {
 	PollProvider(context.Context, string) (poller.Entry, bool, error)
 }
@@ -32,6 +37,7 @@ type Options struct {
 	Cache         Cache
 	Cursor        CursorCredentials
 	Grok          GrokCredentials
+	Codex         CodexResetter
 	Poller        ProviderPoller
 	Logger        Logger
 	AuthToken     string

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,11 +15,15 @@ import (
 )
 
 type Client struct {
-	store     *CredentialStore
-	http      *http.Client
-	usageURL  string
-	tokenURL  string
-	refreshMu sync.Mutex
+	store          *CredentialStore
+	http           *http.Client
+	usageURL       string
+	tokenURL       string
+	refreshMu      sync.Mutex
+	resetMu        sync.Mutex
+	resetAttemptID string
+	resetAccountID string
+	resetOutcome   string
 }
 
 func New(opts Options) *Client {
@@ -138,7 +141,12 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 	if closeErr != nil {
 		return data, closeErr
 	}
-	return parseUsage(body, data)
+	parsed, err := parseUsage(body, data)
+	if err != nil {
+		return data, err
+	}
+	parsed.ProviderAccountID = creds.AccountID
+	return parsed, nil
 }
 
 func (c *Client) refresh(ctx context.Context, creds Credentials) (usage.RefreshResult, error) {
@@ -210,12 +218,7 @@ func (c *Client) sendUsage(ctx context.Context, creds Credentials) (*http.Respon
 	if err != nil {
 		return nil, fmt.Errorf("build codex usage request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-	if strings.TrimSpace(creds.AccountID) != "" {
-		req.Header.Set("ChatGPT-Account-Id", creds.AccountID)
-	}
+	applyUsageHeaders(req, creds)
 	return c.http.Do(req)
 }
 
