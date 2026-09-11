@@ -678,6 +678,26 @@ func TestRecoveryStopsExactOrphanCandidateBeforeRollback(t *testing.T) {
 	if err = RecoverInstall(installRoot); err != nil {
 		t.Fatal(err)
 	}
+	recoveryReady, err := readBoundedFile(filepath.Join(directory, "recovery-ready.json"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relaunched struct {
+		PID        int    `json:"pid"`
+		Executable string `json:"executable"`
+	}
+	if json.Unmarshal(recoveryReady, &relaunched) != nil || relaunched.PID <= 0 {
+		t.Fatalf("recovery readiness = %s", recoveryReady)
+	}
+	relaunchedToken, err := captureProcessToken(relaunched.PID, relaunched.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if stopErr := stopRecordedProcess(relaunched.PID, relaunched.Executable, relaunchedToken, time.Second); stopErr != nil {
+			t.Errorf("stop recovered prior application: %v", stopErr)
+		}
+	})
 	_, _ = process.Process.Wait()
 	if !processGone(process.Process.Pid) {
 		t.Fatal("orphan candidate survived recovery")
