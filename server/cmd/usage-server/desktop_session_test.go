@@ -209,7 +209,7 @@ func Test_RunDesktopSession_serves_pinned_authenticatedTLS(t *testing.T) {
 	}
 }
 
-func Test_GenerateDesktopCertificate_includes_bound_loopback_and_long_session_validity(t *testing.T) {
+func Test_GenerateDesktopCertificate_includes_bound_loopback_and_apple_compatible_validity(t *testing.T) {
 	now := time.Date(2026, time.September, 9, 12, 0, 0, 0, time.UTC)
 	certificatePEM, _, err := generateDesktopCertificate(rand.Reader, now, net.ParseIP("127.0.0.2"))
 	if err != nil {
@@ -225,8 +225,14 @@ func Test_GenerateDesktopCertificate_includes_bound_loopback_and_long_session_va
 			t.Fatalf("verify SAN %s: %v", hostname, err)
 		}
 	}
-	if certificate.NotAfter.Before(now.AddDate(9, 0, 0)) {
-		t.Fatalf("certificate expires too soon: %s", certificate.NotAfter)
+	if got, want := certificate.NotBefore, now.Add(-5*time.Minute); !got.Equal(want) {
+		t.Fatalf("NotBefore = %s, want %s", got, want)
+	}
+	if got, want := certificate.NotAfter, now.AddDate(0, 0, 365); !got.Equal(want) {
+		t.Fatalf("NotAfter = %s, want %s", got, want)
+	}
+	if validity := certificate.NotAfter.Sub(certificate.NotBefore); validity > 825*24*time.Hour {
+		t.Fatalf("certificate validity %s exceeds Apple's app-anchored TLS limit", validity)
 	}
 }
 

@@ -26,6 +26,9 @@ inline bool selectNativeTestBackend()
 }
 
 // Synthetic public test identities only; production generates a fresh key in memory.
+#ifdef Q_OS_MACOS
+#include "headroom_macos_tls_fixture.h"
+#else
 inline constexpr char certificatePem[] = R"PEM(-----BEGIN CERTIFICATE-----
 MIIDdjCCAl6gAwIBAgIUepEJ6PKGRzL2DA/s7L+hPPw+FVQwDQYJKoZIhvcNAQEL
 BQAwIDEeMBwGA1UEAwwVSGVhZHJvb20gVGVzdCBTZXNzaW9uMB4XDTI2MDkwOTIz
@@ -132,6 +135,7 @@ q7V7Aa42tudKIJd7aYOfuEgCgx6L7Z+g4rC56featl/o5Jhkhw6owbXnPGQTvWeN
 P7n4ksEb18Eu1o9165o6pPA=
 -----END PRIVATE KEY-----
 )PEM";
+#endif
 
 inline QSslCertificate certificate()
 {

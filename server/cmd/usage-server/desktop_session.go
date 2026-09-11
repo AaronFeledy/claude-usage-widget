@@ -236,7 +236,8 @@ func generateDesktopCertificate(random io.Reader, now time.Time, boundIP net.IP)
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: "Headroom Desktop Session"},
 		NotBefore:             now.Add(-5 * time.Minute),
-		NotAfter:              now.AddDate(10, 0, 0),
+		// Apple limits app-anchored TLS leaf certificates to 825 days.
+		NotAfter:              now.AddDate(0, 0, 365),
 		DNSNames:              []string{"localhost"},
 		IPAddresses:           desktopCertificateIPs(boundIP),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,

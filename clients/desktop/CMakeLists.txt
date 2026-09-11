@@ -138,6 +138,26 @@ qt_add_resources(headroom provider-icons PREFIX "/provider-icons" BASE "../share
 
 include(CTest)
 if(BUILD_TESTING)
+    if(APPLE)
+        set(HEADROOM_MACOS_TLS_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/headroom-tls-fixture")
+        set(HEADROOM_MACOS_TLS_FIXTURE_HEADER
+            "${HEADROOM_MACOS_TLS_FIXTURE_DIR}/headroom_macos_tls_fixture.h")
+        if(NOT EXISTS "/usr/bin/openssl")
+            message(FATAL_ERROR "The macOS TLS fixtures require /usr/bin/openssl")
+        endif()
+        add_custom_target(headroom-macos-tls-fixture
+            COMMAND "${CMAKE_COMMAND}"
+                -DOPENSSL_EXECUTABLE=/usr/bin/openssl
+                -DOUTPUT_DIRECTORY=${HEADROOM_MACOS_TLS_FIXTURE_DIR}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_macos_tls_fixture.cmake"
+            BYPRODUCTS
+                "${HEADROOM_MACOS_TLS_FIXTURE_HEADER}"
+                "${HEADROOM_MACOS_TLS_FIXTURE_DIR}/primary-certificate.pem"
+                "${HEADROOM_MACOS_TLS_FIXTURE_DIR}/primary-private-key.pem"
+                "${HEADROOM_MACOS_TLS_FIXTURE_DIR}/replacement-certificate.pem"
+                "${HEADROOM_MACOS_TLS_FIXTURE_DIR}/replacement-private-key.pem"
+            VERBATIM)
+    endif()
     qt_add_executable(headroom-ssh-probe tests/ssh_probe.cpp)
     set_target_properties(headroom-ssh-probe PROPERTIES WIN32_EXECUTABLE FALSE)
     target_link_libraries(headroom-ssh-probe PRIVATE headroom-core Qt6::Network)
@@ -234,6 +254,11 @@ if(BUILD_TESTING)
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-credential-tests.xml,junitxml")
     set_tests_properties(headroom-credential-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     if(APPLE)
+        foreach(tls_target IN ITEMS headroom-managed-server-fixture headroom-appinfo-tests
+                headroom-tests headroom-managedserver-tests headroom-credential-tests)
+            add_dependencies(${tls_target} headroom-macos-tls-fixture)
+            target_include_directories(${tls_target} PRIVATE "${HEADROOM_MACOS_TLS_FIXTURE_DIR}")
+        endforeach()
         # SecureTransport otherwise imports fixture server identities into the
         # login keychain, which can block unattended native test runners.
         set_property(TEST headroom-appinfo-tests headroom-tests headroom-managedserver-tests
