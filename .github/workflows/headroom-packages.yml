@@ -421,13 +421,23 @@ jobs:
         run: |
           go vet ./...
           go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
-          go test -race -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' -run '^TestDarwin|^TestProcessWatchRejectsCreationTokenMismatchWithoutStoppingProcess$' ./contract
+          go test -race -count=10 -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' -run '^TestDarwin|^TestProcessWatchRejectsCreationTokenMismatchWithoutStoppingProcess$' ./contract
           go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-package" ./cmd/headroom-manager
           cp "$RUNNER_TEMP/headroom-package" "$RUNNER_TEMP/headroom"
       - name: Verify native TLS with the provider-disabled Go server
+        id: mac-tls
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' && steps.mac-server.outcome == 'success' }}
         timeout-minutes: 2
         run: |
-          HEADROOM_REAL_SERVER_FIXTURE="$RUNNER_TEMP/usage-server" QT_QPA_PLATFORM=offscreen "$RUNNER_TEMP/desktop-package/headroom-managedserver-tests" stagedRealServerSmoke
+          set -o pipefail
+          HEADROOM_REAL_SERVER_FIXTURE="$RUNNER_TEMP/usage-server" QT_QPA_PLATFORM=offscreen "$RUNNER_TEMP/desktop-package/headroom-managedserver-tests" stagedRealServerSmoke 2>&1 | tee "$RUNNER_TEMP/mac-tls.log"
+      - name: Preserve native TLS diagnostics
+        if: ${{ !cancelled() && steps.mac-tls.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: headroom-macos-${{ matrix.architecture }}-tls-diagnostics
+          path: ${{ runner.temp }}/mac-tls.log
+          if-no-files-found: error
       # Independent checks continue after a test failure to preserve native
       # diagnostics; any failed step still fails the package/release gate.
       - name: Test native macOS desktop

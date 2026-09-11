@@ -20,6 +20,8 @@ type darwinWatch struct {
 	token, executable string
 }
 
+var errDarwinExecutableUnavailable = errors.New("process executable identity is unavailable")
+
 // captureProcessToken combines the kernel-recorded executable path with the
 // process start timeval. A reused PID therefore cannot authorize an update or
 // be stopped as the original Headroom process.
@@ -29,7 +31,10 @@ func captureProcessToken(pid int, expected string) (string, error) {
 		return "", err
 	}
 	actual, err := darwinProcessPath(pid)
-	if err != nil || !samePath(actual, expected) {
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", errDarwinExecutableUnavailable, err)
+	}
+	if !samePath(actual, expected) {
 		return "", errors.New("process executable identity does not match")
 	}
 	after, err := darwinStartToken(pid)
@@ -87,9 +92,22 @@ func (w *darwinWatch) Wait(timeout time.Duration) error {
 		got, err := captureProcessToken(w.pid, w.executable)
 		if err != nil {
 			// Kernel identity can disappear after the preceding liveness check.
-			// Confirm exit; never accept a live process with a different identity.
+			// PROC_PIDPATHINFO may become unavailable just before kern.proc marks an
+			// exiting process as a zombie. Retry that transition only while the
+			// immutable creation identity still matches. A different executable
+			// path remains an immediate hard failure.
 			if processGone(w.pid) {
 				return nil
+			}
+			if errors.Is(err, errDarwinExecutableUnavailable) {
+				start, startErr := darwinStartToken(w.pid)
+				if startErr == nil && start == w.token {
+					time.Sleep(25 * time.Millisecond)
+					continue
+				}
+				if processGone(w.pid) {
+					return nil
+				}
 			}
 			return fmt.Errorf("cannot verify watched process: %w", err)
 		}

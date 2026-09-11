@@ -1,5 +1,8 @@
 #include "managedserver.h"
 #include "tls_fixture.h"
+#ifdef Q_OS_MACOS
+#include "macos_trust_diagnostics.h"
+#endif
 
 #include <QFile>
 #include <QElapsedTimer>
@@ -360,6 +363,7 @@ private slots:
         configured.readinessIntervalMs = 50; configured.readinessAttempts = 60;
         QStringList tlsDiagnostics;
         int diagnosticCount = 0;
+        bool nativeTrustRecorded = false;
         configured.probeObserver = [&](QNetworkReply *reply) {
             if (reply->url().scheme() != QStringLiteral("https")) return;
             const auto recordDiagnostic = [&](const QString &message) {
@@ -367,6 +371,15 @@ private slots:
                 tlsDiagnostics.append(message);
                 qWarning().noquote() << "Headroom real-server TLS diagnostic:" << message;
             };
+#ifdef Q_OS_MACOS
+            if (!nativeTrustRecorded) {
+                nativeTrustRecorded = true;
+                const QSslCertificate announced = reply->request().sslConfiguration()
+                                                      .caCertificates().value(0);
+                recordDiagnostic(QStringLiteral("native-trust=")
+                    + MacTrustDiagnostics::evaluate(announced, reply->url().host()));
+            }
+#endif
             connect(reply, &QNetworkReply::sslErrors, reply,
                     [recordDiagnostic](const QList<QSslError> &errors) {
                 QStringList codes;

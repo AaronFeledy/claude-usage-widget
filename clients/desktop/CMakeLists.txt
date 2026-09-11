@@ -214,6 +214,11 @@ if(BUILD_TESTING)
     target_compile_definitions(headroom-managedserver-tests PRIVATE
         FIXTURE_PATH="$<TARGET_FILE:headroom-managed-server-fixture>"
         OWNER_PATH="$<TARGET_FILE:headroom-managed-server-owner>")
+    if(APPLE)
+        target_sources(headroom-managedserver-tests PRIVATE tests/macos_trust_diagnostics.cpp)
+        target_link_libraries(headroom-managedserver-tests PRIVATE
+            "-framework Security" "-framework CoreFoundation")
+    endif()
     add_dependencies(headroom-managedserver-tests headroom-managed-server-fixture headroom-managed-server-owner)
     add_test(NAME headroom-managedserver-tests COMMAND headroom-managedserver-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-managedserver-tests.xml,junitxml")

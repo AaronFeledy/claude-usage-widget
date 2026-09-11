@@ -19,6 +19,35 @@ def copy_file(source, target, executable=False):
     target.chmod(0o755 if executable else 0o644)
 
 
+def canonical_app_bundle(bundle):
+    candidates = [path for path in bundle.iterdir() if path.name.lower() == "headroom.app"]
+    if len(candidates) != 1 or not candidates[0].is_dir() or candidates[0].is_symlink():
+        raise ValueError("CMake did not install one Headroom app bundle")
+    app = bundle / "Headroom.app"
+    if candidates[0].name != app.name:
+        # exists() cannot distinguish these spellings on the default Mac
+        # filesystem. Rename through a distinct name to preserve canonical case.
+        temporary = bundle / ".headroom-app-rename"
+        candidates[0].rename(temporary)
+        temporary.rename(app)
+    return app
+
+
+def materialize_qml_plugin_links(app):
+    plugins = (app / "Contents/PlugIns").resolve(strict=True)
+    for path in (app / "Contents/Resources/qml").rglob("*"):
+        if not path.is_symlink():
+            continue
+        target = path.resolve(strict=True)
+        if path.suffix != ".dylib" or not target.is_relative_to(plugins) or not target.is_file():
+            raise ValueError("unexpected QML deployment link: " + str(path.relative_to(app)))
+        # Qt's CMake deploy step links QML plugins into Contents/PlugIns.
+        # Package those as regular files; only framework links are permitted
+        # by the archive contract. Do this before code signing the app.
+        path.unlink()
+        copy_file(target, path, True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
@@ -39,9 +68,7 @@ def main():
     bundle.mkdir(parents=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     run("cmake", "--install", args.build_dir, "--prefix", bundle)
-    app = bundle / "Headroom.app"
-    if not app.exists() and (bundle / "headroom.app").is_dir():
-        (bundle / "headroom.app").rename(app)
+    app = canonical_app_bundle(bundle)
     if not (app / "Contents/MacOS/headroom").is_file():
         raise ValueError("CMake did not install the expected Headroom app bundle")
     metadata = json.loads((args.build_dir / "headroom-build-metadata.json").read_text())
@@ -67,6 +94,7 @@ def main():
     for relative in plugins:
         if not (app / "Contents/PlugIns" / relative).is_file():
             raise ValueError("required deployed plugin is missing: " + relative)
+    materialize_qml_plugin_links(app)
 
     share = bundle / "share"
     copy_file(Path("packaging/THIRD_PARTY_NOTICES.txt"), share / "headroom/THIRD_PARTY_NOTICES.txt")
