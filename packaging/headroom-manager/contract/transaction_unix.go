@@ -53,6 +53,11 @@ func (w *unixWatch) Wait(timeout time.Duration) error {
 		}
 		got, err := captureProcessToken(w.pid, w.executable)
 		if err != nil {
+			// The process may exit between the liveness check and reading its
+			// executable/start identity. A live replacement still fails closed.
+			if processGone(w.pid) {
+				return nil
+			}
 			return fmt.Errorf("cannot verify watched process: %w", err)
 		}
 		if got != w.token {

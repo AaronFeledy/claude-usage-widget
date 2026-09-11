@@ -61,6 +61,9 @@ def main():
         copy_file(args.qt_root / "plugins" / relative, app / "Contents/PlugIns" / relative, True)
     run(args.qt_root / "bin/macdeployqt", app,
         "-qmldir=" + str(Path("clients/desktop/qml").resolve()), "-always-overwrite")
+    # Use macOS's native TLS implementation consistently, including machines
+    # that happen to have Homebrew OpenSSL installed.
+    (app / "Contents/PlugIns/tls/libqopensslbackend.dylib").unlink(missing_ok=True)
     for relative in plugins:
         if not (app / "Contents/PlugIns" / relative).is_file():
             raise ValueError("required deployed plugin is missing: " + relative)

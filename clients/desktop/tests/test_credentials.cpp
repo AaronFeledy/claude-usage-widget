@@ -88,6 +88,9 @@ private:
             {"buckets", QVariantList{QVariantMap{{"id", "credits"}, {"label", "Credits"}, {"utilization", 5}}}}};
     }
 private slots:
+    void initTestCase() {
+        QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+    }
     void init() {
         m_record = m_dir.filePath(QStringLiteral("record"));
         QFile::remove(m_record);

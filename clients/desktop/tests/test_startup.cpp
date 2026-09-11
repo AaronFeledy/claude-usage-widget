@@ -217,8 +217,14 @@ private slots:
     void macLaunchAgentIsPrivateExactAndTransactional()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());
+#ifdef Q_OS_WIN
+        const QString executable = dir.filePath(QStringLiteral("Head room & test/headroom.exe"));
+        QVERIFY(QDir().mkpath(QFileInfo(executable).absolutePath()));
+        QVERIFY(QFile::copy(currentExecutable(), executable));
+#else
         const QString executable = dir.filePath(QStringLiteral("Head room & <test>/headroom"));
         QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+#endif
         StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
                                StartupService::Platform::Mac);
         QCOMPARE(service.entryPath(), dir.filePath(QStringLiteral("LaunchAgents/io.headroom.Headroom.plist")));
@@ -228,9 +234,13 @@ private slots:
         const QByteArray original = readFile(service.entryPath());
         QVERIFY(original.contains("<string>io.headroom.Headroom</string>"));
         QVERIFY(original.contains("<string>--background</string>"));
+#ifdef Q_OS_WIN
+        QVERIFY(original.contains("Head room &amp; test/headroom.exe"));
+#else
         QVERIFY(original.contains("Head room &amp; &lt;test&gt;/headroom"));
         QVERIFY(!(QFile::permissions(service.entryPath()) &
             (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ReadOther | QFileDevice::WriteOther)));
+#endif
 
         StartupService reloaded(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
                                 StartupService::Platform::Mac);
@@ -253,13 +263,18 @@ private slots:
             "versions/2.0.0.generation-0123456789abcdef-fedcba9876543210/Headroom.app/Contents/MacOS/headroom"));
         const QString previous = QDir(root).filePath(QStringLiteral(
             "versions/1.8.0.generation-1111111111111111-2222222222222222/Headroom.app/Contents/MacOS/headroom"));
-        QVERIFY(writeFile(current, "current", true));
-        QVERIFY(writeFile(previous, "previous", true));
-        QVERIFY(writeFile(launcher, "launcher", true));
+        QVERIFY(writeFile(current, "current"));
+        QVERIFY(writeFile(previous, "previous"));
+        QVERIFY(writeFile(launcher, "launcher"));
         QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
         const QString launchAgents = QDir(root).filePath(QStringLiteral("LaunchAgents"));
-        StartupService seed(launchAgents, previous, true, nullptr, StartupService::Platform::Mac);
+        StartupService seed(launchAgents, currentExecutable(), true, nullptr, StartupService::Platform::Mac);
+        seed.setPreferenceWriter([](bool) { return QString(); });
         QVERIFY(seed.setEnabled(true));
+        QByteArray oldEntry = readFile(seed.entryPath());
+        oldEntry.replace(currentExecutable().toHtmlEscaped().toUtf8(), previous.toHtmlEscaped().toUtf8());
+        QVERIFY(writeFile(seed.entryPath(), oldEntry));
+        QVERIFY(QFile::setPermissions(seed.entryPath(), QFile::ReadOwner | QFile::WriteOwner));
 
         qputenv("HEADROOM_INSTALL_ROOT", root.toUtf8());
         qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());

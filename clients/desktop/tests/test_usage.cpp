@@ -3,6 +3,7 @@
 #include "controller.h"
 #include "appinfo.h"
 #include "http_assertions.h"
+#include "tls_fixture.h"
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -18,6 +19,9 @@ class UsageTest : public QObject {
         CredentialServiceOptions options; options.enabled = false; return options;
     }
 private slots:
+    void initTestCase() {
+        QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+    }
     void cleanup() {
         qunsetenv("HEADROOM_FIXTURE_MODE");
         qunsetenv("HEADROOM_FIXTURE_RECORD");

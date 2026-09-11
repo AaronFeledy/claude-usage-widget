@@ -228,6 +228,13 @@ if(BUILD_TESTING)
     add_test(NAME headroom-credential-tests COMMAND headroom-credential-tests
         -o -,txt -o "${CMAKE_CURRENT_BINARY_DIR}/headroom-credential-tests.xml,junitxml")
     set_tests_properties(headroom-credential-tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    if(APPLE)
+        # SecureTransport otherwise imports fixture server identities into the
+        # login keychain, which can block unattended native test runners.
+        set_property(TEST headroom-appinfo-tests headroom-tests headroom-managedserver-tests
+            headroom-credential-tests APPEND PROPERTY ENVIRONMENT
+            "QT_SSL_USE_TEMPORARY_KEYCHAIN=1")
+    endif()
 endif()
 
 install(TARGETS headroom BUNDLE DESTINATION . RUNTIME DESTINATION bin)

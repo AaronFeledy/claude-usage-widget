@@ -396,6 +396,7 @@ jobs:
           cmake --build "$RUNNER_TEMP/desktop-package" --parallel
           ctest --test-dir "$RUNNER_TEMP/desktop-package" -E '^headroom-reset-prohibited-tests$' --timeout 180 --output-on-failure
           (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
+          HEADROOM_REAL_SERVER_FIXTURE="$RUNNER_TEMP/usage-server" QT_QPA_PLATFORM=offscreen "$RUNNER_TEMP/desktop-package/headroom-managedserver-tests" stagedRealServerSmoke
           (cd packaging/headroom-manager && go vet ./... && go test -race ./... && go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-package" ./cmd/headroom-manager)
           cp "$RUNNER_TEMP/headroom-package" "$RUNNER_TEMP/headroom"
       - name: Exercise menus and focus using native Cocoa

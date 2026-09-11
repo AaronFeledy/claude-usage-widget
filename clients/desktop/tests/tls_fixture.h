@@ -4,8 +4,26 @@
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QSslServer>
+#include <QDebug>
 
 namespace TlsFixture {
+inline bool selectNativeTestBackend()
+{
+#ifdef Q_OS_MACOS
+    static const bool selected = [] {
+        qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
+        const QString requested = QStringLiteral("securetransport");
+        const bool activated = QSslSocket::setActiveBackend(requested);
+        const QString active = QSslSocket::activeBackend();
+        qInfo().noquote() << "Headroom TLS fixture backend:" << active;
+        return activated && active == requested;
+    }();
+    return selected;
+#else
+    return true;
+#endif
+}
+
 // Synthetic public test identities only; production generates a fresh key in memory.
 inline constexpr char certificatePem[] = R"PEM(-----BEGIN CERTIFICATE-----
 MIIDdjCCAl6gAwIBAgIUepEJ6PKGRzL2DA/s7L+hPPw+FVQwDQYJKoZIhvcNAQEL

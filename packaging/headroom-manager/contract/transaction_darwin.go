@@ -86,6 +86,11 @@ func (w *darwinWatch) Wait(timeout time.Duration) error {
 		}
 		got, err := captureProcessToken(w.pid, w.executable)
 		if err != nil {
+			// Kernel identity can disappear after the preceding liveness check.
+			// Confirm exit; never accept a live process with a different identity.
+			if processGone(w.pid) {
+				return nil
+			}
 			return fmt.Errorf("cannot verify watched process: %w", err)
 		}
 		if got != w.token {

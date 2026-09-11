@@ -1,4 +1,5 @@
 #include "managedserver.h"
+#include "tls_fixture.h"
 
 #include <QFile>
 #include <QElapsedTimer>
@@ -117,6 +118,9 @@ private:
         return result;
     }
 private slots:
+    void initTestCase() {
+        QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+    }
     void cleanup() {
         qunsetenv("HEADROOM_FIXTURE_MODE");
         qunsetenv("HEADROOM_FIXTURE_RECORD");

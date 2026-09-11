@@ -14,7 +14,11 @@
 
 int main(int argc, char **argv)
 {
+#ifdef Q_OS_MACOS
+    qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
+#endif
     QCoreApplication app(argc, argv);
+    if (!TlsFixture::selectNativeTestBackend()) return 13;
     const QStringList arguments = app.arguments();
     const int listenIndex = arguments.indexOf(QStringLiteral("--listen-addr"));
     if (listenIndex < 0 || listenIndex + 1 >= arguments.size()) return 2;

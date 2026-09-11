@@ -51,7 +51,10 @@ public:
 class AppInfoTest : public QObject {
     Q_OBJECT
 private slots:
-    void initTestCase() { QCoreApplication::setApplicationVersion("0.1.0"); }
+    void initTestCase() {
+        QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+        QCoreApplication::setApplicationVersion("0.1.0");
+    }
     void healthAndRedaction() {
         HttpFixture fixture; QVERIFY(fixture.listen(QHostAddress::LocalHost));
         AppInfo info;
