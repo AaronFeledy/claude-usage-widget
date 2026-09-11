@@ -280,6 +280,12 @@ unit after matching its MainPID to the exact recorded process. A replacement
 acknowledges readiness after successful configuration and listener binding.
 System-wide or unrelated units remain outside updater ownership.
 
+`tests/cli_systemd_smoke.py` verifies a real Linux per-user service repair using
+a disposable CLI package install and disabled providers. It requires a working
+user bus and refuses an existing `headroom.service`. Its runtime-only unit is
+stopped and removed afterward. Linux CLI jobs run this fixture on isolated CI
+runner accounts; it does not enable a service on a user's machine.
+
 ## Reusable release recipe
 
 `.github/workflows/headroom-packages.yml` accepts one validated version and

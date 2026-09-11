@@ -176,3 +176,10 @@ The optional `packaging/tests/ssh_server_smoke.py` requires Linux/OpenSSH and
 uses disposable test keys and a provider-disabled backend. It reserves the
 current account's fixed SSH socket and refuses to run if that socket exists.
 Never run it against an account already serving SSH access or reuse live keys.
+
+The optional `packaging/tests/cli_systemd_smoke.py` requires Linux with a working
+current-user systemd bus and refuses any existing `headroom.service` unit. It
+uses a disposable provider-disabled installation and a temporary runtime unit
+link, runs a real repair/restart, then stops the unit and removes that link. Never
+run it against an account already using the fixed unit. Linux CLI CI runs it on
+an isolated runner account.

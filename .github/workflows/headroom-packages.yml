@@ -724,6 +724,15 @@ jobs:
           assert len(archives) == 1
           subprocess.run(['python', 'packaging/tests/cli_package_smoke.py', '--manager', str(binaries['headroom-package']),
               '--archive', str(archives[0]), '--version', version], check=True, timeout=180)
+      - name: Verify a real per-user server restart and repair
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          timeout 30s sudo systemctl start "user@$(id -u).service"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          python3 packaging/tests/cli_systemd_smoke.py --manager "$RUNNER_TEMP/headroom-package" --archive "$RUNNER_TEMP/cli-output/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-${{ matrix.arch }}.tar.gz" --version "$HEADROOM_PACKAGE_VERSION"
       - uses: actions/upload-artifact@v7
         with:
           name: headroom-cli-${{ matrix.platform }}-${{ matrix.arch }}-package
