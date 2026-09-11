@@ -8,7 +8,7 @@ Rectangle {
     objectName: "providerCard_" + name
     property string name: provider.provider_name
     property string displayName: backend.displayName(name)
-    property color accent: Theme.cyan
+    property color accent: Theme.purple
     property bool failed: provider.error !== null && provider.error !== undefined
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780

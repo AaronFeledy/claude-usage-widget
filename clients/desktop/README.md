@@ -255,7 +255,7 @@ separately managed deployment documented in
 ## Appearance and provider names
 
 The interface uses the [Dracula palette](https://draculatheme.com/contribute),
-with cyan usage bars shared by every provider, white pacing markers, cyan under-pace text,
+with purple usage bars shared by every provider, white pacing markers, cyan under-pace text,
 yellow, orange, and red concern levels based on the remaining allowance and time. Backgrounds, controls, settings, app icon, and tray
 use the same palette. Muted text and surface shades are adapted for readability.
 
@@ -286,17 +286,17 @@ spent ahead of schedule:
 pressure = max(0, (used_percent - elapsed_percent) / (100 - elapsed_percent))
 ```
 
-Pressure below 10% stays neutral cyan; 10% is yellow, 25% orange, and 50% red.
+Pressure below 10% stays neutral purple; 10% is yellow, 25% orange, and 50% red.
 These are presentation thresholds, not limits imposed by a provider. A tiny
 positive pacing difference keeps neutral text and does not add a provider to
 the attention count. Tooltips show the remaining allowance, time, and calculation.
 
 | Used | Window elapsed | Remaining allowance spent early | Color |
 | --- | --- | --- | --- |
-| 12% | 10% | 2.2% | Cyan |
+| 12% | 10% | 2.2% | Purple |
 | 82% | 80% | 10% | Yellow |
 | 95% | 90% | 50% | Red |
-| 90% | 90% | 0% | Cyan |
+| 90% | 90% | 0% | Purple |
 
 A separate low-capacity floor applies even on/under pace: 95% used is at least
 yellow, 99% at least orange, and 100% red. Without a usable reset window, the
@@ -318,7 +318,7 @@ passes without additional spending.
 
 | Tier | Enter at pacing pressure | Recover below | Color | Pop-up on upward entry |
 | --- | --- | --- | --- | --- |
-| Normal | Below Watch | — | Cyan | No |
+| Normal | Below Watch | — | Purple | No |
 | Watch | 10% | 8% | Yellow | No |
 | Warning | 25% | 20% | Orange | Yes |
 | Critical | 50% | 40% | Red | Yes |

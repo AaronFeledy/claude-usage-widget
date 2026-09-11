@@ -12,7 +12,7 @@ struct Tier {
 };
 // One policy for bars, pacing text, provider attention, tray, and pop-up alerts.
 constexpr std::array<Tier, 4> tiers {{
-    {"Normal",   "#8be9fd", 0,    0,    0,   0,    0,  0, false},
+    {"Normal",   "#bd93f9", 0,    0,    0,   0,    0,  0, false},
     {"Watch",    "#f1fa8c", 0.10, 0.08, 95,  94,  50, 45, false},
     {"Warning",  "#ffb86c", 0.25, 0.20, 99,  98,  75, 70, true},
     {"Critical", "#ff5555", 0.50, 0.40, 100, 99.5,90, 85, true}

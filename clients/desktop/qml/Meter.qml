@@ -7,10 +7,10 @@ ColumnLayout {
     objectName: "meter_" + providerName + "_" + bucket.id
     required property var bucket
     required property string providerName
-    property color accent: Theme.cyan
+    property color accent: Theme.purple
     property var concern: { meter.clock; return backend.concern(providerName, bucket) }
     property bool warning: concern.severity > 0
-    property color usageColor: concern.color || Theme.cyan
+    property color usageColor: concern.color || Theme.purple
     property var clock: backend.state
     property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
     property bool statusOnly: bucket.id === "on_demand" && bucket.utilization <= 0 && !!bucket.status_text && bucket.status_text.indexOf(" / ") < 0
