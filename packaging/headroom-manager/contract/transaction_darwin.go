@@ -184,9 +184,15 @@ func syncDirectory(path string) error {
 func runtimeWindows() bool { return false }
 
 func processGone(pid int) bool {
+	// kern.proc.pid reports a missing, fully reaped process as an empty sysctl
+	// result, which x/sys surfaces as EIO. Confirm absence through kill(2)
+	// instead of treating that otherwise ambiguous sysctl error as process exit.
+	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+		return true
+	}
 	info, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
-		return errors.Is(err, syscall.ESRCH)
+		return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 	}
 	return int(info.Proc.P_pid) != pid || info.Proc.P_stat == 5 // SZOMB
 }

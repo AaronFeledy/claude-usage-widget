@@ -4,6 +4,7 @@ package contract
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -33,5 +34,19 @@ func TestDarwinKernelExecutableIdentity(t *testing.T) {
 	}
 	if _, err = watchProcess(os.Getpid(), executable, token); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDarwinProcessGoneRecognizesReapedProcess(t *testing.T) {
+	process := exec.Command(fixtureExecutable)
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := process.Process.Pid
+	if err := process.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if !processGone(pid) {
+		t.Fatal("fully reaped process was reported as live")
 	}
 }
