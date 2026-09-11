@@ -24,6 +24,12 @@ private:
         return value;
     }
     QByteArray record() const { QFile file(m_record); return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray(); }
+    QJsonObject cliRequest() const {
+        return {{"schema", 1}, {"product", "Headroom"}, {"command", "update"},
+            {"install_root", options().installRoot}, {"request_nonce", QString(48, QLatin1Char('b'))},
+            {"additional_processes", QJsonArray{QJsonObject{{"role", "cli"}, {"pid", 12345},
+                {"executable", QCoreApplication::applicationFilePath()}}}}};
+    }
 private slots:
     void initTestCase() { QVERIFY(m_dir.isValid()); m_record = m_dir.filePath(QStringLiteral("record")); QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0")); }
     void init() {
@@ -48,6 +54,56 @@ private slots:
         official.systemManaged = true; UpdateService system(true, official); system.startAutomaticCheck(); QTest::qWait(50);
         QVERIFY(record().isEmpty()); QCOMPARE(system.updateMethod(), QStringLiteral("system"));
         QCOMPARE(system.statusText(), QStringLiteral("This installation is managed by your system package manager."));
+    }
+    void desktopUpdateAcceptsOnlyItsManagersRegisteredStandaloneServer() {
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "managed-server");
+        UpdateService service(true, options());
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        service.restartToApply(); QTRY_COMPARE(prepared.count(), 1);
+    }
+    void cliRequestIsRejectedForUnmanagedOrDifferentInstall() {
+        UpdateService isolated(false, options());
+        QJsonObject result;
+        isolated.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) { result = reply; });
+        QCOMPARE(result.value("status").toString(), QString("unmanaged_installation"));
+        QVERIFY(record().isEmpty());
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        const auto before = record();
+        auto request = cliRequest(); request["install_root"] = QDir(options().installRoot).filePath("other");
+        service.requestCLIUpdate(request, [&](const QJsonObject &reply) { result = reply; });
+        QCOMPARE(result.value("status").toString(), QString("invalid_request"));
+        QCOMPARE(record(), before);
+    }
+    void cliUpdateAcknowledgesOnlyAfterVerifiedCommit() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        QStringList events;
+        connect(&service, &UpdateService::applyPrepared, this, [&] { events.append("quit"); });
+        service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) {
+            QCOMPARE(reply.value("status").toString(), QString("accepted"));
+            QVERIFY(reply.value("ok").toBool());
+            QCOMPARE(reply.value("request_nonce"), cliRequest().value("request_nonce"));
+            QVERIFY(QFileInfo::exists(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef/commit.json")));
+            events.append("reply");
+        });
+        QTRY_COMPARE(events, QStringList({"reply", "quit"}));
+        QVERIFY(record().contains("--participant"));
+    }
+    void cliUpdateRejectsChangedParticipantBeforeCommit() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        QJsonObject result;
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "mismatched-participant");
+        // Stage normally, then corrupt only the manager's captured identity.
+        service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) { result = reply; });
+        QTRY_VERIFY(!result.isEmpty());
+        QVERIFY(!result.value("ok").toBool());
+        QVERIFY(record().contains("prepare-apply"));
+        QVERIFY(!QFileInfo::exists(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef/commit.json")));
     }
     void externalStableEntryIsValidatedWithoutPathEquality() {
         const QString rootAlias = m_dir.filePath(QStringLiteral("native identity"));

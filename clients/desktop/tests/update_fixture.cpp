@@ -1,5 +1,6 @@
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -40,11 +41,30 @@ int main(int argc, char **argv) {
         const QString acknowledgement = QDir(directory).filePath(QStringLiteral("accepted.json"));
         const QString commit = QDir(directory).filePath(QStringLiteral("commit.json"));
         const QString nonce(48, QLatin1Char('a'));
-        const QJsonObject request{{"schema", 1}, {"product", "Headroom"}, {"install_root", installRoot},
+        QJsonObject request{{"schema", 1}, {"product", "Headroom"}, {"install_root", installRoot},
             {"entry_path", valueAfter(QStringLiteral("--entry-path"))}, {"stage_record", valueAfter(QStringLiteral("--stage-record"))},
             {"current_pid", valueAfter(QStringLiteral("--current-pid")).toLongLong()},
             {"current_executable", valueAfter(QStringLiteral("--current-executable"))}, {"acknowledgement_path", acknowledgement},
             {"commit_path", commit}, {"nonce", nonce}};
+        QJsonArray participants;
+        for (qsizetype index = 1; index + 1 < args.size(); ++index) {
+            if (args.at(index) != QStringLiteral("--participant")) continue;
+            auto participant = QJsonDocument::fromJson(args.at(++index).toUtf8()).object();
+            participant["process_token"] = "fixture-process-token";
+            if (mode == QStringLiteral("mismatched-participant")) participant["pid"] = 1;
+            participants.append(participant);
+        }
+        if (mode == QStringLiteral("managed-server")) {
+            const QString cli = QDir(QFileInfo(valueAfter(QStringLiteral("--current-executable"))).absolutePath()).filePath(
+#ifdef Q_OS_WIN
+                QStringLiteral("headroom-cli.exe"));
+#else
+                QStringLiteral("headroom-cli"));
+#endif
+            participants.append(QJsonObject{{"role", "managed_server"}, {"pid", 23456},
+                {"executable", cli}, {"process_token", "fixture-service-token"}});
+        }
+        if (!participants.isEmpty()) request["additional_processes"] = participants;
 		QFile requestFile(requestPath);
 		if (!requestFile.open(QIODevice::WriteOnly) || requestFile.write(QJsonDocument(request).toJson()) < 0) return 3;
 		requestFile.close();
@@ -96,6 +116,7 @@ int main(int argc, char **argv) {
     if (mode == QStringLiteral("stderr")) { QFile error; if (error.open(stderr, QIODevice::WriteOnly)) error.write(QByteArray(300 * 1024, 'x')); return 2; }
     if (mode == QStringLiteral("malformed")) { QTextStream(stdout) << "not json\n"; return 0; }
     QString status = command == QStringLiteral("check-update") ? mode : QStringLiteral("staged");
+    if (command == QStringLiteral("check-update") && (mode == QStringLiteral("mismatched-participant") || mode == QStringLiteral("managed-server"))) status = QStringLiteral("available");
     QString version = command == QStringLiteral("stage-repair") ? QStringLiteral("0.1.0") : QStringLiteral("9.1.0");
     QString architecture = QSysInfo::currentCpuArchitecture();
     if (architecture == QStringLiteral("amd64")) architecture = QStringLiteral("x86_64");

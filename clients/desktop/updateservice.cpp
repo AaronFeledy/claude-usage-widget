@@ -15,6 +15,8 @@
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QUrl>
+#include <QSet>
+#include <utility>
 
 namespace {
 constexpr qsizetype maximumToolOutput = 256 * 1024;
@@ -121,6 +123,7 @@ void UpdateService::setPublicTrafficAllowed(bool allowed) {
             m_prePauseState.clear(); m_prePauseStatus.clear();
         }
         if (m_process) cancel();
+        else finishCLIRequest(QStringLiteral("cancelled"), false);
         m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
         emit changed(); return;
     }
@@ -133,6 +136,46 @@ void UpdateService::checkForUpdates() {
     m_suppressAutomaticCheck = false;
     m_autoStage = false;
     run(Operation::Check, QStringLiteral("check-update"));
+}
+
+void UpdateService::requestCLIUpdate(const QJsonObject &request, std::function<void(const QJsonObject &)> reply) {
+    const QString nonce = request.value(QStringLiteral("request_nonce")).toString();
+    const auto reject = [&](const QString &reason) { reply({{"ok", false}, {"status", reason}, {"request_nonce", nonce}}); };
+    if (request.value(QStringLiteral("schema")).toInt() != 1 || request.value(QStringLiteral("product")).toString() != QStringLiteral("Headroom")
+        || !QRegularExpression(QStringLiteral("^[0-9a-f]{48}$")).match(nonce).hasMatch()
+        || cleanAbsolute(request.value(QStringLiteral("install_root")).toString()) != cleanAbsolute(m_options.installRoot)
+        || m_options.installRoot.isEmpty()) { reject(QStringLiteral("invalid_request")); return; }
+    if (!m_allowed || !m_official || m_options.systemManaged) { reject(QStringLiteral("unmanaged_installation")); return; }
+    if (m_cliReply || busy()) { reject(QStringLiteral("busy")); return; }
+    const auto participants = request.value(QStringLiteral("additional_processes")).toArray();
+    if (participants.isEmpty() || participants.size() > 3) { reject(QStringLiteral("invalid_participants")); return; }
+    QSet<QString> roles;
+    for (const auto &value : participants) {
+        const auto participant = value.toObject();
+        const QString role = participant.value(QStringLiteral("role")).toString();
+        if ((role != QStringLiteral("cli") && role != QStringLiteral("public_launcher") && role != QStringLiteral("managed_server")) || roles.contains(role)
+            || participant.size() != 3 || participant.value(QStringLiteral("pid")).toInteger() <= 0
+            || cleanAbsolute(participant.value(QStringLiteral("executable")).toString()).isEmpty()) {
+            reject(QStringLiteral("invalid_participants")); return;
+        }
+        roles.insert(role);
+    }
+    if (!roles.contains(QStringLiteral("cli"))) { reject(QStringLiteral("invalid_participants")); return; }
+    m_cliReply = std::move(reply); m_cliRequestNonce = nonce; m_cliParticipants = participants;
+    m_suppressAutomaticCheck = false;
+    // The manager authenticates every process against its inventoried executable
+    // and kernel start identity before the desktop authorizes any process exit.
+    m_autoStage = true;
+    run(Operation::Check, QStringLiteral("check-update"));
+}
+
+void UpdateService::finishCLIRequest(const QString &status, bool ok) {
+    if (!m_cliReply) return;
+    auto reply = std::move(m_cliReply);
+    const auto nonce = std::exchange(m_cliRequestNonce, {});
+    m_cliParticipants = {};
+    reply({{"ok", ok}, {"status", status}, {"request_nonce", nonce},
+           {"version", m_latestVersion.isEmpty() ? m_options.packageVersion : m_latestVersion}});
 }
 
 void UpdateService::stageUpdate() {
@@ -161,6 +204,8 @@ void UpdateService::restartToApply() {
     }
     for (const auto &argument : m_relaunchArguments)
         arguments << QStringLiteral("--relaunch-arg") << argument;
+    for (const auto &participant : m_cliParticipants)
+        arguments << QStringLiteral("--participant") << QString::fromUtf8(QJsonDocument(participant.toObject()).toJson(QJsonDocument::Compact));
     run(Operation::Apply, QStringLiteral("prepare-apply"), arguments);
 }
 
@@ -241,7 +286,7 @@ void UpdateService::run(Operation operation, const QString &command, const QStri
                 m_status = QStringLiteral("Update checks are paused for this session.");
                 emit changed(); return;
             }
-            if (m_resumeAfterCancel) { m_resumeAfterCancel = false; restoreAllowedState(); return; }
+            if (m_resumeAfterCancel) { m_resumeAfterCancel = false; finishCLIRequest(QStringLiteral("cancelled"), false); restoreAllowedState(); return; }
             fail(QStringLiteral("The Headroom package service could not be started."));
         }
     });
@@ -260,15 +305,15 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         m_resumeAfterCancel = false;
         m_autoStage = false;
         m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
-        emit changed(); return;
+        emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); return;
     }
     if (m_cancelRequested || m_timedOut) {
-        if (m_resumeAfterCancel) { m_resumeAfterCancel = false; restoreAllowedState(); return; }
+        if (m_resumeAfterCancel) { m_resumeAfterCancel = false; finishCLIRequest(QStringLiteral("cancelled"), false); restoreAllowedState(); return; }
         m_autoStage = false; m_verifiedStage = {};
         m_state = QStringLiteral("failed");
         m_status = m_timedOut ? QStringLiteral("The update operation timed out. Try again later.")
                               : QStringLiteral("The update operation was cancelled.");
-		emit changed(); applyDeferredTrafficState(); return;
+		emit changed(); finishCLIRequest(QStringLiteral("cancelled"), false); applyDeferredTrafficState(); return;
     }
     if (m_output.size() > maximumToolOutput || m_errorOutput.size() > maximumToolOutput || exitStatus != QProcess::NormalExit || exitCode != 0) {
         fail(QStringLiteral("The update operation did not complete. Try again later.")); return;
@@ -297,7 +342,9 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
         if (!authorizePreparedApply(result)) {
             fail(QStringLiteral("The update transaction was not accepted.")); return;
         }
-        m_status = QStringLiteral("Restarting into the verified Headroom package…"); emit changed(); emit applyPrepared(); return;
+        m_status = QStringLiteral("Restarting into the verified Headroom package…"); emit changed();
+        finishCLIRequest(QStringLiteral("accepted"), true);
+        emit applyPrepared(); return;
     }
     if (operation == Operation::Inspect) handleInspection(result); else handleUpdateResult(operation, result);
 }
@@ -347,6 +394,35 @@ bool UpdateService::authorizePreparedApply(const QJsonObject &result) const {
         || !equalsPath(requestObject.value(QStringLiteral("acknowledgement_path")).toString(), acknowledgement)
         || !equalsPath(requestObject.value(QStringLiteral("commit_path")).toString(), commit)
         || requestObject.value(QStringLiteral("nonce")).toString() != nonce) return false;
+    const auto captured = requestObject.value(QStringLiteral("additional_processes")).toArray();
+    if (captured.size() < m_cliParticipants.size() || captured.size() > 3
+        || captured.size() > m_cliParticipants.size() + 1) return false;
+    for (qsizetype index = 0; index < m_cliParticipants.size(); ++index) {
+        const auto actual = captured.at(index).toObject(), expected = m_cliParticipants.at(index).toObject();
+        if (actual.value(QStringLiteral("role")) != expected.value(QStringLiteral("role"))
+            || actual.value(QStringLiteral("pid")) != expected.value(QStringLiteral("pid"))
+            || !equalsPath(actual.value(QStringLiteral("executable")).toString(), expected.value(QStringLiteral("executable")).toString())
+            || actual.value(QStringLiteral("process_token")).toString().isEmpty()) return false;
+    }
+    if (captured.size() > m_cliParticipants.size()) {
+        // The trusted manager may add a registered standalone server belonging
+        // to this same installation. It verifies the private service receipt,
+        // executable digest and kernel creation token before preparing it.
+        const auto service = captured.last().toObject();
+        for (const auto &participant : m_cliParticipants)
+            if (participant.toObject().value(QStringLiteral("role")).toString() == QStringLiteral("managed_server")) return false;
+        const QString application = m_options.applicationPath.isEmpty() ? QCoreApplication::applicationFilePath() : m_options.applicationPath;
+        const QString cli = QDir(QFileInfo(application).absolutePath()).filePath(
+#ifdef Q_OS_WIN
+            QStringLiteral("headroom-cli.exe"));
+#else
+            QStringLiteral("headroom-cli"));
+#endif
+        if (service.value(QStringLiteral("role")).toString() != QStringLiteral("managed_server")
+            || service.value(QStringLiteral("pid")).toInteger() <= 0
+            || service.value(QStringLiteral("process_token")).toString().isEmpty()
+            || !equalsPath(service.value(QStringLiteral("executable")).toString(), cli)) return false;
+    }
     QFile accepted(acknowledgement);
     QJsonParseError parseError;
     const auto acceptedDocument = accepted.open(QIODevice::ReadOnly) && accepted.size() <= 4096
@@ -538,10 +614,15 @@ void UpdateService::handleUpdateResult(Operation operation, const QJsonObject &r
         m_status = QStringLiteral("No compatible Headroom package is published yet.");
     }
     emit changed();
+    if (m_cliReply) {
+        if (m_state == QStringLiteral("staged")) QTimer::singleShot(0, this, &UpdateService::restartToApply);
+        else finishCLIRequest(status, status == QStringLiteral("current"));
+    }
 }
 
 void UpdateService::fail(const QString &message) {
     m_autoStage = false;
+    finishCLIRequest(QStringLiteral("failed"), false);
     m_verifiedStage = {};
 	m_state = QStringLiteral("failed"); m_status = message; emit changed(); applyDeferredTrafficState();
 }

@@ -10,6 +10,7 @@
 #include <QLockFile>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QPointer>
 
 #ifndef Q_OS_WIN
 #include <cerrno>
@@ -299,6 +300,20 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
                         if (!response.isEmpty() && response.size() <= 1024 * 1024 && !response.contains('\n')) {
                             socket->write(response + '\n');
                             socket->flush();
+                        } else if (m_asyncRequestHandler) {
+                            const QPointer<QLocalSocket> guarded(socket);
+                            auto reply = [guarded](const QByteArray &value) {
+                                if (!guarded || guarded->state() != QLocalSocket::ConnectedState) return;
+                                if (!value.isEmpty() && value.size() <= 1024 * 1024 && !value.contains('\n')) {
+                                    guarded->write(value + '\n'); guarded->flush();
+                                }
+                                guarded->disconnectFromServer();
+                            };
+                            if (m_asyncRequestHandler(buffered.chopped(1), std::move(reply))) {
+                                socket->setProperty("headroomAsyncRequest", true);
+                                QTimer::singleShot(8 * 60 * 1000, socket, [socket] { socket->disconnectFromServer(); });
+                                return;
+                            }
                         }
                     }
                     socket->disconnectFromServer();
@@ -310,7 +325,9 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
             connect(socket, &QLocalSocket::readyRead, this, readActivation);
             connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
             QMetaObject::invokeMethod(socket, readActivation, Qt::QueuedConnection);
-            QTimer::singleShot(1000, socket, [socket] { socket->disconnectFromServer(); });
+            QTimer::singleShot(1000, socket, [socket] {
+                if (!socket->property("headroomAsyncRequest").toBool()) socket->disconnectFromServer();
+            });
         }
     });
     return Result::Primary;

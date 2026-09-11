@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QTimer>
 #include <functional>
 
@@ -39,9 +40,9 @@ public:
     QString latestVersion() const { return m_latestVersion; }
     bool busy() const { return m_process; }
     bool canCancel() const { return m_process && m_operation != Operation::Apply; }
-    bool canCheck() const { return m_allowed && m_official && !busy(); }
+    bool canCheck() const { return m_allowed && m_official && !busy() && !m_cliReply; }
     bool canStage() const { return m_allowed && m_state == QStringLiteral("available") && !busy(); }
-    bool canRepair() const { return m_allowed && m_repairable && !busy(); }
+    bool canRepair() const { return m_allowed && m_repairable && !busy() && !m_cliReply; }
     bool restartAvailable() const { return m_allowed && m_state == QStringLiteral("staged"); }
     QString updateMethod() const { return m_method; }
     QJsonObject verifiedStage() const { return m_verifiedStage; }
@@ -55,6 +56,7 @@ public:
     void setPublicTrafficAllowed(bool allowed);
     void setOwnedProcessProvider(std::function<QPair<qint64, QString>()> provider) { m_ownedProcessProvider = std::move(provider); }
     void setRelaunchArguments(QStringList arguments) { m_relaunchArguments = std::move(arguments); }
+    void requestCLIUpdate(const QJsonObject &request, std::function<void(const QJsonObject &)> reply);
 signals:
     void changed();
     void applyPrepared();
@@ -71,6 +73,7 @@ private:
     void handleUpdateResult(Operation operation, const QJsonObject &result);
     void restoreAllowedState();
     void applyDeferredTrafficState();
+    void finishCLIRequest(const QString &status, bool ok);
     QString guidePath() const;
     UpdateServiceOptions m_options;
     QPointer<QProcess> m_process;
@@ -101,5 +104,8 @@ private:
     bool m_deferredAllowed = true;
     std::function<QPair<qint64, QString>()> m_ownedProcessProvider;
     QStringList m_relaunchArguments;
+    QJsonArray m_cliParticipants;
+    QString m_cliRequestNonce;
+    std::function<void(const QJsonObject &)> m_cliReply;
     Operation m_operation = Operation::None;
 };

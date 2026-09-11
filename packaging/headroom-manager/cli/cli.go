@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -142,6 +143,7 @@ func runDashboard(ctx context.Context, options Options) error {
 		fmt.Fprintln(options.Stderr, "Usage: headroom [dashboard options]\n       headroom serve [server options]\n       headroom update\n       headroom desktop\n       headroom version")
 		set.PrintDefaults()
 		fmt.Fprintln(options.Stderr, "Remote HTTP authentication: HEADROOM_AUTH_TOKEN or HEADROOM_AUTH_TOKEN_FILE")
+		fmt.Fprintln(options.Stderr, "Token files require owner-only permissions on Linux/macOS; use HEADROOM_AUTH_TOKEN on Windows.")
 	}
 	if err := set.Parse(options.Args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -241,7 +243,7 @@ func runDashboard(ctx context.Context, options Options) error {
 func envPresent(env []string, name string) bool {
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok && key == name {
+		if ok && (key == name || runtime.GOOS == "windows" && strings.EqualFold(key, name)) {
 			return true
 		}
 	}
@@ -251,7 +253,7 @@ func envPresent(env []string, name string) bool {
 func envValue(env []string, name string) string {
 	for index := len(env) - 1; index >= 0; index-- {
 		key, value, found := strings.Cut(env[index], "=")
-		if found && key == name {
+		if found && (key == name || runtime.GOOS == "windows" && strings.EqualFold(key, name)) {
 			return value
 		}
 	}

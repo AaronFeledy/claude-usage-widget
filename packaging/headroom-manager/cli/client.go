@@ -312,6 +312,17 @@ func runSSH(ctx context.Context, program string, arguments []string, input []byt
 		return nil, nil, errors.New("system OpenSSH client was not found")
 	}
 	command := exec.CommandContext(ctx, path, arguments...)
+	// OpenSSH can forward environment variables through user SendEnv settings.
+	// HTTP credentials are never part of the SSH transport.
+	command.Env = make([]string, 0, len(os.Environ()))
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		switch strings.ToUpper(key) {
+		case "HEADROOM_AUTH_TOKEN", "HEADROOM_AUTH_TOKEN_FILE", "USAGE_AUTH_TOKEN":
+			continue
+		}
+		command.Env = append(command.Env, item)
+	}
 	command.Stdin = bytes.NewReader(input)
 	var stdout, stderr boundedBuffer
 	command.Stdout, command.Stderr = &stdout, &stderr

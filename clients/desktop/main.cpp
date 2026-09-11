@@ -43,7 +43,8 @@ int desktopCLIRequest(int argc, char **argv) {
     const auto command = QJsonDocument::fromJson(bytes);
     if (!command.isObject()) return 1;
     InstanceService instance(SettingsService::defaultPath());
-    const auto response = instance.request(command.toJson(QJsonDocument::Compact));
+    const int timeout = command.object().value(QStringLiteral("command")).toString() == QStringLiteral("update") ? 8 * 60 * 1000 : 3000;
+    const auto response = instance.request(command.toJson(QJsonDocument::Compact), timeout);
     if (response.isEmpty()) return instance.primaryUnavailable() ? 3 : 1;
     QFile output;
     if (!output.open(stdout, QIODevice::WriteOnly) || output.write(response) != response.size() || !output.flush()) return 1;
@@ -113,6 +114,14 @@ int main(int argc, char **argv) {
                         {"install_root", QFileInfo(qEnvironmentVariable("HEADROOM_INSTALL_ROOT")).canonicalFilePath()}};
         } else return QByteArray();
         return QJsonDocument(response).toJson(QJsonDocument::Compact);
+    });
+    if (!capture && !isolated) instance.setAsyncRequestHandler([&](const QByteArray &request, InstanceService::Reply reply) {
+        const auto object = QJsonDocument::fromJson(request).object();
+        if (object.value(QStringLiteral("command")).toString() != QStringLiteral("update")) return false;
+        updateService.requestCLIUpdate(object, [reply = std::move(reply)](const QJsonObject &response) {
+            reply(QJsonDocument(response).toJson(QJsonDocument::Compact));
+        });
+        return true;
     });
     updateService.setOwnedProcessProvider([&controller] {
         return qMakePair(controller.ownedServerProcessId(), controller.ownedServerExecutablePath());
