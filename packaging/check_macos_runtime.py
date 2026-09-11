@@ -16,8 +16,19 @@ def check(path, architecture):
     if architecture not in slices:
         raise ValueError(f"{path.name}: missing {architecture} Mach-O slice")
     headers = subprocess.check_output(["otool", "-arch", architecture, "-l", str(path)], text=True)
-    targets = re.findall(r"\b(?:minos|version)\s+(\d+)\.(\d+)(?:\.(\d+))?", "\n".join(
-        block for block in headers.split("Load command") if "LC_BUILD_VERSION" in block or "LC_VERSION_MIN_MACOSX" in block))
+    targets = []
+    for block in headers.split("Load command"):
+        if re.search(r"^\s*cmd LC_BUILD_VERSION\s*$", block, re.MULTILINE):
+            if not re.search(r"^\s*platform (?:1|MACOS)\s*$", block, re.MULTILINE):
+                raise ValueError(f"{path.name}: {architecture} slice is not a macOS binary")
+            # LC_BUILD_VERSION also includes the linker's `version`; only
+            # `minos` describes the operating-system deployment target.
+            field = "minos"
+        elif re.search(r"^\s*cmd LC_VERSION_MIN_MACOSX\s*$", block, re.MULTILINE):
+            field = "version"
+        else:
+            continue
+        targets.extend(re.findall(rf"^\s*{field}\s+(\d+)\.(\d+)(?:\.(\d+))?\s*$", block, re.MULTILINE))
     if len(targets) != 1 or tuple(int(part or 0) for part in targets[0]) > (12, 0, 0):
         raise ValueError(f"{path.name}: {architecture} slice does not support the macOS 12 baseline")
 

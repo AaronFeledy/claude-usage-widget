@@ -4,6 +4,7 @@
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QSslServer>
+#include <QSslError>
 #include <QDebug>
 
 namespace TlsFixture {
@@ -162,8 +163,40 @@ inline QSslConfiguration replacementServerConfiguration()
     return configuration;
 }
 
-inline void configure(QSslServer &server)
+inline void installDiagnostics(QSslServer &server)
 {
-    server.setSslConfiguration(serverConfiguration());
+    server.setHandshakeTimeout(3000);
+    QObject::connect(&server, &QSslServer::startedEncryptionHandshake, &server,
+                     [](QSslSocket *) { qInfo("Headroom TLS fixture handshake started"); });
+    QObject::connect(&server, &QSslServer::errorOccurred, &server,
+                     [](QSslSocket *socket, QAbstractSocket::SocketError error) {
+        qWarning().noquote() << "Headroom TLS fixture socket error" << int(error)
+                             << (socket ? socket->errorString() : QStringLiteral("missing socket"));
+    });
+    QObject::connect(&server, &QSslServer::sslErrors, &server,
+                     [](QSslSocket *, const QList<QSslError> &errors) {
+        QStringList codes;
+        for (const QSslError &error : errors) codes.append(QString::number(int(error.error())));
+        qWarning().noquote() << "Headroom TLS fixture SSL errors" << codes.join(QLatin1Char(','));
+    });
+    QObject::connect(&server, &QSslServer::handshakeInterruptedOnError, &server,
+                     [](QSslSocket *, const QSslError &error) {
+        qWarning() << "Headroom TLS fixture handshake error" << int(error.error());
+    });
+    QObject::connect(&server, &QSslServer::alertReceived, &server,
+                     [](QSslSocket *, QSsl::AlertLevel level, QSsl::AlertType type, const QString &) {
+        qWarning() << "Headroom TLS fixture received alert" << int(level) << int(type);
+    });
+    QObject::connect(&server, &QSslServer::alertSent, &server,
+                     [](QSslSocket *, QSsl::AlertLevel level, QSsl::AlertType type, const QString &) {
+        qWarning() << "Headroom TLS fixture sent alert" << int(level) << int(type);
+    });
+}
+
+inline void configure(QSslServer &server, bool replacement = false)
+{
+    installDiagnostics(server);
+    server.setSslConfiguration(replacement ? replacementServerConfiguration()
+                                           : serverConfiguration());
 }
 }

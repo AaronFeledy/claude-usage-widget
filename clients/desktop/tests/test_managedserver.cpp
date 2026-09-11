@@ -358,9 +358,38 @@ private slots:
         auto configured = options(unusedPort(), binary);
         configured.probeTimeoutMs = 8000; configured.readinessProbeTimeoutMs = 1000;
         configured.readinessIntervalMs = 50; configured.readinessAttempts = 60;
+        QStringList tlsDiagnostics;
+        int diagnosticCount = 0;
+        configured.probeObserver = [&](QNetworkReply *reply) {
+            if (reply->url().scheme() != QStringLiteral("https")) return;
+            const auto recordDiagnostic = [&](const QString &message) {
+                if (diagnosticCount++ >= 8) return;
+                tlsDiagnostics.append(message);
+                qWarning().noquote() << "Headroom real-server TLS diagnostic:" << message;
+            };
+            connect(reply, &QNetworkReply::sslErrors, reply,
+                    [recordDiagnostic](const QList<QSslError> &errors) {
+                QStringList codes;
+                for (const QSslError &error : errors) codes.append(QString::number(int(error.error())));
+                recordDiagnostic(QStringLiteral("ssl-errors=") + codes.join(QLatin1Char(',')));
+            });
+            connect(reply, &QNetworkReply::errorOccurred, reply,
+                    [recordDiagnostic](QNetworkReply::NetworkError error) {
+                recordDiagnostic(QStringLiteral("network-error=") + QString::number(int(error)));
+            });
+            connect(reply, &QNetworkReply::encrypted, reply, [reply, recordDiagnostic] {
+                const bool exactPeer = reply->sslConfiguration().peerCertificate().toDer()
+                    == reply->request().sslConfiguration().caCertificates().value(0).toDer();
+                recordDiagnostic(QStringLiteral("encrypted-exact-peer=")
+                                 + (exactPeer ? QStringLiteral("true") : QStringLiteral("false")));
+            });
+        };
         ManagedServer server(configured); QSignalSpy ready(&server, &ManagedServer::available);
         server.configure("local", "fixture-secret"); server.ensureAvailable();
-        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 15000);
+        QTRY_VERIFY2_WITH_TIMEOUT(ready.size() == 1,
+            qPrintable(server.state() + QStringLiteral(": ") + server.message()
+                       + QStringLiteral("; TLS diagnostics: ")
+                       + tlsDiagnostics.join(QStringLiteral("; "))), 15000);
         QVERIFY(server.ownsProcess()); QCOMPARE(server.state(), QString("started"));
     }
 #ifdef Q_OS_WIN

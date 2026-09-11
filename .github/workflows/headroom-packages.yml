@@ -428,7 +428,7 @@ jobs:
       - name: Test native macOS desktop
         timeout-minutes: 15
         run: |
-          ctest --test-dir "$RUNNER_TEMP/desktop-package" -E '^headroom-reset-prohibited-tests$' --timeout 180 --output-on-failure
+          python3 packaging/tests/macos_tls_fixture_ci.py ctest --test-dir "$RUNNER_TEMP/desktop-package" -E '^headroom-reset-prohibited-tests$' --timeout 180 --output-on-failure
       - name: Exercise menus and focus using native Cocoa
         timeout-minutes: 2
         run: '"$RUNNER_TEMP/desktop-package/headroom-ui-tests" dragReordersAndDrivesTray preservesAndDisplaysCustomInterval'

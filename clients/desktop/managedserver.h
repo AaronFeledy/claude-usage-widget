@@ -6,6 +6,7 @@
 #include <QSslCertificate>
 #include <QTimer>
 #include <QUrl>
+#include <functional>
 
 #include "serverconnection.h"
 
@@ -20,6 +21,7 @@ struct ManagedServerOptions {
     int readinessAttempts = 40;
     int restartLimit = 3;
     int sessionHandshakeTimeoutMs = 8000;
+    std::function<void(QNetworkReply *)> probeObserver;
 };
 
 class ManagedServer : public QObject {

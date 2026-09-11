@@ -20,8 +20,7 @@ public:
     QPointer<QTcpSocket> heldSocket;
 
     explicit CredentialHttpFixture(bool replacement = false) {
-        setSslConfiguration(replacement ? TlsFixture::replacementServerConfiguration()
-                                        : TlsFixture::serverConfiguration());
+        TlsFixture::configure(*this, replacement);
         connect(this, &QTcpServer::pendingConnectionAvailable, this, [this] {
             while (hasPendingConnections()) {
                 auto socket = nextPendingConnection();

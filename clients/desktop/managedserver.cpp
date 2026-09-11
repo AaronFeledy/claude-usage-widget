@@ -265,6 +265,7 @@ void ManagedServer::probe(ProbePurpose purpose)
     auto reply = m_network.get(request);
     if (purpose == ProbePurpose::Readiness && transport.isPinned())
         ServerTransport::requirePinnedPeer(reply, transport.certificate);
+    if (m_options.probeObserver) m_options.probeObserver(reply);
     m_probe = reply;
     reply->setReadBufferSize(maximumHealthBytes + 1);
     auto timeout = new QTimer(reply);
