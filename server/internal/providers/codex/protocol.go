@@ -109,10 +109,12 @@ func isTerminalRefreshCode(code string) bool {
 
 func normalizeWindows(primary, secondary *whamWindow) (*whamWindow, *whamWindow) {
 	if primary == nil {
-		if windowRoleOf(secondary) == windowRoleWeekly {
-			return nil, secondary
+		// A lone window keeps its reported position unless its duration says
+		// otherwise, so an unlabelled secondary window stays weekly.
+		if windowRoleOf(secondary) == windowRoleSession {
+			return secondary, nil
 		}
-		return secondary, nil
+		return nil, secondary
 	}
 	if secondary == nil {
 		if windowRoleOf(primary) == windowRoleWeekly {

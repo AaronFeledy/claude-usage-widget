@@ -323,7 +323,7 @@ void CredentialService::submit(const QString &provider, QByteArray cookie, const
     QNetworkRequest request(endpoint);
     request.setRawHeader("Accept", "application/json");
     request.setRawHeader("Content-Type", "application/json");
-    request.setRawHeader("User-Agent", "Headroom/0.1");
+    request.setRawHeader("User-Agent", "Headroom/" HEADROOM_VERSION);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setTransferTimeout(m_options.requestTimeoutMs);
     if (m_mode != QStringLiteral("ssh") && !m_token.isEmpty()) request.setRawHeader("Authorization", "Bearer " + m_token.toUtf8());
