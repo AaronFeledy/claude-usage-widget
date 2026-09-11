@@ -36,6 +36,8 @@ private slots:
         QFile::remove(m_record);
         QDir(m_dir.filePath(QStringLiteral("transactions"))).removeRecursively();
         QDir(m_dir.filePath(QStringLiteral("staging"))).removeRecursively();
+        QDir(m_dir.filePath(QStringLiteral("pairing"))).removeRecursively();
+        qunsetenv("HEADROOM_UPDATE_FIXTURE_CLI");
         qputenv("HEADROOM_UPDATE_FIXTURE_RECORD", m_record.toUtf8());
 		qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS");
     }
@@ -63,6 +65,72 @@ private slots:
         service.checkForUpdates(); QTRY_VERIFY(service.canStage());
         service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
         service.restartToApply(); QTRY_COMPARE(prepared.count(), 1);
+    }
+    void cliPreparedStageIsAppliedWithoutResolvingAnotherRelease() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        const auto before = record();
+        auto request = cliRequest(); request["prepared_stage"] = service.verifiedStage();
+        QJsonObject reply;
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.requestCLIUpdate(request, [&](const QJsonObject &value) { reply = value; });
+        QTRY_COMPARE(prepared.count(), 1);
+        QVERIFY(reply.value("ok").toBool());
+        const auto added = record().mid(before.size());
+        QVERIFY(added.contains("prepare-apply"));
+        QVERIFY(!added.contains("check-update")); QVERIFY(!added.contains("stage-update"));
+    }
+    void cliPreparedStageCannotChangePackageProfile() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        auto stage = service.verifiedStage(); stage["package_kind"] = "cli";
+        const QString path = QDir(stage.value("package_root").toString()).absoluteFilePath("../../verified-stage.json");
+        QFile stagedRecord(path); QVERIFY(stagedRecord.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        stagedRecord.write(QJsonDocument(stage).toJson()); stagedRecord.close();
+        auto request = cliRequest(); request["prepared_stage"] = stage;
+        QJsonObject reply;
+        service.requestCLIUpdate(request, [&](const QJsonObject &value) { reply = value; });
+        QCOMPARE(reply.value("ok").toBool(), false);
+        QCOMPARE(service.state(), QString("failed"));
+        QVERIFY(!record().contains("prepare-apply"));
+    }
+    void pairedUpdateOnlyAcceptsItsOwnCoordinator() {
+        const QString directory = m_dir.filePath("paired runtime");
+        QVERIFY(QDir().mkpath(directory));
+#ifdef Q_OS_WIN
+        const QString executable = QDir(directory).filePath("headroom-cli.exe");
+#else
+        const QString executable = QDir(directory).filePath("headroom-cli");
+#endif
+        QFile::remove(executable);
+        QVERIFY(QFile::copy(QStringLiteral(UPDATE_FIXTURE_PATH), executable));
+        qputenv("HEADROOM_UPDATE_FIXTURE_CLI", executable.toUtf8());
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write("{}"); pair.close();
+        auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
+        UpdateService service(true, value);
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        service.restartToApply();
+        QTRY_VERIFY(service.busy());
+        QProcess *coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        QJsonObject reply;
+        service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &result) { reply = result; });
+        QCOMPARE(reply.value("status").toString(), QString("busy"));
+        QVERIFY(!record().contains("prepare-apply"));
+        auto request = cliRequest();
+        request["additional_processes"] = QJsonArray{QJsonObject{{"role", "cli"}, {"pid", coordinator->processId()}, {"executable", executable}}};
+        request["prepared_stage"] = service.verifiedStage();
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.requestCLIUpdate(request, [&](const QJsonObject &result) { reply = result; });
+        QTRY_COMPARE(prepared.count(), 1); QVERIFY(reply.value("ok").toBool());
     }
     void cliRequestIsRejectedForUnmanagedOrDifferentInstall() {
         UpdateService isolated(false, options());
@@ -202,6 +270,12 @@ private slots:
         QTRY_VERIFY(service.canRepair()); QVERIFY(service.statusText().contains(QStringLiteral("needs repair")));
         service.repairInstallation(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
         QCOMPARE(service.latestVersion(), QStringLiteral("0.1.0")); QVERIFY(record().contains("stage-repair"));
+        // Local repair must remain available even when paired identity is incomplete.
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write("{}"); pair.close();
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.restartToApply(); QTRY_COMPARE(prepared.count(), 1);
+        QVERIFY(record().contains("prepare-apply"));
     }
     void bootstrapDamageIsRepairableForVerifiedIdentity() {
         qputenv("HEADROOM_UPDATE_FIXTURE_MISSING", "bootstrap/headroom-package");

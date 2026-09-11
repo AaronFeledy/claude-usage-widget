@@ -38,7 +38,7 @@ public:
     QString state() const { return m_state; }
     QString statusText() const { return m_status; }
     QString latestVersion() const { return m_latestVersion; }
-    bool busy() const { return m_process; }
+    bool busy() const { return m_process || m_pairProcess; }
     bool canCancel() const { return m_process && m_operation != Operation::Apply; }
     bool canCheck() const { return m_allowed && m_official && !busy() && !m_cliReply; }
     bool canStage() const { return m_allowed && m_state == QStringLiteral("available") && !busy(); }
@@ -74,18 +74,24 @@ private:
     void restoreAllowedState();
     void applyDeferredTrafficState();
     void finishCLIRequest(const QString &status, bool ok);
+    void startPairedUpdate();
     QString guidePath() const;
     UpdateServiceOptions m_options;
     QPointer<QProcess> m_process;
+    QPointer<QProcess> m_pairProcess;
+    bool m_cliAvailable = false;
+    QString m_cliEntryPath;
     QTimer m_timeout;
     QByteArray m_output;
     QByteArray m_errorOutput;
     QJsonObject m_verifiedStage;
+    bool m_stageIsRepair = false;
     QString m_state = QStringLiteral("unavailable");
     QString m_status;
     QString m_latestVersion;
     QString m_platform;
     QString m_architecture;
+    QString m_packageKind;
     QString m_method = QStringLiteral("source");
     QString m_prePauseState;
     QString m_prePauseStatus;

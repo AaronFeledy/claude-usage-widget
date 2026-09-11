@@ -10,6 +10,8 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QUuid>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 namespace {
@@ -170,6 +172,22 @@ private slots:
         const QByteArray repairedEntry = readFile(entry);
         QVERIFY(repairedEntry.contains((QStringLiteral("Exec=\"") + launcher + QStringLiteral("\" --background")).toUtf8()));
         QVERIFY(!repairedEntry.contains(previous.toUtf8()));
+
+        const QString publicCLI = dir.filePath(QStringLiteral("public bin/headroom"));
+        QVERIFY(writeFile(publicCLI, "CLI router", true));
+        QVERIFY(writeFile(publicCLI + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
+        QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("install-state.json")),
+            QJsonDocument(QJsonObject{{"schema", 1}, {"product", "Headroom"}, {"cli_entry_path", publicCLI}}).toJson()));
+        const QByteArray oldPublicEntry = QByteArray(oldEntry).replace(previous.toUtf8(), publicCLI.toUtf8());
+        QVERIFY(writeFile(entry, oldPublicEntry));
+        StartupService migratedCLI(config, current, true);
+        QVERIFY(migratedCLI.enabled());
+        QVERIFY(readFile(entry).contains(launcher.toUtf8()));
+        QVERIFY(!readFile(entry).contains(publicCLI.toUtf8()));
+        QVERIFY(writeFile(entry, oldPublicEntry));
+        QVERIFY(writeFile(publicCLI + QStringLiteral(".root"), "/different-install\n"));
+        StartupService unrelatedCLI(config, current, true);
+        QCOMPARE(readFile(entry), oldPublicEntry);
 
         QVERIFY(writeFile(entry, QByteArray(oldEntry).replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false")));
         StartupService disabled(config, current, true);

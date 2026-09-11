@@ -8,6 +8,8 @@
 #include <QSettings>
 #include <QSet>
 #include <QRegularExpression>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <algorithm>
 #ifndef Q_OS_WIN
 #include <unistd.h>
@@ -207,7 +209,24 @@ void StartupService::repairPackagedRegistration()
 {
     const QString root = cleanAbsolute(qEnvironmentVariable("HEADROOM_INSTALL_ROOT"));
     if (root.isEmpty()) return;
-    const QStringList candidates = installedApplications(root, {}, m_platform);
+    QStringList candidates = installedApplications(root, {}, m_platform);
+    if (m_platform == Platform::Linux) {
+        // The old public command was the GUI launcher. A one-time CLI install
+        // moves the GUI inside the managed root; retarget only the exact old
+        // startup command whose current CLI entry still belongs to this root.
+        QFile state(QDir(root).filePath(QStringLiteral("install-state.json")));
+        if (state.open(QIODevice::ReadOnly) && state.size() <= 64 * 1024) {
+            const auto value = QJsonDocument::fromJson(state.readAll()).object();
+            const QString cli = cleanAbsolute(value.value(QStringLiteral("cli_entry_path")).toString());
+            const QFileInfo info(cli), associationInfo(cli + QStringLiteral(".root"));
+            QFile association(associationInfo.absoluteFilePath());
+            if (value.value(QStringLiteral("schema")).toInt() == 1 && value.value(QStringLiteral("product")).toString() == QStringLiteral("Headroom")
+                && !cli.isEmpty() && info.isFile() && !info.isSymLink() && info.fileName() == QStringLiteral("headroom")
+                && associationInfo.isFile() && !associationInfo.isSymLink() && association.open(QIODevice::ReadOnly)
+                && association.size() <= 4096 && association.readAll() == QDir::toNativeSeparators(root).toUtf8() + '\n')
+                candidates.append(cli);
+        }
+    }
     if (m_platform == Platform::Windows) {
         QSettings registry(m_registryPath, QSettings::NativeFormat);
         const QString command = registry.value(QStringLiteral("Headroom")).toString();

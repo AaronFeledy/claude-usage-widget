@@ -21,6 +21,11 @@ int main(int argc, char **argv) {
                    << " args=" << args.mid(2).join('|') << '\n';
         }
     }
+    if (command == QStringLiteral("update")) {
+        QFile input;
+        if (input.open(stdin, QIODevice::ReadOnly)) input.read(1);
+        return 0;
+    }
     if (command == QStringLiteral("prepare-apply")) {
 		if (mode == QStringLiteral("hang")) { QFile input; if (input.open(stdin, QIODevice::ReadOnly)) input.read(1); return 2; }
 		if (mode == QStringLiteral("malformed")) { QTextStream(stdout) << "not json\n"; return 0; }
@@ -96,6 +101,8 @@ int main(int argc, char **argv) {
         QJsonObject result{{"installed", true}, {"trusted_identity", true}, {"complete", !qEnvironmentVariableIsSet("HEADROOM_UPDATE_FIXTURE_MISSING")},
             {"version", "0.1.0"}, {"version_path", "versions/0.1.0"}, {"platform", platform}, {"architecture", architecture}, {"package_asset", asset},
             {"launcher_path", qEnvironmentVariable("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER", "/fixture/headroom-launcher")}};
+        if (qEnvironmentVariableIsSet("HEADROOM_UPDATE_FIXTURE_CLI"))
+            result["cli_entry_path"] = qEnvironmentVariable("HEADROOM_UPDATE_FIXTURE_CLI");
 		if (qEnvironmentVariableIsSet("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS")) {
 			result["apply_status"] = qEnvironmentVariable("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS");
 			result["apply_message"] = QStringLiteral("synthetic readiness failure");
