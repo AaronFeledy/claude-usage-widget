@@ -34,7 +34,7 @@ private slots:
         const auto image = TrayVisual::icon(model).pixmap(64, 64).toImage();
         QVERIFY(!image.isNull());
         QCOMPARE(image.pixelColor(53, 52), QColor("#ff5555"));
-        QCOMPARE(image.pixelColor(32, 59), QColor("#8be9fd"));
+        QCOMPARE(image.pixelColor(32, 59), QColor("#f8f8f2"));
         const QString captureDirectory = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         if (!captureDirectory.isEmpty()) {
             QVERIFY(QDir().mkpath(captureDirectory));

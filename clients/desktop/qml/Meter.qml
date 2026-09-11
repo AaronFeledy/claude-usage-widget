@@ -7,10 +7,10 @@ ColumnLayout {
     objectName: "meter_" + providerName + "_" + bucket.id
     required property var bucket
     required property string providerName
-    property color accent: Theme.purple
+    property color accent: Theme.cyan
     property var concern: { meter.clock; return backend.concern(providerName, bucket) }
     property bool warning: concern.severity > 0
-    property color usageColor: concern.color || Theme.purple
+    property color usageColor: concern.color || Theme.cyan
     property var clock: backend.state
     property var pace: { meter.clock; return backend.pacing(providerName, bucket) }
     property bool statusOnly: bucket.id === "on_demand" && bucket.utilization <= 0 && !!bucket.status_text && bucket.status_text.indexOf(" / ") < 0
@@ -77,7 +77,7 @@ ColumnLayout {
             visible: meter.pace.available
             x: Math.max(0, Math.min(parent.width - width, parent.width * (meter.pace.expected || 0) / 100 - width / 2))
             width: 4; height: 12; radius: 1
-            color: Theme.cyan; border.width: 1; border.color: Theme.background
+            color: Theme.foreground; border.width: 1; border.color: Theme.background
         }
         HoverHandler { id: graphHover }
         ToolTip.visible: graphHover.hovered
