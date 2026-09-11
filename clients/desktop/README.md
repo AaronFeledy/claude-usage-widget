@@ -124,6 +124,9 @@ centered provider logo, without a numeric label. A white tick marks expected pac
 a secondary dot shows the highest warning among that provider's other meters.
 The tooltip has two lines: provider/primary usage, then reset time and warning
 level when needed. Connection errors replace those details with a short status.
+When the server cannot be reached, a red X replaces the tray's provider logo.
+Offline dashboard cards, the empty connection panel, and the footer divider turn
+red while retaining the last readings. Their normal appearance returns on recovery.
 
 Click the tray icon to open or hide the frameless dashboard beside it. The popup
 stays above ordinary windows and dismisses when focus moves outside the app;
@@ -152,7 +155,7 @@ and **Escape** closes settings or hides the window to the tray.
 
 **Start Headroom when I sign in** enables an XDG autostart entry on Linux or the
 current user's `Headroom` Run entry on Windows, launching the quoted executable
-with `--background`. This toggle applies immediately and is disabled in preview
+with `--background`. This toggle applies immediately and is disabled in capture
 and isolated-config modes. On the first normal Windows launch, Headroom imports
 schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new
 settings file is absent. The legacy file remains untouched and a create-once
@@ -171,9 +174,8 @@ the stage, switches to a new immutable generation, accepts readiness only from
 the expected process, and rolls back if startup fails. An interrupted switch is
 recovered on the next launch. Source builds use the installed source update
 guide, while system-managed builds defer to their package manager and never
-write into a per-user package installation. Entering preview cancels a pending
-public operation; demo, capture, preview, and explicit-config sessions cannot
-check or download public releases.
+write into a per-user package installation. Capture and explicit-config sessions
+cannot check or download public releases.
 
 The legacy WinForms updater cannot install a Headroom package. Existing users
 run the Headroom installer once, then the settings import and startup migration
@@ -190,17 +192,17 @@ categories, Copy log, and Clear. It records controlled connection/settings/tier
 summaries, never raw requests, response bodies, tokens, URLs, or account details.
 Nothing is written to a log file by this console.
 
-## Preview and verification
+## Verification
 
-`--demo` displays explicitly labeled sample data and makes no API requests.
-Reordering sample data changes only the preview session. Saving connection
-settings exits preview mode and connects to the real API. `--config PATH`
-selects an alternate settings file.
+`--config PATH` selects an alternate settings file. Screenshot capture does not
+start or poll a backend, so an empty isolated configuration renders the
+disconnected setup interface without exposing live readings.
 
 ```bash
 ctest --test-dir clients/desktop/build --output-on-failure
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-  clients/desktop/build/headroom --demo --screenshot /tmp/headroom.png
+  clients/desktop/build/headroom --config /tmp/headroom-settings.json \
+  --screenshot /tmp/headroom.png
 ```
 
 Tests cover API parsing, legacy bucket fallback, URL handling, authenticated
@@ -236,9 +238,8 @@ percentage or pacing marker. The existing Windows pacing indicators are retained
 ## Windows feature comparison
 
 Headroom uses the server's provider names, subtitles, bucket labels, variable
-meter counts, status text, and authentication errors. Preview data uses synthetic
-values with representative three/two/four/one-meter layouts; live accounts may
-return different buckets. Both clients retain pacing and provider ordering.
+meter counts, status text, and authentication errors. Live accounts may return
+different bucket layouts. Both clients retain pacing and provider ordering.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows and Linux. Windows can forward supported Cursor and Grok browser cookies
@@ -331,8 +332,8 @@ Escalation can jump directly to any tier; recovery can skip tiers as well.
 
 Initial connection and each new reset window establish a baseline without
 notification bursts. Later upward transitions into Warning or Critical notify
-when enabled. Unchanged polls, downward transitions, preview mode, and toggling
-notifications back on do not notify. A genuine recovery followed by escalation
+when enabled. Unchanged polls, downward transitions, and toggling notifications
+back on do not notify. A genuine recovery followed by escalation
 can alert again. Provider order changes do not reset state or re-arm alerts.
 
 Connection failures freeze state. Expired known windows retain their state until

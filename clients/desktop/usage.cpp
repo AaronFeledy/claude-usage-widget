@@ -200,27 +200,3 @@ QVariantMap Usage::concern(const QString &provider, const QVariantMap &bucket, c
     return {{"severity", int(level)}, {"color", warningColor(level)}, {"level", warningName(level)}, {"pressure", pressure}, {"available", available},
         {"remaining", remaining}, {"detail", pace["detail"].toString() + "\n\n" + explanation}};
 }
-
-QByteArray Usage::demo() {
-    // Synthetic readings, using the real API's labels and variable bucket shapes.
-    // Actual accounts may expose other model-specific or billable buckets.
-    const auto now = QDateTime::currentDateTimeUtc();
-    auto bucket = [&](const QString &id, const QString &label, double used, int seconds, const QString &status = {}) {
-        return QJsonObject{{"id", id}, {"label", label}, {"utilization", used},
-            {"resets_at", seconds ? QJsonValue(now.addSecs(seconds).toString(Qt::ISODate)) : QJsonValue(QJsonValue::Null)},
-            {"status_text", status.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(status)}};
-    };
-    const QList<QJsonArray> meters {
-        {bucket("session", "Current Session", 34, 8400), bucket("weekly", "Weekly", 62, 225000), bucket("weekly_fable", "Fable", 27, 225000)},
-        {bucket("session", "5-Hour", 0, 0), bucket("weekly", "Weekly", 41, 228000)},
-        {bucket("auto", "Cursor Models", 38, 12 * 86400), bucket("api", "Other Models", 76, 12 * 86400, "$38 / $50 this cycle"),
-            bucket("weekly_grok_bot", "Grok Bot", 28, 231000), bucket("on_demand", "On-Demand", 0, 12 * 86400, "On-demand enabled")},
-        {bucket("weekly", "Weekly", 8, 234000)}
-    };
-    const QStringList names {"Claude", "Codex", "Cursor", "Grok"};
-    QJsonArray providers;
-    for (int i = 0; i < names.size(); ++i)
-        providers.append(QJsonObject{{"provider_name", names[i]}, {"subtitle", "Sample account"}, {"error", QJsonValue::Null},
-            {"is_success", true}, {"needs_reauth", false}, {"buckets", meters[i]}});
-    return QJsonDocument(providers).toJson();
-}

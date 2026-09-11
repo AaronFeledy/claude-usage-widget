@@ -103,7 +103,6 @@ TrayVisual::Model TrayVisual::build(const QVariantMap &state, const QVariantList
         const auto highest = Usage::WarningLevel(qMax(int(result.level), int(result.secondary)));
         if (highest != Usage::WarningLevel::Normal) result.tooltip += " · " + Usage::warningName(highest);
     } else result.tooltip = name + "\n" + statusText(result.kind);
-    if (state["demo"].toBool()) result.tooltip.prepend("Preview · ");
     return result;
 }
 
@@ -134,6 +133,12 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
             p.setPen(QPen(foreground, 3, Qt::SolidLine, Qt::FlatCap)); p.drawLine(inner, outer);
         }
     }
+    if (model.kind == Kind::Offline) {
+        p.setPen(QPen(QColor("#ff5555"), 6, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(21, 21), QPointF(43, 43));
+        p.drawLine(QPointF(43, 21), QPointF(21, 43));
+        return pixmap;
+    }
     const QPixmap provider = providerPixmap(model.provider);
     if (!provider.isNull()) {
         const QSizeF logoSize = QSizeF(provider.size()).scaled(QSizeF(32, 32), Qt::KeepAspectRatio);
@@ -151,7 +156,6 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
         case Kind::Setup: glyph = "+"; color = QColor("#bd93f9"); break;
         case Kind::Connecting: glyph = "…"; color = QColor("#8be9fd"); break;
         case Kind::Idle: glyph = "–"; break;
-        case Kind::Offline: glyph = "×"; break;
         case Kind::AuthError: color = QColor("#ff5555"); break;
         case Kind::ApiError: glyph = "!"; color = QColor("#ff5555"); break;
         case Kind::Malformed: glyph = "?"; color = QColor("#ff5555"); break;

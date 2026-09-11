@@ -283,7 +283,7 @@ bool StartupService::setEnabled(bool enabled)
     if (!m_platformSupported)
         return fail(tr("Start at login will be available after Windows integration is installed."));
     if (!m_allowChanges)
-        return fail(tr("Start at login is unavailable in preview mode."));
+        return fail(tr("Start at login is unavailable for this session."));
     if (m_windows) {
         if (!QDir::isAbsolutePath(m_executable) || m_executable.contains('"') ||
             m_executable.contains('\n') || m_executable.contains('\r') || m_executable.contains(QChar::Null))

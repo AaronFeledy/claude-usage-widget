@@ -215,8 +215,8 @@ own update method. They do not create package state or redirect startup through
 the per-user launcher. Only a native, trusted per-user installation may use the
 public acquisition commands. The desktop performs one delayed startup check,
 automatically downloads and verifies a newer bundle, and advertises restart only
-after the package tool returns a matching `verified-stage.json`. Preview, demo,
-capture, and explicit-config sessions do not make public update requests.
+after the package tool returns a matching `verified-stage.json`. Capture and
+explicit-config sessions do not make public update requests.
 
 ## Reusable release recipe
 

@@ -53,7 +53,7 @@ UpdateService::UpdateService(bool allowPublicTraffic, UpdateServiceOptions optio
     }
     m_method = m_options.systemManaged ? QStringLiteral("system") : QStringLiteral("source");
     if (!m_allowed) {
-        m_status = QStringLiteral("Update checks are disabled in preview and isolated modes.");
+        m_status = QStringLiteral("Update checks are disabled for this session.");
         return;
     }
     if (m_options.systemManaged) {
@@ -119,7 +119,7 @@ void UpdateService::setPublicTrafficAllowed(bool allowed) {
             m_prePauseState.clear(); m_prePauseStatus.clear();
         }
         if (m_process) cancel();
-        m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused while sample preview is active.");
+        m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
         emit changed(); return;
     }
     if (m_process) { m_resumeAfterCancel = true; return; }
@@ -236,7 +236,7 @@ void UpdateService::run(Operation operation, const QString &command, const QStri
             if (!m_allowed) {
                 m_resumeAfterCancel = false;
                 m_state = QStringLiteral("unavailable");
-                m_status = QStringLiteral("Update checks are paused while sample preview is active.");
+                m_status = QStringLiteral("Update checks are paused for this session.");
                 emit changed(); return;
             }
             if (m_resumeAfterCancel) { m_resumeAfterCancel = false; restoreAllowedState(); return; }
@@ -257,7 +257,7 @@ void UpdateService::finish(Operation operation, int exitCode, QProcess::ExitStat
     if (!m_allowed) {
         m_resumeAfterCancel = false;
         m_autoStage = false;
-        m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused while sample preview is active.");
+        m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session.");
         emit changed(); return;
     }
     if (m_cancelRequested || m_timedOut) {

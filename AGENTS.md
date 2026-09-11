@@ -70,8 +70,8 @@ is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
 
 Official packages use strict schema 1 manifests and immutable generations under
 the current-user Headroom root. Public acquisition is available only to a
-trusted native per-user install. Demo, preview, capture, explicit-config,
-source, and system-managed sessions make no public update requests. Restart
+trusted native per-user install. Capture, explicit-config, source, and
+system-managed sessions make no public update requests. Restart
 apply uses a two-way acknowledgement/commit, exact process identity, readiness,
 rollback, and durable recovery. Do not add a second archive validator outside
 the Go manager.

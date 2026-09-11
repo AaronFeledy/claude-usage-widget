@@ -186,7 +186,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(defaultPath + ".legacy.bak"));
     }
 
-    void automaticMigrationCanBeDisabledForDemoAndScreenshot()
+    void automaticMigrationCanBeDisabledForCapture()
     {
         QTemporaryDir dir;
         const QString target = dir.filePath("default/settings.json"), legacy = dir.filePath("old.json");

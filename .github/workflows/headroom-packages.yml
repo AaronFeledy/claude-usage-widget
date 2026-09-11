@@ -143,12 +143,12 @@ jobs:
           timeout 90s xvfb-run -a env QT_QUICK_BACKEND=software
           clients/desktop/build-ci/headroom-ui-tests
           dragReordersAndDrivesTray preservesAndDisplaysCustomInterval
-      - name: Load QML and capture demo
+      - name: Load QML and capture disconnected setup
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
         run: |
-          clients/desktop/build-ci/headroom --demo --screenshot "$RUNNER_TEMP/headroom-linux.png"
+          clients/desktop/build-ci/headroom --config "$RUNNER_TEMP/headroom-linux-settings.json" --screenshot "$RUNNER_TEMP/headroom-linux.png"
           test -s "$RUNNER_TEMP/headroom-linux.png"
 
   desktop-windows-x64:
@@ -209,7 +209,7 @@ jobs:
           if (Test-Path $result) { Get-Content -Raw $result }
           if ($timedOut) { throw 'Native QML UI test timed out.' }
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
-      - name: Load QML and capture demo
+      - name: Load QML and capture disconnected setup
         if: ${{ always() && steps.windows-build.outcome == 'success' }}
         shell: pwsh
         env:
@@ -218,7 +218,8 @@ jobs:
           QT_QUICK_BACKEND: software
         run: |
           $image = Join-Path $env:RUNNER_TEMP "headroom-windows.png"
-          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom.exe" -ArgumentList "--demo", "--screenshot", $image -Wait -PassThru
+          $settings = Join-Path $env:RUNNER_TEMP "headroom-windows-settings.json"
+          $process = Start-Process -FilePath "clients/desktop/build-ci/headroom.exe" -ArgumentList "--config", $settings, "--screenshot", $image -Wait -PassThru
           if ($process.ExitCode -ne 0 -or !(Test-Path $image) -or (Get-Item $image).Length -eq 0) { exit 1 }
 
   qt-attribution-sources:
@@ -385,11 +386,11 @@ jobs:
           ready="$RUNNER_TEMP/headroom-clean-linux-ready.json"
           nonce=0123456789abcdef0123456789abcdef0123456789abcdef
           env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
-            HEADROOM_READY_NONCE="$nonce" timeout 30s xvfb-run -a env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --headroom-ready-file "$ready" --screenshot "$RUNNER_TEMP/headroom-clean-linux-xcb.png"
+            HEADROOM_READY_NONCE="$nonce" timeout 30s xvfb-run -a env -u QT_PLUGIN_PATH -u QML2_IMPORT_PATH -u QML_IMPORT_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --config "$RUNNER_TEMP/headroom-clean-linux-settings.json" --headroom-ready-file "$ready" --screenshot "$RUNNER_TEMP/headroom-clean-linux-xcb.png"
           env -u HEADROOM_INSTALL_ROOT -u HEADROOM_LAUNCHER_PATH -u HEADROOM_PACKAGE_VERSION \
-            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-clean-linux-offscreen.png"
+            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --config "$RUNNER_TEMP/headroom-clean-linux-offscreen-settings.json" --screenshot "$RUNNER_TEMP/headroom-clean-linux-offscreen.png"
           HEADROOM_INSTALL_ROOT="$RUNNER_TEMP/obsolete install" HEADROOM_LAUNCHER_PATH="$RUNNER_TEMP/obsolete launcher" HEADROOM_PACKAGE_VERSION=9.9.9 \
-            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --demo --screenshot "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
+            timeout 30s env QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software XDG_RUNTIME_DIR="$RUNNER_TEMP/runtime" "$RUNNER_TEMP/bin with spaces/headroom" --config "$RUNNER_TEMP/headroom-dirty-environment-linux-settings.json" --screenshot "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
           test -s "$RUNNER_TEMP/headroom-clean-linux-xcb.png" && test -s "$RUNNER_TEMP/headroom-clean-linux-offscreen.png" && test -s "$RUNNER_TEMP/headroom-dirty-environment-linux.png"
           version_path="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version_path"])' "$RUNNER_TEMP/install with spaces/install-state.json")"
           python3 - "$ready" "$RUNNER_TEMP/install with spaces/$version_path/bin/headroom" "$HEADROOM_PACKAGE_VERSION" "$nonce" <<'PY'
@@ -462,7 +463,8 @@ jobs:
             $ready = "$Image.ready.json"
             $nonce = [guid]::NewGuid().ToString('N')
             $env:HEADROOM_READY_NONCE = $nonce
-            $process = Start-Process -FilePath $stable -ArgumentList '--demo','--headroom-ready-file',$ready,'--screenshot',$Image -PassThru
+            $settings = "$Image.settings.json"
+            $process = Start-Process -FilePath $stable -ArgumentList '--config',$settings,'--headroom-ready-file',$ready,'--screenshot',$Image -PassThru
             Remove-Item Env:HEADROOM_READY_NONCE
             if (!$process.WaitForExit(30000)) { $process.Kill(); throw 'Headroom package smoke timed out.' }
             if ($process.ExitCode -ne 0) { throw 'Headroom package launcher failed.' }

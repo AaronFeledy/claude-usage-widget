@@ -9,13 +9,14 @@ Rectangle {
     property string name: provider.provider_name
     property string displayName: backend.displayName(name)
     property color accent: Theme.purple
+    property bool offline: false
     property bool failed: provider.error !== null && provider.error !== undefined
     property bool pinned: backend.settings.primary === name
     property bool stacked: width < 780
     implicitHeight: body.implicitHeight + 36
     radius: 12
     color: Theme.surface
-    border.color: drop.containsDrag ? card.accent : hover.hovered ? Theme.comment : Theme.selection
+    border.color: card.offline ? Theme.red : drop.containsDrag ? card.accent : hover.hovered ? Theme.comment : Theme.selection
     HoverHandler { id: hover; objectName: "providerHover_" + card.name }
     Rectangle {
         id: dragGhost; parent: Overlay.overlay; z: 1000

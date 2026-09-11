@@ -31,8 +31,8 @@ future Headroom releases.
    if that shortcut points at the standard legacy installation.
 3. Let the installer launch Headroom normally. If it was already open, quit and
    reopen it to use the newly installed version. Automatic import runs only when
-   the Headroom settings file does not exist; demo, screenshot, and explicit
-   `--config` sessions do not import legacy settings.
+   the Headroom settings file does not exist; screenshot and explicit `--config`
+   sessions do not import legacy settings.
 4. Check Connection settings, provider order, and **Start Headroom when I sign
    in**. Existing HTTP(S) connections stay selected. A fresh installation or an
    empty legacy API address uses Local mode. Choosing SSH is a separate setup
@@ -67,8 +67,8 @@ migration failures are shown in settings and remain retryable on a later launch.
 For existing Headroom installs, normal launch also repairs an enabled startup
 entry that points directly at an older installed version: it switches that exact
 Headroom command to the stable launcher for the same installation. This ensures
-future sign-ins follow updates. Disabled entries, preview sessions, and custom
-or unrelated startup commands are left alone.
+future sign-ins follow updates. Disabled entries, capture sessions, and custom or
+unrelated startup commands are left alone.
 
 ## Existing servers and credentials
 
