@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -215,6 +216,9 @@ func TestRunnerVerifyRequiresTerminalAppliedOutcome(t *testing.T) {
 
 func TestNativeCommitBindsPrivateStageToPairAndOperation(t *testing.T) {
 	root := t.TempDir()
+	if canonical, err := filepath.EvalSymlinks(root); err == nil {
+		root = canonical
+	}
 	config := fixtureConfig()
 	result := contract.UpdateResult{Status: "staged", Version: "2.1.0", Stage: &contract.StageResult{Version: "2.1.0", PackageRoot: "/fixture/stage/package"}}
 	operation := strings.Repeat("c", 48)

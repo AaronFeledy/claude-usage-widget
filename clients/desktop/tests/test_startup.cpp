@@ -238,13 +238,19 @@ private slots:
         // at. Start at login must still be switchable off instead of leaving a
         // stale plist that launches a missing binary at every login.
         QTemporaryDir dir; QVERIFY(dir.isValid());
+#ifdef Q_OS_WIN
+        const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom.exe"));
+        QVERIFY(QDir().mkpath(QFileInfo(executable).absolutePath()));
+        QVERIFY(QFile::copy(currentExecutable(), executable));
+#else
         const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom"));
         QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+#endif
         StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
                                StartupService::Platform::Mac);
         bool stored = false;
         service.setPreferenceWriter([&](bool enabled) { stored = enabled; return QString(); });
-        QVERIFY(service.setEnabled(true));
+        QVERIFY2(service.setEnabled(true), qPrintable(service.error()));
         QVERIFY(QFileInfo::exists(service.entryPath()));
 
         QVERIFY(QFile::remove(executable));

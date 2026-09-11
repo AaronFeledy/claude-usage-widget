@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -178,10 +179,14 @@ func privateJSONPath(installRoot, relativeName string) (string, string, error) {
 	if err = validateInstallTargets(root, ""); err != nil {
 		return "", "", err
 	}
-	if relativeName == "" || strings.ContainsAny(relativeName, "\\\r\n\x00") || filepath.IsAbs(relativeName) || path.Clean(relativeName) != relativeName || strings.HasPrefix(relativeName, "../") {
+	if relativeName == "" || strings.ContainsAny(relativeName, "\r\n\x00") || filepath.IsAbs(relativeName) || filepath.VolumeName(relativeName) != "" {
 		return "", "", errors.New("private JSON path is invalid")
 	}
-	localPath := filepath.Join(root, filepath.FromSlash(relativeName))
+	portableName := filepath.ToSlash(relativeName)
+	if runtime.GOOS != "windows" && strings.Contains(relativeName, "\\") || path.Clean(portableName) != portableName || strings.HasPrefix(portableName, "../") {
+		return "", "", errors.New("private JSON path is invalid")
+	}
+	localPath := filepath.Join(root, filepath.FromSlash(portableName))
 	if filepath.Dir(localPath) == root || filepath.Dir(filepath.Dir(localPath)) == root {
 		return root, localPath, nil
 	}
