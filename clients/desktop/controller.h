@@ -21,9 +21,9 @@ class Controller : public QObject {
     Q_PROPERTY(QVariantMap settings READ settings NOTIFY settingsChanged)
     Q_PROPERTY(QVariantList diagnostics READ diagnostics NOTIFY diagnosticsChanged)
 public:
-    explicit Controller(bool demo = false, const QString &configPath = {}, QObject *parent = nullptr,
+    explicit Controller(const QString &configPath = {}, QObject *parent = nullptr,
                         bool allowAutomaticMigration = true, ManagedServerOptions serverOptions = {},
-                        CredentialServiceOptions credentialOptions = {}, QByteArray demoPayload = {}, SshOptions sshOptions = {});
+                        CredentialServiceOptions credentialOptions = {}, SshOptions sshOptions = {}, bool startPolling = true);
     ~Controller() override;
     QVariantList providers() const;
     QVariantMap state() const;
@@ -44,11 +44,10 @@ public:
     void stopOwnedServer() { m_server.stopOwned(); }
     qint64 ownedServerProcessId() const { return m_server.ownedProcessId(); }
     QString ownedServerExecutablePath() const { return m_server.ownedExecutablePath(); }
-    Q_INVOKABLE void refresh();
+    Q_INVOKABLE virtual void refresh();
     Q_INVOKABLE QString warningColor(int severity) const;
     Q_INVOKABLE QString displayName(const QString &provider) const;
     Q_INVOKABLE QString saveSettings(QString mode, QString url, QString token, int interval, bool notifications, QString primary, bool forgetToken, QString sshUrl = {});
-    Q_INVOKABLE void preview(bool enabled);
     Q_INVOKABLE QVariantMap concern(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantList notches(const QString &provider, const QVariantMap &bucket) const;
     Q_INVOKABLE QVariantMap pacing(const QString &provider, const QVariantMap &bucket) const;
@@ -57,7 +56,6 @@ public:
     Q_INVOKABLE void copyText(const QString &text);
     QString primary() const;
     Q_INVOKABLE void moveProvider(const QString &source, const QString &target, bool after);
-    bool isDemo() const { return m_demo; }
 signals:
     void changed();
     void diagnosticsChanged();
@@ -65,6 +63,8 @@ signals:
     void settingsChanged();
     void notify(const QString &title, const QString &message);
     void usageAlert(const QString &title, const QString &message, int severity);
+protected:
+    void acceptSnapshot(const QVariantList &providers);
 private:
     void updateMeterStates();
     void fail(const QString &message, const QString &kind = "network");
@@ -80,8 +80,8 @@ private:
     int m_interval = 60, m_retryAttempt = 0;
     QString m_errorKind;
     QVariantList m_diagnostics;
-    bool m_notifications = true, m_demo = false, m_loading = false;
-    QByteArray m_demoPayload;
+    bool m_notifications = true, m_loading = false;
+    bool m_startPolling = true;
     bool m_waitingForUsageRetry = false;
     qint64 m_lastGood = 0;
     QVariantList m_providers;

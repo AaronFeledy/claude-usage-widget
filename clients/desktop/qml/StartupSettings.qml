@@ -33,7 +33,7 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true
         text: startupService.available ? "Opens in the system tray. This setting applies immediately."
-                                       : "Start at login is disabled in preview mode."
+                                       : "Start at login is disabled for this session."
         wrapMode: Text.WordWrap; color: Theme.muted; font.pixelSize: 11
     }
     Text {

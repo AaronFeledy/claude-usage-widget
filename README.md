@@ -152,8 +152,8 @@ newer stable release exists, it automatically downloads and fully verifies the
 matching package, then offers **Restart to apply**. Restart switches to a new
 immutable generation, checks native readiness, and rolls back on failure. A
 trusted installation with a missing server or Windows credential helper can
-stage an exact-version repair. Demo, preview, capture, explicit-config, source,
-and system-managed sessions do not contact the public release service. Source
+stage an exact-version repair. Capture and explicit-config sessions do not
+contact the public release service. Source
 installs show the local rebuild guide; system packages defer to their package
 manager.
 
@@ -189,7 +189,7 @@ allowance, low-capacity guards, and recovery thresholds. Reset times are known,
 but period starts are not, so five-hour session, seven-day weekly, Cursor
 30-day, and Grok calendar-month durations are labeled estimates. See the
 [desktop guide](clients/desktop/README.md) for tray behavior, warning thresholds,
-keyboard shortcuts, diagnostics, and preview mode.
+keyboard shortcuts, diagnostics, and disconnected behavior.
 
 ## Server and integrations
 

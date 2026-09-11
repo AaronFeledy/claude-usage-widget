@@ -87,6 +87,24 @@ private slots:
         QCOMPARE(int(model.kind), kind);
         QVERIFY(!TrayVisual::icon(model).isNull());
         QCOMPARE(model.tooltip.count('\n'), 1);
+        if (model.kind == TrayVisual::Kind::Offline) {
+            const auto disconnected = TrayVisual::icon(model).pixmap(64, 64).toImage();
+            QCOMPARE(disconnected.pixelColor(32, 32), QColor("#ff5555"));
+            for (const QString &name : {QStringLiteral("Claude"), QStringLiteral("Codex"), QStringLiteral("Cursor"), QStringLiteral("Grok"), QString()}) {
+                auto other = model; other.provider = name;
+                QCOMPARE(TrayVisual::icon(other).pixmap(64, 64).toImage(), disconnected);
+            }
+            auto retry = state; retry["loading"] = true; retry["lastGood"] = 0;
+            QCOMPARE(TrayVisual::build(retry, {}, "Claude", assess, now).kind, TrayVisual::Kind::Offline);
+            const auto recovered = TrayVisual::build(ready(), {provider("Claude", {meter("session", 40)})}, "Claude", assess, now);
+            QCOMPARE(recovered.kind, TrayVisual::Kind::Usage);
+            QVERIFY(TrayVisual::icon(recovered).pixmap(64, 64).toImage() != disconnected);
+            const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+            if (!capture.isEmpty()) {
+                QVERIFY(QDir().mkpath(capture));
+                QVERIFY(disconnected.save(QDir(capture).filePath(QStringLiteral("tray-offline.png"))));
+            }
+        }
     }
     void loadingWithoutGoodDataAndBackgroundRefresh() {
         auto state = ready(); state["loading"] = true; state["lastGood"] = 0;

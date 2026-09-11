@@ -7,10 +7,10 @@
 #include <QUrl>
 #include <utility>
 
-Controller::Controller(bool demo, const QString &configPath, QObject *parent, bool allowAutomaticMigration,
-                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions, QByteArray demoPayload, SshOptions sshOptions)
-    : QObject(parent), m_settingsService(configPath, allowAutomaticMigration && !demo),
-      m_demo(demo), m_demoPayload(std::move(demoPayload)), m_sshNetwork(sshOptions),
+Controller::Controller(const QString &configPath, QObject *parent, bool allowAutomaticMigration,
+                       ManagedServerOptions serverOptions, CredentialServiceOptions credentialOptions, SshOptions sshOptions, bool startPolling)
+    : QObject(parent), m_settingsService(configPath, allowAutomaticMigration),
+      m_startPolling(startPolling), m_sshNetwork(sshOptions),
       m_server(std::move(serverOptions), this),
       m_credentials([&] {
           if (credentialOptions.sshOptions.executablePath.isEmpty()) credentialOptions.sshOptions = sshOptions;
@@ -25,9 +25,9 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
     m_poll.setSingleShot(true);
     m_poll.setTimerType(Qt::PreciseTimer);
     connect(&m_poll, &QTimer::timeout, this, &Controller::refresh);
-    m_poll.start(m_interval * 1000);
+    if (m_startPolling) m_poll.start(m_interval * 1000);
     connect(&m_clock, &QTimer::timeout, this, [this] { updateMeterStates(); emit changed(); });
-    m_clock.start(30000);
+    if (m_startPolling) m_clock.start(30000);
     m_localNetwork.setProxy(QNetworkProxy::NoProxy);
     m_server.configure(m_mode, m_token);
     syncConnection();
@@ -50,10 +50,10 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
         m_credentials.consider(m_providers);
     });
     connect(&m_server, &ManagedServer::available, this, [this] {
-        if (!m_demo && m_mode == "local" && !m_loading && !m_waitingForUsageRetry) requestUsage();
+        if (m_mode == "local" && !m_loading && !m_waitingForUsageRetry) requestUsage();
     });
     connect(&m_server, &ManagedServer::unavailable, this, [this](const QString &message, const QString &kind) {
-        if (m_demo || m_mode != "local") return;
+        if (m_mode != "local") return;
         cancel(); m_poll.stop(); m_waitingForUsageRetry = false;
         m_status = "offline"; m_message = message; m_errorKind = kind;
         log("Local server", message); emit changed();
@@ -66,13 +66,13 @@ Controller::Controller(bool demo, const QString &configPath, QObject *parent, bo
         emit changed();
     });
     connect(&m_server, &ManagedServer::stateChanged, this, [this] {
-        if (m_demo || m_mode != "local" || m_server.isAvailable() || m_server.state() == "failed") return;
+        if (m_mode != "local" || m_server.isAvailable() || m_server.state() == "failed") return;
         if (m_loading) cancel();
         if (!m_waitingForUsageRetry) m_poll.stop();
         m_status = "connecting"; m_message = "Preparing the local usage server…"; m_errorKind.clear();
         emit changed();
     });
-    QTimer::singleShot(0, this, &Controller::refresh);
+    if (m_startPolling) QTimer::singleShot(0, this, &Controller::refresh);
 }
 
 QVariantMap Controller::settings() const {
@@ -81,26 +81,22 @@ QVariantMap Controller::settings() const {
 }
 QVariantMap Controller::state() const {
     const auto elapsed = m_lastGood ? QDateTime::currentSecsSinceEpoch() - m_lastGood : 0;
-    return {{"status", m_status}, {"message", m_message}, {"loading", m_loading}, {"demo", m_demo},
+    return {{"status", m_status}, {"message", m_message}, {"loading", m_loading},
         {"errorKind", m_errorKind}, {"retryAttempt", m_retryAttempt},
         {"retrySeconds", m_poll.isActive() ? (m_poll.remainingTime() + 999) / 1000 : 0}, {"lastGood", m_lastGood}, {"age", elapsed}, {"host", QUrl(backendUrl()).host()},
         {"updated", m_lastGood ? (elapsed < 60 ? "Just updated" : QString("Updated %1m ago").arg(elapsed / 60)) : "Awaiting connection"}};
 }
 QString Controller::backendUrl() const {
-    if (m_demo) return {};
     return m_mode == "local" ? m_server.connection().url.toString() : (m_mode == "ssh" ? m_sshUrl : m_url);
 }
 QString Controller::backendToken() const {
-    if (m_demo) return {};
     return m_mode == "local" ? QString::fromUtf8(m_server.connection().token) : (m_mode == "ssh" ? QString() : m_token);
 }
 QSslCertificate Controller::backendCertificate() const {
-    return !m_demo && m_mode == "local" ? m_server.connection().certificate : QSslCertificate();
+    return m_mode == "local" ? m_server.connection().certificate : QSslCertificate();
 }
 void Controller::syncConnection() {
-    if (m_demo) {
-        m_credentials.configure(QStringLiteral("remote"), {}, {}, QSslCertificate());
-    } else if (m_mode == QStringLiteral("local")) {
+    if (m_mode == QStringLiteral("local")) {
         const auto transport = m_server.connection();
         m_credentials.configure(m_mode, transport.url.toString(), QString::fromUtf8(transport.token), transport.certificate);
     } else {
@@ -131,24 +127,20 @@ QString Controller::diagnosticText() const {
     return lines.join('\n');
 }
 void Controller::resetRetry() {
-    m_retryAttempt = 0; m_errorKind.clear(); m_poll.start(m_interval * 1000);
+    m_retryAttempt = 0; m_errorKind.clear();
+    if (m_startPolling) m_poll.start(m_interval * 1000);
 }
 void Controller::fail(const QString &message, const QString &kind) {
     m_status = "offline"; m_message = message; m_loading = false; m_errorKind = kind;
     m_retryAttempt = qMin(m_retryAttempt + 1, 8);
     const int seconds = qMin(m_interval * (1 << m_retryAttempt), qMax(300, m_interval));
-    m_poll.start(seconds * 1000);
+    if (m_startPolling) m_poll.start(seconds * 1000);
     log("Connection", message + QString(" Retry in %1 seconds.").arg(seconds));
     emit changed();
 }
 void Controller::refresh() {
     if (m_loading) return;
     m_poll.stop();
-    if (m_demo) {
-        resetRetry();
-        Usage::parse(m_demoPayload.isEmpty() ? Usage::demo() : m_demoPayload, m_providers); m_status = "demo"; m_message.clear();
-        m_lastGood = QDateTime::currentSecsSinceEpoch(); updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed(); return;
-    }
     if (m_mode == "local") {
         m_waitingForUsageRetry = false;
         m_status = "connecting"; m_message = "Preparing the local usage server…"; m_errorKind.clear(); emit changed();
@@ -159,7 +151,7 @@ void Controller::refresh() {
     requestUsage();
 }
 void Controller::requestUsage() {
-    if (m_loading || m_demo) return;
+    if (m_loading) return;
     m_poll.stop();
     const QString baseUrl = backendUrl();
     const auto url = Usage::endpoint(baseUrl);
@@ -200,15 +192,18 @@ void Controller::requestUsage() {
         }
         QVariantList providers;
         if (body.size() > 1024 * 1024 || !Usage::parse(body, providers)) { fail("The backend returned an unexpected usage response.", "malformed"); return; }
-        resetRetry();
-        m_waitingForUsageRetry = false;
-        int failed = 0;
-        for (const auto &provider : providers) if (!provider.toMap()["is_success"].toBool()) ++failed;
-        log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
-        m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
-        updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
-        m_credentials.consider(m_providers);
+        acceptSnapshot(providers);
     });
+}
+void Controller::acceptSnapshot(const QVariantList &providers) {
+    resetRetry();
+    m_waitingForUsageRetry = false;
+    int failed = 0;
+    for (const auto &provider : providers) if (!provider.toMap()["is_success"].toBool()) ++failed;
+    log("Connection", QString("Snapshot received: %1 providers, %2 unavailable.").arg(providers.size()).arg(failed));
+    m_providers = providers; m_lastGood = QDateTime::currentSecsSinceEpoch(); m_status = "ready"; m_message.clear();
+    updateMeterStates(); emit providersChanged(); emit settingsChanged(); emit changed();
+    m_credentials.consider(m_providers);
 }
 Controller::~Controller() {
     // The network manager outlives every other member, so an in-flight reply must be
@@ -231,9 +226,8 @@ QString Controller::saveSettings(QString mode, QString url, QString token, int i
     if (!error.isEmpty()) return error;
     cancel();
     m_waitingForUsageRetry = false;
-    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl || m_demo) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
+    if (m_mode != mode || m_url != url || m_token != savedToken || m_sshUrl != retainedSshUrl) { m_providers.clear(); m_lastGood = 0; m_warningStates.clear(); m_concerns.clear(); }
     m_mode = mode; m_url = url; m_token = savedToken; m_sshUrl = retainedSshUrl; m_interval = interval; m_notifications = notifications; m_primary = primary;
-    m_demo = false;
     m_server.configure(m_mode, m_token);
     syncConnection();
     m_status = "connecting"; m_message.clear(); resetRetry();
@@ -268,27 +262,19 @@ void Controller::moveProvider(const QString &source, const QString &target, bool
     order.removeAll(source); order.insert(order.indexOf(target) + (after ? 1 : 0), source);
     for (const auto &name : m_order) if (!order.contains(name)) order.append(name);
     const auto previous = m_order; m_order = order;
-    if (!m_demo) {
-        const QString error = m_settingsService.saveOrder(order, order.first());
-        if (!error.isEmpty()) { m_order = previous; emit notify("Order could not be saved", error); return; }
-    }
+    const QString error = m_settingsService.saveOrder(order, order.first());
+    if (!error.isEmpty()) { m_order = previous; emit notify("Order could not be saved", error); return; }
     log("Settings", "Provider order changed.");
     m_primary = order.first(); emit settingsChanged(); emit providersChanged(); emit changed();
 }
 
-void Controller::preview(bool enabled) {
-    cancel(); resetRetry(); m_waitingForUsageRetry = false; m_demo = enabled;
-    m_server.configure(enabled ? QStringLiteral("remote") : m_mode, enabled ? QString() : m_token);
-    syncConnection();
-    log("App", enabled ? "Sample preview enabled." : "Live connection enabled."); m_providers.clear(); m_warningStates.clear(); m_concerns.clear(); m_lastGood = 0; m_message.clear(); m_status = "setup"; emit providersChanged(); emit changed(); refresh();
-}
 QVariantMap Controller::concern(const QString &provider, const QVariantMap &bucket) const {
     return m_concerns.value(qMakePair(provider, bucket["id"].toString()));
 }
 QString Controller::warningColor(int severity) const { return Usage::warningColor(Usage::WarningLevel(qBound(0, severity, 3))); }
 void Controller::updateMeterStates() {
     // Don't infer recovery from old usage readings during a connection outage.
-    if (m_status != "ready" && m_status != "demo") return;
+    if (m_status != "ready") return;
     const auto now = QDateTime::currentDateTimeUtc();
     QSet<MeterKey> present;
     QSet<QString> failedProviders;
@@ -325,7 +311,7 @@ void Controller::updateMeterStates() {
             m_concerns.insert(key, assessment);
             if (transition.changed)
                 log("Warning", "Meter transitioned from " + Usage::warningName(transition.from) + " to " + Usage::warningName(transition.to) + ".");
-            if (transition.notify && m_notifications && !m_demo)
+            if (transition.notify && m_notifications)
                 emit usageAlert(Usage::displayName(name) + " · " + Usage::warningName(transition.to),
                     QString("%1: %2% used, %3% remaining. %4")
                         .arg(bucket["label"].toString()).arg(bucket["utilization"].toDouble(), 0, 'f', 1)

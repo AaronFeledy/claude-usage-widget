@@ -1,3 +1,4 @@
+#include "usagefixture.h"
 #include "controller.h"
 #include "usage.h"
 #include "startup.h"
@@ -8,6 +9,7 @@
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlProperty>
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QQuickItem>
@@ -35,7 +37,7 @@ private slots:
             return dir.filePath(name);
         };
         CredentialServiceOptions credentialOptions; credentialOptions.enabled = false;
-        Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentialOptions);
+        ControllerFixture controller(dir.filePath("settings.json"));
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo;
         UpdateService updateService(false);
@@ -238,6 +240,40 @@ private slots:
             }
             QVERIFY(window->grabWindow().save(capture(width == 460 ? "headroom-compact.png" : "headroom-medium.png")));
         }
+        const auto connectedState = controller.state();
+        const auto retainedProviders = controller.providers();
+        auto disconnectedState = connectedState;
+        disconnectedState["status"] = "offline"; disconnectedState["errorKind"] = "network";
+        disconnectedState["message"] = "Cannot reach your backend.";
+        QVERIFY(window->setProperty("state", disconnectedState));
+        auto footerBorder = findItem(window->contentItem(), "footerBorder"); QVERIFY(footerBorder);
+        auto placeholder = findItem(window->contentItem(), "connectionPlaceholder"); QVERIFY(placeholder);
+        for (const auto &value : retainedProviders) {
+            auto card = findItem(window->contentItem(), "providerCard_" + value.toMap()["provider_name"].toString()); QVERIFY(card);
+            QTRY_COMPARE(QQmlProperty(card, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        }
+        QTRY_COMPARE(footerBorder->property("color").value<QColor>(), QColor("#ff5555"));
+        QCOMPARE(controller.providers(), retainedProviders);
+        auto firstCard = findItem(window->contentItem(), "providerCard_Codex"); QVERIFY(firstCard);
+        QTest::mouseMove(window, firstCard->mapToScene(QPointF(12, 12)).toPoint());
+        QTest::qWait(50);
+        QCOMPARE(QQmlProperty(firstCard, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        QVERIFY(window->grabWindow().save(capture("headroom-offline.png")));
+        disconnectedState["loading"] = true;
+        QVERIFY(window->setProperty("state", disconnectedState));
+        QCOMPARE(QQmlProperty(firstCard, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        QVERIFY(window->setProperty("state", connectedState));
+        QTRY_VERIFY(QQmlProperty(firstCard, "border.color").read().value<QColor>() != QColor("#ff5555"));
+        QTRY_COMPARE(footerBorder->property("color").value<QColor>(), QColor("#44475a"));
+        // A first connection failure has no cached cards, but its panel must still warn.
+        QVERIFY(window->setProperty("providers", QVariantList{}));
+        disconnectedState["lastGood"] = 0; disconnectedState["loading"] = false;
+        QVERIFY(window->setProperty("state", disconnectedState));
+        QTRY_VERIFY(placeholder->isVisible());
+        QCOMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        QVERIFY(window->grabWindow().save(capture("headroom-offline-empty.png")));
+        QVERIFY(window->setProperty("state", connectedState));
+        QTRY_COMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#44475a"));
     }
     void preservesAndDisplaysCustomInterval() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
@@ -246,7 +282,7 @@ private slots:
         QVERIFY(settings.write(savedSettings) > 0);
         settings.close();
         CredentialServiceOptions credentials; credentials.enabled = false;
-        Controller controller(true, settings.fileName(), nullptr, true, {}, credentials);
+        ControllerFixture controller(settings.fileName());
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);
         QQmlApplicationEngine engine;
@@ -290,7 +326,7 @@ private slots:
                 {"needs_reauth", false}, {"reauth_command", QJsonValue::Null}, {"buckets", buckets}});
         }
         CredentialServiceOptions credentials; credentials.enabled = false;
-        Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentials,
+        ControllerFixture controller(dir.filePath("settings.json"),
                               QJsonDocument(providers).toJson(QJsonDocument::Compact));
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);

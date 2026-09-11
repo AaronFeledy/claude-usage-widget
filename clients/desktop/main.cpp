@@ -35,7 +35,6 @@ int main(int argc, char **argv) {
     app.setDesktopFileName("headroom");
     app.setWindowIcon(QIcon(":/qt/qml/Headroom/headroom.svg"));
     QCommandLineParser parser; parser.setApplicationDescription("A little more room to think. Native AI usage monitor."); parser.addHelpOption(); parser.addVersionOption();
-    parser.addOption({"demo", "Show clearly labeled sample data without contacting a backend."});
     parser.addOption({"background", "Start in the system tray."});
     parser.addOption({"screenshot", "Save a screenshot, then exit (for visual verification).", "path"});
     parser.addOption({"config", "Use an alternate settings file.", "path"});
@@ -43,7 +42,7 @@ int main(int argc, char **argv) {
     parser.addOption({"headroom-update-restart", "Open the popup after a verified update restart."});
     parser.addOption({"headroom-installed-restart", "Open the popup after an installer restart."});
     parser.process(app);
-    const bool capture = parser.isSet("screenshot"), demo = parser.isSet("demo");
+    const bool capture = parser.isSet("screenshot");
     const bool isolated = parser.isSet("config");
     if (isolated && parser.value("config").trimmed().isEmpty()) {
         QMessageBox::critical(nullptr, "Headroom", "The --config option requires a settings file path.");
@@ -51,7 +50,7 @@ int main(int argc, char **argv) {
     }
     const QString settingsPath = isolated ? parser.value("config") : SettingsService::defaultPath();
     InstanceService instance(settingsPath);
-    if (!capture && !demo) {
+    if (!capture) {
         const auto result = instance.start();
         if (result == InstanceService::Result::Secondary) return 0;
         if (result == InstanceService::Result::Error) {
@@ -59,10 +58,10 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    Controller controller(demo, parser.value("config"), nullptr, !demo && !capture && !isolated);
-    StartupService startup({}, {}, !demo && !capture && !isolated);
+    Controller controller(parser.value("config"), nullptr, !capture && !isolated, {}, {}, {}, !capture);
+    StartupService startup({}, {}, !capture && !isolated);
     AppInfo appInfo;
-    UpdateService updateService(!demo && !capture && !isolated);
+    UpdateService updateService(!capture && !isolated);
     updateService.setOwnedProcessProvider([&controller] {
         return qMakePair(controller.ownedServerProcessId(), controller.ownedServerExecutablePath());
     });
@@ -75,11 +74,11 @@ int main(int argc, char **argv) {
         QTimer::singleShot(0, &app, &QCoreApplication::quit);
     });
     const auto syncServices = [&] {
-        startup.setAllowChanges(!controller.isDemo() && !capture && !isolated);
-        updateService.setPublicTrafficAllowed(!controller.isDemo());
-        appInfo.setBackend(controller.isDemo() ? QString() : controller.backendUrl(),
-                           controller.isDemo() ? QString() : controller.backendToken(),
-                           controller.isDemo() ? QSslCertificate() : controller.backendCertificate());
+        startup.setAllowChanges(!capture && !isolated);
+        updateService.setPublicTrafficAllowed(!capture && !isolated);
+        appInfo.setBackend(capture ? QString() : controller.backendUrl(),
+                           capture ? QString() : controller.backendToken(),
+                           capture ? QSslCertificate() : controller.backendCertificate());
     };
     QObject::connect(&controller, &Controller::settingsChanged, &app, syncServices);
     QObject::connect(&controller, &Controller::changed, &app, syncServices);
@@ -114,7 +113,7 @@ int main(int argc, char **argv) {
     TrayPopup popup(window, hasTray, &app);
     const auto show = [&popup] { popup.show(); };
     QObject::connect(&instance, &InstanceService::activationRequested, &app, show);
-    if (!demo && !capture && !isolated && controller.startupMigrationPending() &&
+    if (!capture && !isolated && controller.startupMigrationPending() &&
         startup.migrateLegacyRegistration(controller.startupPreference()))
         controller.completeStartupMigration();
     QSystemTrayIcon tray(TrayVisual::icon({}));
@@ -181,7 +180,7 @@ int main(int argc, char **argv) {
     }
     if (!parser.isSet("background") || !hasTray || parser.isSet("headroom-update-restart")
         || parser.isSet("headroom-installed-restart")) show();
-    if (!demo && !capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
+    if (!capture && !isolated) QTimer::singleShot(2500, &updateService, &UpdateService::startAutomaticCheck);
     if (capture) QTimer::singleShot(900, &app, [&] { app.exit(window->grabWindow().save(parser.value("screenshot")) ? 0 : 2); });
     return app.exec();
 }
