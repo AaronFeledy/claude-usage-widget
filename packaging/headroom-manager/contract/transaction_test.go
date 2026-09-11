@@ -455,15 +455,14 @@ func TestRecoveryStopsExactOrphanCandidateBeforeRollback(t *testing.T) {
 	if err = writeDurableJSON(filepath.Join(installRoot, StateName), candidate); err != nil {
 		t.Fatal(err)
 	}
-	appName := "headroom" + nativeExtension()
-	candidateExecutable := filepath.Join(installRoot, filepath.FromSlash(candidate.VersionPath), "bin", appName)
+	candidateExecutable := installedTestComponent(t, installRoot, candidate.VersionPath, false)
 	process := startFixturePath(t, candidateExecutable)
 	token, err := captureProcessToken(process.Process.Pid, candidateExecutable)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := ApplyRequest{Schema: SchemaVersion, Product: "Headroom", InstallRoot: installRoot, EntryPath: entry,
-		StageRecord: stageRecord(stage), CurrentPID: 1, CurrentExecutable: filepath.Join(installRoot, filepath.FromSlash(previous.VersionPath), "bin", appName),
+		StageRecord: stageRecord(stage), CurrentPID: 1, CurrentExecutable: installedTestComponent(t, installRoot, previous.VersionPath, false),
 		CurrentProcessToken: "recorded-prior-token", PriorStateSHA256: priorStateHash, AcknowledgementPath: filepath.Join(directory, "accepted.json"),
 		CommitPath: filepath.Join(directory, "commit.json"), ReadyPath: filepath.Join(directory, "ready.json"), Nonce: strings.Repeat("a", 48),
 		WaitTimeoutMS: 1000, CommitTimeoutMS: 1000, ReadyTimeoutMS: 1000}

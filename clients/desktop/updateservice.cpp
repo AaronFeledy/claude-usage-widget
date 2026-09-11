@@ -387,19 +387,13 @@ bool UpdateService::validateInstalledApplicationIdentity(const QJsonObject &resu
         || result.value(QStringLiteral("architecture")).toString() != nativeArchitecture
         || !result.value(QStringLiteral("trusted_identity")).toBool()) return false;
 #ifdef Q_OS_WIN
-    const QString appName = QStringLiteral("headroom.exe");
+    const QString relativeApplication = QStringLiteral("bin/headroom.exe");
 #elif defined(Q_OS_MACOS)
-    const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
+    const QString relativeApplication = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
 #else
-    const QString appName = QStringLiteral("headroom");
+    const QString relativeApplication = QStringLiteral("bin/headroom");
 #endif
-    const QString expectedApp = QDir(root).filePath(versionPath + QLatin1Char('/')
-#ifdef Q_OS_MACOS
-        + appName
-#else
-        + QStringLiteral("bin/") + appName
-#endif
-    );
+    const QString expectedApp = QDir(root).filePath(versionPath + QLatin1Char('/') + relativeApplication);
     const QString runningApplication = m_options.applicationPath.isEmpty() ? QCoreApplication::applicationFilePath() : m_options.applicationPath;
     return QFileInfo(runningApplication).canonicalFilePath() == QFileInfo(expectedApp).canonicalFilePath();
 }

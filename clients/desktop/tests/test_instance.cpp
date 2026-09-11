@@ -13,6 +13,8 @@
 
 #ifndef Q_OS_WIN
 #include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
 #endif
 
 class InstanceTest : public QObject {
@@ -29,6 +31,15 @@ private:
 #endif
         return path;
     }
+
+    QString runtimeTemplate() const
+    {
+#ifdef Q_OS_MACOS
+        return QStringLiteral("/tmp/hr-instance-XXXXXX");
+#else
+        return QDir(QDir::tempPath()).filePath(QStringLiteral("hr-instance-XXXXXX"));
+#endif
+    }
 private slots:
     void initTestCase()
     {
@@ -41,12 +52,14 @@ private slots:
     void init()
     {
 #ifndef Q_OS_WIN
-        runtime = std::make_unique<QTemporaryDir>(QDir(QDir::tempPath()).filePath("hr-instance-XXXXXX"));
+        runtime = std::make_unique<QTemporaryDir>(runtimeTemplate());
         QVERIFY(runtime->isValid());
         QVERIFY(QFile::setPermissions(runtime->path(), QFileDevice::ReadOwner |
                                                        QFileDevice::WriteOwner |
                                                        QFileDevice::ExeOwner));
-        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime->path()));
+        const QString canonicalRuntime = QFileInfo(runtime->path()).canonicalFilePath();
+        QVERIFY(!canonicalRuntime.isEmpty());
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(canonicalRuntime));
 #endif
     }
     void cleanup()
@@ -139,10 +152,30 @@ private slots:
         QCOMPARE(peer.exitCode(), 0);
     }
 
+#ifdef Q_OS_MACOS
+    void macDefaultRuntimeIsPrivateAndShort()
+    {
+        QTemporaryDir config;
+        const QByteArray configuredRuntime = qgetenv("XDG_RUNTIME_DIR");
+        qunsetenv("XDG_RUNTIME_DIR");
+        InstanceService instance(config.filePath(QStringLiteral("settings.json")));
+        if (configuredRuntime.isNull()) qunsetenv("XDG_RUNTIME_DIR");
+        else qputenv("XDG_RUNTIME_DIR", configuredRuntime);
+
+        const QString expectedRoot = QStringLiteral("/private/tmp/Headroom-")
+                                     + QString::number(geteuid()) + QLatin1Char('/');
+        QVERIFY2(instance.scopeName().startsWith(expectedRoot), qPrintable(instance.error()));
+        QVERIFY(QFile::encodeName(instance.scopeName()).size()
+                < qsizetype(sizeof(sockaddr_un::sun_path)));
+        QVERIFY2(instance.start() == InstanceService::Result::Primary,
+                 qPrintable(instance.error()));
+    }
+#endif
+
 #ifndef Q_OS_WIN
     void permissiveHeadroomDirectoryIsRejected()
     {
-        QTemporaryDir runtime;
+        QTemporaryDir runtime(runtimeTemplate());
         const QString headroom = runtime.filePath("Headroom");
         QVERIFY(QDir().mkdir(headroom));
         QVERIFY(QFile::setPermissions(headroom, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
@@ -150,7 +183,7 @@ private slots:
                                                    QFileDevice::ExeGroup | QFileDevice::ReadOther |
                                                    QFileDevice::ExeOther));
         const QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
-        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(QFileInfo(runtime.path()).canonicalFilePath()));
         InstanceService instance(runtime.filePath("settings.json"));
         if (previous.isNull()) qunsetenv("XDG_RUNTIME_DIR"); else qputenv("XDG_RUNTIME_DIR", previous);
         QCOMPARE(instance.start(), InstanceService::Result::Error);
@@ -160,7 +193,7 @@ private slots:
 
     void symlinkedHeadroomDirectoryDoesNotTouchTarget()
     {
-        QTemporaryDir runtime;
+        QTemporaryDir runtime(runtimeTemplate());
         QTemporaryDir external;
         const QString sentinelPath = external.filePath("sentinel");
         QFile sentinel(sentinelPath);
@@ -169,7 +202,7 @@ private slots:
         sentinel.close();
         QVERIFY(QFile::link(external.path(), runtime.filePath("Headroom")));
         const QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
-        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(QFileInfo(runtime.path()).canonicalFilePath()));
         InstanceService instance(runtime.filePath("settings.json"));
         if (previous.isNull()) qunsetenv("XDG_RUNTIME_DIR"); else qputenv("XDG_RUNTIME_DIR", previous);
         QCOMPARE(instance.start(), InstanceService::Result::Error);
@@ -190,9 +223,9 @@ private slots:
     void symlinkedEndpointDoesNotTouchTarget()
     {
         QFETCH(bool, lockEndpoint);
-        QTemporaryDir runtime;
+        QTemporaryDir runtime(runtimeTemplate());
         const QByteArray previous = qgetenv("XDG_RUNTIME_DIR");
-        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+        qputenv("XDG_RUNTIME_DIR", QFile::encodeName(QFileInfo(runtime.path()).canonicalFilePath()));
         InstanceService instance(runtime.filePath("settings.json"));
         if (previous.isNull()) qunsetenv("XDG_RUNTIME_DIR"); else qputenv("XDG_RUNTIME_DIR", previous);
         const QString sentinelPath = runtime.filePath("sentinel");

@@ -48,13 +48,12 @@ private slots:
         qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());
         qputenv("HEADROOM_PACKAGE_VERSION", "9.8.7");
         QCOMPARE(StartupService::defaultExecutablePath(), QCoreApplication::applicationFilePath());
-        const QString relativeApplication = QStringLiteral(
 #ifdef Q_OS_WIN
-            "bin/headroom.exe");
+        const QString relativeApplication = QStringLiteral("bin/headroom.exe");
 #elif defined(Q_OS_MACOS)
-            "Headroom.app/Contents/MacOS/headroom");
+        const QString relativeApplication = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
 #else
-            "bin/headroom");
+        const QString relativeApplication = QStringLiteral("bin/headroom");
 #endif
         const QString packaged = QDir(root).filePath(QStringLiteral("versions/9.8.7/") + relativeApplication);
         QVERIFY(writeFile(packaged, "fixture", true));

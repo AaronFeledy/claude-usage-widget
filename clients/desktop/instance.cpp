@@ -50,7 +50,7 @@ bool privateDirectory(const struct stat &status)
            (status.st_mode & 0777) == 0700;
 }
 
-bool openPrivateRuntime(const QString &path, ScopedFd &result)
+bool openSafeDirectory(const QString &path, bool requirePrivateFinal, ScopedFd &result)
 {
     if (path.isEmpty() || !QDir::isAbsolutePath(path)) return false;
 
@@ -68,8 +68,8 @@ bool openPrivateRuntime(const QString &path, ScopedFd &result)
         current.reset(next);
         struct stat status {};
         if (::fstat(current.get(), &status) != 0 ||
-            (index + 1 == components.size() ? !privateDirectory(status)
-                                             : !safeAncestor(status, systemUid))) {
+            (index + 1 == components.size() && requirePrivateFinal
+                 ? !privateDirectory(status) : !safeAncestor(status, systemUid))) {
             return false;
         }
     }
@@ -128,17 +128,48 @@ InstanceService::InstanceService(QString configPath, QObject *parent) : QObject(
     m_scopeName = "headroom-" + digest;
     m_pathsReady = true;
 #else
-    const QString runtimePath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    QString runtimePath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     ScopedFd runtime;
     ScopedFd headroom;
     ScopedFd scope;
-    if (!openPrivateRuntime(runtimePath, runtime) ||
-        !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom) ||
-        !openOrCreatePrivateDirectory(headroom.get(), digest.toLatin1(), scope)) {
+    QString runtimeRoot;
+#ifdef Q_OS_MACOS
+    const QString configuredRuntime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (configuredRuntime.isEmpty()) {
+        // Darwin's sockaddr_un path is only 104 bytes. Use the short canonical
+        // form of the system /tmp alias, then establish a private per-user root.
+        runtimePath = QFileInfo(QStringLiteral("/tmp")).canonicalFilePath();
+        if (runtimePath != QStringLiteral("/private/tmp")
+            || !openSafeDirectory(runtimePath, false, runtime)
+            || !openOrCreatePrivateDirectory(runtime.get(),
+                QByteArrayLiteral("Headroom-") + QByteArray::number(geteuid()), headroom)) {
+            m_error = "Headroom could not establish a private per-user runtime directory.";
+            return;
+        }
+        runtimeRoot = QDir(runtimePath).filePath(QStringLiteral("Headroom-")
+                                                + QString::number(geteuid()));
+    } else {
+        runtimePath = QDir::cleanPath(configuredRuntime);
+        if (!openSafeDirectory(runtimePath, true, runtime)
+            || !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom)) {
+            m_error = "Headroom could not establish a private per-user runtime directory.";
+            return;
+        }
+        runtimeRoot = QDir(runtimePath).filePath(QStringLiteral("Headroom"));
+    }
+#else
+    if (!openSafeDirectory(runtimePath, true, runtime)
+        || !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom)) {
         m_error = "Headroom could not establish a private per-user runtime directory.";
         return;
     }
-    const QString lockDirectory = QDir(runtimePath).filePath("Headroom/" + digest);
+    runtimeRoot = QDir(runtimePath).filePath(QStringLiteral("Headroom"));
+#endif
+    if (!openOrCreatePrivateDirectory(headroom.get(), digest.toLatin1(), scope)) {
+        m_error = "Headroom could not establish a private per-user runtime directory.";
+        return;
+    }
+    const QString lockDirectory = QDir(runtimeRoot).filePath(digest);
     m_lockPath = QDir(lockDirectory).filePath("lock");
     m_scopeName = QDir(lockDirectory).filePath("activate");
     if (QFile::encodeName(m_scopeName).size() >= qsizetype(sizeof(sockaddr_un::sun_path))) {

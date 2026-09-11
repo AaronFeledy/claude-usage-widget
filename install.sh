@@ -183,7 +183,7 @@ expected_size=$(printf '%s\n' "$metadata" | sed -n '3p')
 expected_hash=$(printf '%s\n' "$metadata" | sed -n '4p')
 archive=$private_root/$asset_name
 if [ -n "$package_path" ]; then
-  [ "$(wc -c < "$package_path")" = "$expected_size" ] || { echo 'package size does not match release manifest' >&2; exit 1; }
+  [ "$(wc -c < "$package_path")" -eq "$expected_size" ] || { echo 'package size does not match release manifest' >&2; exit 1; }
   cp -- "$package_path" "$archive"
 else
   package_url=$(python3 - "$github_json" "$asset_name" <<'PY'
@@ -195,7 +195,7 @@ PY
 )
   download "$package_url" "$archive" "$expected_size"
 fi
-[ "$(wc -c < "$archive")" = "$expected_size" ] || { echo 'package size does not match release manifest' >&2; exit 1; }
+[ "$(wc -c < "$archive")" -eq "$expected_size" ] || { echo 'package size does not match release manifest' >&2; exit 1; }
 actual_hash=$(python3 - "$archive" <<'PY'
 import hashlib, sys
 with open(sys.argv[1], 'rb') as source:

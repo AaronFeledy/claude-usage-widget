@@ -54,24 +54,19 @@ private slots:
         QVERIFY(QDir().mkpath(rootAlias));
         const QString root = QFileInfo(rootAlias).canonicalFilePath();
 #ifdef Q_OS_WIN
-        const QString appName = QStringLiteral("headroom.exe");
+        const QString relativeApplication = QStringLiteral("bin/headroom.exe");
         const QString internalName = QStringLiteral("headroom.exe");
         const QString external = m_dir.filePath(QStringLiteral("custom entry.exe"));
 #elif defined(Q_OS_MACOS)
-        const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
+        const QString relativeApplication = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
         const QString internalName = QStringLiteral("headroom-launcher");
         const QString external = m_dir.filePath(QStringLiteral("custom entry"));
 #else
-        const QString appName = QStringLiteral("headroom");
+        const QString relativeApplication = QStringLiteral("bin/headroom");
         const QString internalName = QStringLiteral("headroom-launcher");
         const QString external = m_dir.filePath(QStringLiteral("custom entry"));
 #endif
-        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/")
-#ifdef Q_OS_MACOS
-            + appName);
-#else
-            + QStringLiteral("bin/") + appName);
-#endif
+        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/") + relativeApplication);
         const QString internal = QDir(root).filePath(internalName);
         QVERIFY(QDir().mkpath(QFileInfo(application).absolutePath()));
         auto write = [](const QString &path, const QByteArray &data) { QFile file(path); return file.open(QIODevice::WriteOnly) && file.write(data) == data.size(); };
@@ -88,21 +83,16 @@ private slots:
         QVERIFY(QDir().mkpath(rootAlias));
         const QString root = QFileInfo(rootAlias).canonicalFilePath();
 #ifdef Q_OS_WIN
-        const QString appName = QStringLiteral("headroom.exe");
+        const QString relativeApplication = QStringLiteral("bin/headroom.exe");
         const QString external = m_dir.filePath(QStringLiteral("damaged entry.exe"));
 #elif defined(Q_OS_MACOS)
-        const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
+        const QString relativeApplication = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
         const QString external = m_dir.filePath(QStringLiteral("damaged entry"));
 #else
-        const QString appName = QStringLiteral("headroom");
+        const QString relativeApplication = QStringLiteral("bin/headroom");
         const QString external = m_dir.filePath(QStringLiteral("damaged entry"));
 #endif
-        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/")
-#ifdef Q_OS_MACOS
-            + appName);
-#else
-            + QStringLiteral("bin/") + appName);
-#endif
+        const QString application = QDir(root).filePath(QStringLiteral("versions/0.1.0/") + relativeApplication);
         QVERIFY(QDir().mkpath(QFileInfo(application).absolutePath()));
         QFile app(application); QVERIFY(app.open(QIODevice::WriteOnly)); QVERIFY(app.write("application") > 0); app.close();
         auto value = options(); value.installRoot = QDir::toNativeSeparators(root); value.launcherPath = QDir::toNativeSeparators(external);

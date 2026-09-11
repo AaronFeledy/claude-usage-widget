@@ -153,6 +153,8 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	runtimePath := "plugins/platforms/libqoffscreen.so"
 	if runtime.GOOS == "windows" {
 		runtimePath = "plugins/platforms/qoffscreen.dll"
+	} else if runtime.GOOS == "darwin" {
+		runtimePath = "Headroom.app/Contents/PlugIns/platforms/libqoffscreen.dylib"
 	}
 	runtimeFile := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), filepath.FromSlash(runtimePath))
 	if err = os.WriteFile(runtimeFile, []byte("corrupt runtime"), 0o644); err != nil {
@@ -727,6 +729,9 @@ func writeMutatedTar(t *testing.T, root, output string, extra *tar.Header, extra
 
 func copyFixture(t *testing.T, source, destination string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	src, err := os.Open(source)
 	if err != nil {
 		t.Fatal(err)
