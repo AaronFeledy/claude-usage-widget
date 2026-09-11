@@ -179,6 +179,8 @@ func runDashboard(ctx context.Context, options Options) error {
 		return errors.New("--url and --ssh cannot be combined")
 	}
 	terminal := options.IsTerminal(options.Stdout) && envValue(options.Env, "TERM") != "dumb"
+	terminal, restoreTerminal := prepareDashboardTerminal(options.Stdout, terminal)
+	defer restoreTerminal()
 	color := terminal && !flags.plain && !envPresent(options.Env, "NO_COLOR")
 	watch := flags.watch || (!flags.once && !flags.plain && !flags.json && terminal)
 	warnings := make(map[string]warningState)
