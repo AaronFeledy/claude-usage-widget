@@ -84,6 +84,10 @@ def main():
                 if time.monotonic() >= deadline:
                     raise AssertionError("provider-disabled server did not become ready")
                 time.sleep(0.1)
+            receipt = json.loads((install / "runtime/managed-serve.json").read_text())
+            assert receipt["pid"] == server.pid and receipt["ready"] is True
+            assert not receipt.get("launch_token")
+            assert Path(receipt["executable"]).resolve() == runtime.resolve()
             assert json.loads(run("--once", "--json", "--url", address)) == []
             assert "Headroom" in run("--once", "--plain", "--url", address)
         finally:
