@@ -320,7 +320,10 @@ func TestTransactionalApplyRollsBackAndReopensOnReadinessFailure(t *testing.T) {
 	_ = current.Process.Kill()
 	_, _ = current.Process.Wait()
 	rollbackReady := filepath.Join(prepared.TransactionDirectory, "rollback-ready.json")
-	deadline := time.Now().Add(2 * time.Second)
+	// This observer covers package verification, file replacement, and rollback
+	// as well as the deliberate readiness timeout. Loaded Windows runners can
+	// take more than two seconds before the rollback process is even launched.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if _, statErr := os.Stat(rollbackReady); statErr == nil {
 			break
