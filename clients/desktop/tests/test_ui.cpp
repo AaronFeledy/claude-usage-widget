@@ -61,7 +61,7 @@ private slots:
         auto marker = findItem(window->contentItem(), "paceMarker_Claude_session");
         auto label = findItem(window->contentItem(), "paceLabel_Claude_session");
         QVERIFY(marker); QVERIFY(marker->isVisible()); QVERIFY(label);
-        QCOMPARE(marker->property("color").value<QColor>(), QColor("#8be9fd"));
+        QCOMPARE(marker->property("color").value<QColor>(), QColor("#f8f8f2"));
         QVERIFY(label->property("text").toString().contains("under pace"));
         const double markerFraction = (marker->x() + marker->width() / 2) / marker->parentItem()->width();
         QVERIFY(std::abs(markerFraction - (1.0 - 8400.0 / 18000)) < 0.01);
@@ -102,7 +102,7 @@ private slots:
         if (QGuiApplication::platformName() == "offscreen") QTRY_VERIFY(hover->property("hovered").toBool());
         QCOMPARE(claudeCard->property("color").value<QColor>(), restingColor);
         QVERIFY(track->property("color").value<QColor>() != restingColor);
-        QCOMPARE(fill->property("color").value<QColor>(), QColor("#bd93f9"));
+        QCOMPARE(fill->property("color").value<QColor>(), QColor("#8be9fd"));
         QVERIFY(window->grabWindow().save(capture("headroom-hover.png")));
         auto meter = findItem(window->contentItem(), "meter_Claude_session"); QVERIFY(meter);
         const auto originalBucket = meter->property("bucket").toMap();
@@ -112,7 +112,7 @@ private slots:
             bucket["resets_at"] = QDateTime::currentDateTimeUtc().addSecs(9000).toString(Qt::ISODate);
             QVERIFY(meter->setProperty("bucket", bucket));
             QVERIFY(meter->setProperty("concern", Usage::concern("Claude", bucket)));
-            const QColor expected(used >= 80 ? "#ff5555" : used >= 68 ? "#ffb86c" : used >= 60 ? "#f1fa8c" : "#bd93f9");
+            const QColor expected(used >= 80 ? "#ff5555" : used >= 68 ? "#ffb86c" : used >= 60 ? "#f1fa8c" : "#8be9fd");
             QTRY_COMPARE(fill->property("color").value<QColor>(), expected);
         }
         QTRY_COMPARE(fill->width(), track->width());
@@ -221,7 +221,7 @@ private slots:
                     const auto bucketId = bucket.toMap()["id"].toString();
                     auto meter = findItem(window->contentItem(), "meter_" + name + "_" + bucketId);
                     QVERIFY(meter);
-                    QCOMPARE(meter->property("accent").value<QColor>(), QColor("#bd93f9"));
+                    QCOMPARE(meter->property("accent").value<QColor>(), QColor("#8be9fd"));
                     if (firstMeter) QCOMPARE(meter->width(), meter->parentItem()->width());
                     firstMeter = false;
                     const auto origin = meter->mapToItem(row, QPointF(0, 0));

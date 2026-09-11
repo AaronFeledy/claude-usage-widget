@@ -116,11 +116,11 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
     p.scale(size / 64.0, size / 64.0);
     const bool meter = isMeter(model.kind);
     const QColor foreground("#f8f8f2"), track("#44475a"), background("#282a36");
-    p.setPen(QPen(track, 7, Qt::SolidLine, Qt::RoundCap));
-    const QRectF ring(5, 5, 54, 54);
+    p.setPen(QPen(track, 8, Qt::SolidLine, Qt::RoundCap));
+    const QRectF ring(5.5, 5.5, 53, 53);
     p.drawEllipse(ring);
     if (meter) {
-        p.setPen(QPen(QColor(Usage::warningColor(model.level)), 7, Qt::SolidLine, Qt::RoundCap));
+        p.setPen(QPen(QColor(Usage::warningColor(model.level)), 8, Qt::SolidLine, Qt::RoundCap));
         // Zero means an empty meter; don't invent visible usage for an empty allowance.
         if (model.used > 0) p.drawArc(ring, 90 * 16, -qRound(qBound(0.0, model.used, 100.0) / 100 * 5760));
         if (model.expected >= 0) {
@@ -128,18 +128,18 @@ QPixmap renderIcon(const TrayVisual::Model &model, int size) {
             const QPointF unit(std::cos(angle), std::sin(angle));
             const QPointF center(32, 32);
             p.setPen(QPen(background, 4)); p.drawLine(center + unit * 22, center + unit * 30);
-            p.setPen(QPen(QColor("#8be9fd"), 3)); p.drawLine(center + unit * 23, center + unit * 30);
+            p.setPen(QPen(foreground, 3)); p.drawLine(center + unit * 23, center + unit * 30);
         }
     }
     const QPixmap provider = providerPixmap(model.provider);
     if (!provider.isNull()) {
-        const QSizeF logoSize = QSizeF(provider.size()).scaled(QSizeF(36, 36), Qt::KeepAspectRatio);
+        const QSizeF logoSize = QSizeF(provider.size()).scaled(QSizeF(32, 32), Qt::KeepAspectRatio);
         const QRectF logo(QPointF(32 - logoSize.width() / 2, 32 - logoSize.height() / 2), logoSize);
         p.drawPixmap(logo, provider, QRectF(provider.rect()));
     } else {
         p.setPen(foreground);
-        QFont font("sans-serif"); font.setPixelSize(30); font.setWeight(QFont::DemiBold); p.setFont(font);
-        p.drawText(QRect(14, 14, 36, 36), Qt::AlignCenter, "H");
+        QFont font("sans-serif"); font.setPixelSize(27); font.setWeight(QFont::DemiBold); p.setFont(font);
+        p.drawText(QRect(16, 16, 32, 32), Qt::AlignCenter, "H");
     }
     p.setPen(foreground); p.setFont(QFont("sans-serif", 10, QFont::DemiBold));
     if (!meter) {
