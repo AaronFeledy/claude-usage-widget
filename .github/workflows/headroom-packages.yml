@@ -709,6 +709,7 @@ jobs:
           module = root / 'packaging/headroom-manager'
           env = os.environ | {'GOARCH': os.environ['CLI_GOARCH'], 'CGO_ENABLED': '0'}
           subprocess.run(['go', 'test', './cli', './cmd/headroom', './cmd/headroom-manager'], cwd=module, env=env, check=True)
+          subprocess.run(['go', 'test', '-run', '^TestPrivate', './contract'], cwd=module, env=env, check=True)
           binaries = {}
           for name, command, flags in (
               ('headroom-runtime', './cmd/headroom', f'-X main.version={version}'),

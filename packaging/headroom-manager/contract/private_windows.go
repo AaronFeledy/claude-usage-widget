@@ -5,9 +5,34 @@ package contract
 import (
 	"errors"
 	"os"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+var privateAdvapi32 = windows.NewLazySystemDLL("advapi32.dll")
+var privateGetAce = privateAdvapi32.NewProc("GetAce")
+
+type privateACEHeader struct {
+	Type, Flags byte
+	Size        uint16
+}
+
+type privateAccessAllowedACE struct {
+	Header   privateACEHeader
+	Mask     uint32
+	SidStart uint32
+}
+
+type privateACLHeader struct {
+	Revision  byte
+	Reserved  byte
+	Size      uint16
+	Count     uint16
+	Reserved2 uint16
+}
+
+const privateFileAllAccess = 0x001f01ff
 
 func securePrivateDirectory(path string, configure bool) error {
 	return validatePrivateWindows(path, true, configure)
@@ -50,14 +75,25 @@ func validatePrivateWindows(path string, directory, setACL bool) error {
 		return err
 	}
 	actualOwner, _, err := descriptor.Owner()
-	if err != nil || actualOwner == nil || actualOwner.String() != owner {
+	expectedOwner, sidErr := windows.StringToSid(owner)
+	if err != nil || sidErr != nil || actualOwner == nil || !actualOwner.Equals(expectedOwner) {
 		return errors.New("private storage owner is unsafe")
 	}
-	sddl := descriptor.String()
-	// Windows can retain the informational auto-inheritance flags even after
-	// replacing and protecting the DACL. They do not grant access. Require the
-	// protected bit and exactly one full-control ACE for the current owner.
-	if !privateWindowsDACLIsSafe(sddl, owner) {
+	control, _, controlErr := descriptor.Control()
+	dacl, _, daclErr := descriptor.DACL()
+	if controlErr != nil || daclErr != nil || control&windows.SE_DACL_PROTECTED == 0 || dacl == nil || (*privateACLHeader)(unsafe.Pointer(dacl)).Count != 1 {
+		return errors.New("private storage ACL is unsafe")
+	}
+	var acePointer unsafe.Pointer
+	ok, _, _ := privateGetAce.Call(uintptr(unsafe.Pointer(dacl)), 0, uintptr(unsafe.Pointer(&acePointer)))
+	if ok == 0 || acePointer == nil {
+		return errors.New("private storage ACL is unsafe")
+	}
+	ace := (*privateAccessAllowedACE)(acePointer)
+	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+	sidOffset := int(unsafe.Offsetof(ace.SidStart))
+	if ace.Header.Type != 0 || ace.Header.Flags != 0 || int(ace.Header.Size) < sidOffset+8 || ace.Mask != privateFileAllAccess || !sid.IsValid() ||
+		sidOffset+sid.Len() != int(ace.Header.Size) || !sid.Equals(expectedOwner) {
 		return errors.New("private storage ACL is unsafe")
 	}
 	return nil
