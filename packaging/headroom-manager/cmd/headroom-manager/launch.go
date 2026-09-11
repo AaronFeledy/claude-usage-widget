@@ -18,14 +18,17 @@ func launchRole(role string, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if err = contract.RecoverInstall(root); err != nil {
-		return err
-	}
-	executable, inspection, err := contract.ActiveExecutableForRole(root, role)
+	launcher, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	launcher, err := os.Executable()
+	supervisedHandoff := role == contract.RoleCLI && contract.AuthorizeSupervisedLauncherHandoff(root, launcher, os.Getpid(), arguments) == nil
+	if !supervisedHandoff {
+		if err = contract.RecoverInstall(root); err != nil {
+			return err
+		}
+	}
+	executable, inspection, err := contract.ActiveExecutableForRole(root, role)
 	if err != nil {
 		return err
 	}

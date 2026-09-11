@@ -86,6 +86,38 @@ func AcceptSupervisedManagedServiceRestart(installRoot string, arguments []strin
 	return record, nil
 }
 
+// AuthorizeSupervisedLauncherHandoff permits only the fixed per-user service's
+// public CLI launcher to reach the already-verified candidate while the update
+// manager holds the recovery lock. It grants no manager or recovery operation.
+func AuthorizeSupervisedLauncherHandoff(installRoot, launcher string, pid int, arguments []string) error {
+	root, err := NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return err
+	}
+	if len(arguments) == 0 || arguments[0] != "serve" || validateServiceArguments(arguments[1:]) != nil {
+		return errors.New("supervised launcher handoff arguments are invalid")
+	}
+	launcher, err = normalizeAbsolutePath(launcher, "supervised service launcher")
+	if err != nil || pid <= 0 {
+		return errors.New("supervised launcher handoff identity is invalid")
+	}
+	expectedLauncher, _, launcherErr := ActiveExecutableForRole(root, RolePublicLauncher)
+	if launcherErr != nil || !samePath(expectedLauncher, launcher) || validateManagedServiceSupervisor(managedSystemdUser, pid) != nil {
+		return errors.New("supervised launcher is not the fixed Headroom user service")
+	}
+	var intent supervisedRestartRecord
+	if err = ReadPrivateJSON(root, filepath.Join("runtime", supervisedRestartRecordName), &intent); err != nil {
+		return err
+	}
+	owner, ownerErr := currentOwnerIdentity()
+	expectedCLI, inspection, cliErr := ActiveExecutableForRole(root, RoleCLI)
+	if ownerErr != nil || cliErr != nil || !inspection.TrustedIdentity || !inspection.Complete || intent.Schema != SchemaVersion || intent.Product != "Headroom" ||
+		intent.InstallRoot != root || intent.Owner != owner || !samePath(intent.Executable, expectedCLI) || !slices.Equal(intent.Arguments, arguments[1:]) {
+		return errors.New("supervised launcher restart intent is invalid")
+	}
+	return nil
+}
+
 type ManagedServiceRecord struct {
 	Schema             int      `json:"schema"`
 	Product            string   `json:"product"`

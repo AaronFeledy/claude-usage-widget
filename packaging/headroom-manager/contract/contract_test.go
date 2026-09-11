@@ -653,7 +653,7 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 		}
 	}
 	archive := filepath.Join(parent, asset)
-	if err = WriteArchive(root, archive); err != nil {
+	if err = writeArchiveWithCompression(root, archive, gzip.BestSpeed); err != nil {
 		t.Fatal(err)
 	}
 	return archive
