@@ -405,14 +405,17 @@ jobs:
       - uses: actions/download-artifact@v8
         with: {name: qt-attribution-sources-6.8.3, path: '${{ runner.temp }}/qt-sources'}
       - name: Build native macOS desktop
+        id: mac-desktop
         run: |
           cmake -S clients/desktop -B "$RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_VERSION="$HEADROOM_PACKAGE_VERSION" -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }}
           cmake --build "$RUNNER_TEMP/desktop-package" --parallel
       - name: Build and test native macOS server
+        id: mac-server
         timeout-minutes: 10
         run: |
           (cd server && go vet ./... && go test -race -skip 'CodexResetEndpoint|ConsumeResetCredit' ./... && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
       - name: Test native macOS installs and update transactions
+        id: mac-manager
         timeout-minutes: 10
         working-directory: packaging/headroom-manager
         run: |
@@ -425,20 +428,27 @@ jobs:
         timeout-minutes: 2
         run: |
           HEADROOM_REAL_SERVER_FIXTURE="$RUNNER_TEMP/usage-server" QT_QPA_PLATFORM=offscreen "$RUNNER_TEMP/desktop-package/headroom-managedserver-tests" stagedRealServerSmoke
+      # Independent checks continue after a test failure to preserve native
+      # diagnostics; any failed step still fails the package/release gate.
       - name: Test native macOS desktop
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' }}
         timeout-minutes: 15
         run: |
           python3 packaging/tests/macos_tls_fixture_ci.py ctest --test-dir "$RUNNER_TEMP/desktop-package" -E '^headroom-reset-prohibited-tests$' --timeout 180 --output-on-failure
       - name: Exercise menus and focus using native Cocoa
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' }}
         timeout-minutes: 2
         run: '"$RUNNER_TEMP/desktop-package/headroom-ui-tests" dragReordersAndDrivesTray preservesAndDisplaysCustomInterval'
       - name: Assemble and ad-hoc sign macOS package
+        id: mac-package
+        if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' && steps.mac-server.outcome == 'success' && steps.mac-manager.outcome == 'success' }}
         run: >-
           python3 packaging/package-macos.py "$HEADROOM_PACKAGE_VERSION" "${{ matrix.architecture }}"
           "$RUNNER_TEMP/desktop-package" "$RUNNER_TEMP/package-work" "$RUNNER_TEMP/package-output"
           "$RUNNER_TEMP/usage-server" "$RUNNER_TEMP/headroom" "$RUNNER_TEMP/headroom-package"
           "$QT_ROOT_DIR" "$RUNNER_TEMP/qt-sources"
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.mac-package.outcome == 'success' }}
         with:
           name: headroom-macos-${{ matrix.architecture }}-package
           path: ${{ runner.temp }}/package-output/Headroom-v${{ env.HEADROOM_PACKAGE_VERSION }}-macos-${{ matrix.architecture }}.tar.gz
@@ -446,6 +456,7 @@ jobs:
 
   smoke-macos-package:
     needs: [package-macos, standalone-server-assets]
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
