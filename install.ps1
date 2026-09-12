@@ -171,10 +171,30 @@ try {
         & $managerPath install --archive $localArchive --install-root $InstallRoot --entry-path $EntryPath --cli-entry-path $CLIEntryPath --version $manifest.version --platform windows --arch $contractArchitecture --asset $assetName
         if ($LASTEXITCODE -ne 0) { throw "Headroom package manager failed with exit code $LASTEXITCODE." }
         $cliDirectory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($CLIEntryPath))
-        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        # [Environment]::GetEnvironmentVariable expands a REG_EXPAND_SZ Path and
+        # [Environment]::SetEnvironmentVariable rewrites it as REG_SZ, which would
+        # permanently freeze entries such as %USERPROFILE%\bin. Read and write the
+        # registry value directly so its unexpanded text and kind both survive.
+        $environmentKey = 'HKCU:\Environment'
+        $environmentItem = Get-Item -LiteralPath $environmentKey
+        $userPath = $environmentItem.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+        $pathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        if ($environmentItem.GetValueNames() -contains 'Path') {
+            $existingKind = $environmentItem.GetValueKind('Path')
+            if ($existingKind -eq [Microsoft.Win32.RegistryValueKind]::String) { $pathKind = $existingKind }
+        }
         $pathEntries = @($userPath -split ';' | Where-Object { $_ })
-        if (-not ($pathEntries | Where-Object { $_.TrimEnd('\') -ieq $cliDirectory.TrimEnd('\') })) {
-            [Environment]::SetEnvironmentVariable('Path', (($pathEntries + $cliDirectory) -join ';'), 'User')
+        $alreadyPresent = $pathEntries | Where-Object {
+            [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -ieq $cliDirectory.TrimEnd('\')
+        }
+        if (-not $alreadyPresent) {
+            Set-ItemProperty -LiteralPath $environmentKey -Name 'Path' -Value (($pathEntries + $cliDirectory) -join ';') -Type $pathKind
+            # A direct registry write does not notify the shell. Round-tripping a
+            # throwaway user variable makes .NET broadcast WM_SETTINGCHANGE, so new
+            # terminals inherit the updated Path.
+            $notifyName = 'HeadroomPathRefresh' + [guid]::NewGuid().ToString('N')
+            [Environment]::SetEnvironmentVariable($notifyName, 'headroom', 'User')
+            [Environment]::SetEnvironmentVariable($notifyName, $null, 'User')
         }
         if ($CLI) {
             Write-Host "Installed Headroom $($manifest.version). Open a new terminal and run headroom, headroom serve, or headroom update."
