@@ -974,3 +974,37 @@ func startFixturePath(t *testing.T, executable string) *exec.Cmd {
 	}
 	return command
 }
+
+// A CLI-only install passes the same path as the application entry and the CLI
+// entry. applyBootstrapWithCLI still replaces the usage-server compatibility
+// entry in that shape, so the rollback target list has to cover it too.
+func TestBootstrapRollbackCoversSharedCLIEntryServerCompatibilityPath(t *testing.T) {
+	if runtimeWindows() {
+		t.Skip("the usage-server compatibility entry exists only on Linux and macOS")
+	}
+	root := t.TempDir()
+	entry := filepath.Join(root, "bin", "headroom")
+	targets := stableBootstrapTargetsWithCLI(root, entry, entry)
+	server := filepath.Join(filepath.Dir(entry), "usage-server")
+	for _, wanted := range []string{entry, entry + ".root", server, server + ".root"} {
+		found := false
+		for _, target := range targets {
+			if samePath(target, wanted) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("rollback targets omitted %q, which apply replaces: %v", wanted, targets)
+		}
+	}
+	counts := map[string]int{}
+	for _, target := range targets {
+		counts[filepath.Clean(target)]++
+	}
+	for target, count := range counts {
+		if count != 1 {
+			t.Fatalf("rollback target %q appears %d times, want 1", target, count)
+		}
+	}
+}

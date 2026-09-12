@@ -1538,15 +1538,23 @@ func stableBootstrapTargetsWithCLI(root, entry, cliEntry string) []string {
 	if cliEntry == "" {
 		return values
 	}
-	for _, existing := range values {
-		if samePath(existing, cliEntry) {
-			return values
+	// A CLI-only install shares one path between the application entry and the
+	// CLI entry. The server compatibility entry is still replaced on apply, so
+	// it must stay in this list or a rollback would leave it on the new version.
+	add := func(candidate string) {
+		for _, existing := range values {
+			if samePath(existing, candidate) {
+				return
+			}
 		}
+		values = append(values, candidate)
 	}
-	values = append(values, cliEntry, cliEntry+".root")
+	add(cliEntry)
+	add(cliEntry + ".root")
 	if !runtimeWindows() {
 		serverEntry := filepath.Join(filepath.Dir(cliEntry), "usage-server")
-		values = append(values, serverEntry, serverEntry+".root")
+		add(serverEntry)
+		add(serverEntry + ".root")
 	}
 	return values
 }
