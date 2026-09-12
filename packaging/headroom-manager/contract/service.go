@@ -258,7 +258,9 @@ func ReadManagedService(installRoot string) (ManagedServiceRecord, error) {
 	}
 	token, tokenErr := captureProcessToken(record.PID, record.Executable)
 	if tokenErr != nil && processGone(record.PID) {
-		_ = os.Remove(filepath.Join(root, "runtime", ManagedServiceRecordName))
+		// This read path holds no install lock, so it must not delete the
+		// receipt: registration may already have replaced it with a live
+		// service. Registration overwrites a dead receipt under the lock.
 		return ManagedServiceRecord{}, os.ErrNotExist
 	}
 	if tokenErr != nil || token != record.ProcessToken {
