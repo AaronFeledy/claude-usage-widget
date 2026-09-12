@@ -9,6 +9,8 @@ param(
     [Parameter(Mandatory)][string]$CredentialHelper,
     [Parameter(Mandatory)][string]$Launcher,
     [Parameter(Mandatory)][string]$Manager,
+    [Parameter(Mandatory)][string]$CLI,
+    [Parameter(Mandatory)][string]$CLILauncher,
     [Parameter(Mandatory)][string]$QtRoot,
     [Parameter(Mandatory)][string]$QtSourceCache,
     [Parameter(Mandatory)][string]$ProjectAssets
@@ -53,6 +55,9 @@ Copy-Item $CredentialHelper (Join-Path $packageRoot 'bundle/bin/headroom-credent
 Copy-Item $Launcher (Join-Path $packageRoot 'bootstrap/headroom.exe')
 Copy-Item $Manager (Join-Path $packageRoot 'bootstrap/headroom-package.exe')
 Copy-Item $Manager (Join-Path $packageRoot 'bundle/bin/headroom-package.exe')
+Copy-Item $CLI (Join-Path $packageRoot 'bundle/bin/headroom-cli.exe')
+Copy-Item $CLILauncher (Join-Path $packageRoot 'bootstrap/headroom-cli.exe')
+Copy-Item $CLILauncher (Join-Path $packageRoot 'bundle/bin/headroom-cli-launcher.exe')
 Copy-Item packaging/THIRD_PARTY_NOTICES.txt (Join-Path $packageRoot 'bundle/share/headroom/THIRD_PARTY_NOTICES.txt')
 New-Item -ItemType Directory -Force (Join-Path $packageRoot 'bundle/share/licenses/headroom'), (Join-Path $packageRoot 'bundle/share/licenses/qt'), (Join-Path $packageRoot 'bundle/share/licenses/nuget'), (Join-Path $packageRoot 'bundle/share/licenses/msvc'), (Join-Path $packageRoot 'bundle/share/licenses/go/runtime'), (Join-Path $packageRoot 'bundle/share/licenses/go/protobuf'), (Join-Path $packageRoot 'bundle/share/licenses/go/yaml') | Out-Null
 Copy-Item LICENSE (Join-Path $packageRoot 'bundle/share/licenses/headroom/LICENSE')
@@ -118,6 +123,14 @@ $moduleCache = go env GOMODCACHE
 Copy-Item (Join-Path $moduleCache 'google.golang.org/protobuf@v1.36.11/LICENSE') (Join-Path $packageRoot 'bundle/share/licenses/go/protobuf/LICENSE')
 Copy-Item (Join-Path $moduleCache 'gopkg.in/yaml.v3@v3.0.1/LICENSE') (Join-Path $packageRoot 'bundle/share/licenses/go/yaml/LICENSE')
 Copy-Item (Join-Path $moduleCache 'gopkg.in/yaml.v3@v3.0.1/NOTICE') (Join-Path $packageRoot 'bundle/share/licenses/go/yaml/NOTICE')
+foreach ($module in @('sys', 'term')) {
+    Push-Location packaging/headroom-manager
+    try { $moduleDir = go list -m -f '{{.Dir}}' "golang.org/x/$module"; if ($LASTEXITCODE -ne 0) { throw 'Go module lookup failed.' } }
+    finally { Pop-Location }
+    $destination = Join-Path $packageRoot "bundle/share/licenses/go/x-$module"
+    New-Item -ItemType Directory -Force $destination | Out-Null
+    Copy-Item (Join-Path $moduleDir 'LICENSE') (Join-Path $destination 'LICENSE')
+}
 'Microsoft Visual C++ runtime files are redistributed under the Visual Studio license.' | Set-Content -Encoding UTF8 (Join-Path $packageRoot 'bundle/share/licenses/msvc/NOTICE.txt')
 & $Manager create-package --root $packageRoot --output (Join-Path $OutputDir $asset) --version $Version --platform windows --arch $Architecture --qt-version $qtVersion --baseline $(if ($Architecture -eq 'arm64') { 'windows-11-arm64-qt-msvc2022' } else { 'windows-10-1809-x64-qt-msvc2022' })
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

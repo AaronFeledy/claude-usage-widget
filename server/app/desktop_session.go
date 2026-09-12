@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -50,6 +50,8 @@ type desktopSessionOptions struct {
 	timeout time.Duration
 	listen  func(string, string) (net.Listener, error)
 	homeDir string
+	version string
+	ready   func() error
 }
 
 type preparedDesktopSession struct {
@@ -71,6 +73,9 @@ func (options desktopSessionOptions) withDefaults() desktopSessionOptions {
 	}
 	if options.listen == nil {
 		options.listen = net.Listen
+	}
+	if options.version == "" {
+		options.version = "dev"
 	}
 	return options
 }

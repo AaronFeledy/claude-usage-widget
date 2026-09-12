@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +19,11 @@ import (
 
 var buildVersion = "dev"
 
+// invocationRole is set to "cli" only for bootstrap/headroom-cli. The legacy
+// bootstrap/headroom build keeps its historical GUI behavior even when it is
+// installed under the public headroom name during a migration.
+var invocationRole = ""
+
 type output struct {
 	OK      bool   `json:"ok"`
 	Command string `json:"command"`
@@ -27,8 +34,18 @@ type output struct {
 func main() { os.Exit(run(os.Args)) }
 func run(args []string) int {
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(args[0])), ".exe")
-	if name == "headroom" || name == "headroom-launcher" || len(args) == 1 {
-		if err := launch(args[1:]); err != nil {
+	if invocationRole == contract.RoleCLI {
+		arguments := args[1:]
+		if name == "usage-server" {
+			arguments = append([]string{"serve"}, arguments...)
+		}
+		if err := launchRole(contract.RoleCLI, arguments); err != nil {
+			return reportCLILaunchFailure(err)
+		}
+		return 0
+	}
+	if name == "headroom" || name == "headroom-gui" || name == "headroom-launcher" || len(args) == 1 {
+		if err := launchRole(contract.RoleApplication, args[1:]); err != nil {
 			showLaunchError(err.Error())
 			return emit("launch", nil, err)
 		}
@@ -48,6 +65,8 @@ func run(args []string) int {
 		result, err = stage(args[2:])
 	case "install":
 		result, err = install(args[2:])
+	case "migrate-entries":
+		result, err = migrateEntries(args[2:])
 	case "check-update":
 		result, err = checkUpdate(args[2:])
 	case "stage-update":
@@ -72,6 +91,18 @@ func run(args []string) int {
 	return emit(command, result, err)
 }
 
+func migrateEntries(args []string) (any, error) {
+	set := flag.NewFlagSet("migrate-entries", flag.ContinueOnError)
+	root := set.String("install-root", defaultInstallRoot(), "installation root")
+	entry := set.String("entry-path", "", "stable application entry")
+	cliEntry := set.String("cli-entry-path", "", "stable public CLI entry")
+	replaceServer := set.Bool("replace-legacy-server", false, "replace a pre-existing legacy usage-server entry")
+	if err := set.Parse(args); err != nil {
+		return nil, err
+	}
+	return contract.MigrateManagedEntries(*root, *entry, *cliEntry, *replaceServer)
+}
+
 func prepareApply(args []string) (any, error) {
 	set := flag.NewFlagSet("prepare-apply", flag.ContinueOnError)
 	root := set.String("install-root", defaultInstallRoot(), "installation root")
@@ -79,10 +110,14 @@ func prepareApply(args []string) (any, error) {
 	record := set.String("stage-record", "", "verified stage record")
 	pid := set.Int("current-pid", 0, "running Headroom process")
 	executable := set.String("current-executable", "", "running Headroom executable")
+	currentRole := set.String("current-role", contract.RoleApplication, "running Headroom component role")
+	candidateRole := set.String("candidate-role", contract.RoleApplication, "replacement Headroom component role")
 	childPID := set.Int("owned-child-pid", 0, "owned local server process")
 	childExecutable := set.String("owned-child-executable", "", "owned local server executable")
 	var relaunch listFlag
+	var participants participantFlags
 	set.Var(&relaunch, "relaunch-arg", "argument to preserve when restarting")
+	set.Var(&participants, "participant", "additional process identity as compact JSON")
 	if err := set.Parse(args); err != nil {
 		return nil, err
 	}
@@ -91,7 +126,8 @@ func prepareApply(args []string) (any, error) {
 		return nil, err
 	}
 	prepared, err := contract.PrepareApply(manager, contract.ApplyRequest{InstallRoot: *root, EntryPath: *entry, StageRecord: *record,
-		CurrentPID: *pid, CurrentExecutable: *executable, OwnedChildPID: *childPID, OwnedChildExecutable: *childExecutable,
+		CurrentPID: *pid, CurrentExecutable: *executable, CurrentRole: *currentRole, CandidateRole: *candidateRole,
+		OwnedChildPID: *childPID, OwnedChildExecutable: *childExecutable, AdditionalProcesses: participants,
 		RelaunchArguments: relaunch})
 	if err != nil {
 		return nil, err
@@ -178,6 +214,18 @@ func assetName(args []string) (any, error) {
 	root, err := contract.ArchiveRoot(*version, *platform, *arch)
 	return map[string]string{"asset_name": asset, "archive_root": root}, err
 }
+// reportCLILaunchFailure keeps the public command's stdout reserved for usage
+// output. A CLI that ran already reported its own diagnostics, so only its exit
+// status is mirrored; a launcher failure is described on stderr.
+func reportCLILaunchFailure(err error) int {
+	var status exitStatusError
+	if errors.As(err, &status) {
+		return status.ExitCode()
+	}
+	fmt.Fprintln(os.Stderr, "headroom: "+err.Error())
+	return 2
+}
+
 func emit(command string, result any, err error) int {
 	o := output{OK: err == nil, Command: command, Result: result}
 	if err != nil {
@@ -249,10 +297,11 @@ func install(args []string) (any, error) {
 	archive := set.String("archive", "", "package archive")
 	root := set.String("install-root", defaultInstallRoot(), "installation root")
 	entry := set.String("entry-path", defaultEntryPath(), "stable launcher entry")
+	cliEntry := set.String("cli-entry-path", "", "stable public CLI entry")
 	if err := set.Parse(args); err != nil {
 		return nil, err
 	}
-	return contract.InstallArchive(*archive, *root, *entry, expectations(v, p, a, n))
+	return contract.InstallArchiveWithCLIEntry(*archive, *root, *entry, *cliEntry, expectations(v, p, a, n))
 }
 func createPackage(args []string) (any, error) {
 	set := flag.NewFlagSet("create-package", flag.ContinueOnError)
@@ -263,10 +312,14 @@ func createPackage(args []string) (any, error) {
 	arch := set.String("arch", nativeArch(), "architecture")
 	qt := set.String("qt-version", "6.8.3", "Qt version")
 	baseline := set.String("baseline", "", "runtime baseline")
+	kind := set.String("kind", "", "package kind: cli, or empty for desktop")
 	if err := set.Parse(args); err != nil {
 		return nil, err
 	}
-	manifest, err := contract.BuildManifest(*root, *version, *platform, *arch, *qt, *baseline)
+	if *kind == contract.PackageKindCLI {
+		*qt = ""
+	}
+	manifest, err := contract.BuildManifestForKind(*kind, *root, *version, *platform, *arch, *qt, *baseline)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +346,7 @@ func createRelease(args []string) (any, error) {
 	output := set.String("output", "", "release manifest output")
 	version := set.String("version", buildVersion, "version")
 	legacy := set.Bool("legacy", false, "create the legacy Windows/Linux release manifest")
+	kind := set.String("kind", "", "package kind: cli, or empty for desktop")
 	var packages listFlag
 	set.Var(&packages, "package", "package archive (repeatable)")
 	if err := set.Parse(args); err != nil {
@@ -303,17 +357,22 @@ func createRelease(args []string) (any, error) {
 	if *legacy {
 		wantName, wantCount = "Headroom-v"+*version+"-release.json", 3
 	}
+	if *kind == contract.PackageKindCLI && !*legacy {
+		wantName, wantCount = "Headroom-CLI-v"+*version+"-release.json", 6
+	} else if *kind != "" {
+		return nil, fmt.Errorf("unsupported package kind or legacy combination")
+	}
 	if filepath.Base(*output) != wantName {
 		return nil, fmt.Errorf("release manifest output must be named %s", wantName)
 	}
-	release := contract.ReleaseManifest{Schema: contract.SchemaVersion, Product: "Headroom", Version: *version}
+	release := contract.ReleaseManifest{PackageKind: *kind, Schema: contract.SchemaVersion, Product: "Headroom", Version: *version}
 	for _, archive := range packages {
 		manifest, root, err := contract.VerifyArchive(archive, contract.Expectations{})
 		if err != nil {
 			return nil, err
 		}
-		if manifest.Version != *version {
-			return nil, fmt.Errorf("package version mismatch")
+		if manifest.Version != *version || manifest.PackageKind != *kind {
+			return nil, fmt.Errorf("package version or kind mismatch")
 		}
 		size, hash, err := contract.FileDigest(archive)
 		if err != nil {
@@ -325,6 +384,9 @@ func createRelease(args []string) (any, error) {
 		return release.Packages[i].Platform+"/"+release.Packages[i].Architecture < release.Packages[j].Platform+"/"+release.Packages[j].Architecture
 	})
 	if len(release.Packages) != wantCount {
+		if *kind == contract.PackageKindCLI {
+			return nil, fmt.Errorf("CLI release manifest requires all six Windows, Linux, and macOS targets")
+		}
 		if *legacy {
 			return nil, fmt.Errorf("legacy release manifest requires Windows x64/ARM64 and Linux x86_64 packages")
 		}
@@ -359,6 +421,27 @@ type listFlag []string
 
 func (f *listFlag) String() string         { return strings.Join(*f, ",") }
 func (f *listFlag) Set(value string) error { *f = append(*f, value); return nil }
+
+type participantFlags []contract.ProcessClaim
+
+func (f *participantFlags) String() string { return fmt.Sprintf("%v", []contract.ProcessClaim(*f)) }
+func (f *participantFlags) Set(value string) error {
+	var claim contract.ProcessClaim
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&claim); err != nil {
+		return fmt.Errorf("invalid participant: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errors.New("invalid participant: extra JSON")
+	}
+	if claim.ProcessToken != "" {
+		return errors.New("participant token is manager-owned")
+	}
+	*f = append(*f, claim)
+	return nil
+}
 func nativeArch() string {
 	if runtime.GOARCH == "amd64" {
 		return "x86_64"

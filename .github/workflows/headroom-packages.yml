@@ -305,9 +305,10 @@ jobs:
           cmake -S clients/desktop -B "$RUNNER_TEMP/desktop-package" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DHEADROOM_PACKAGE_BUILD=ON -DHEADROOM_WITH_KDE_TRAY=OFF -DHEADROOM_WITH_LAYER_SHELL=OFF -DHEADROOM_VERSION="$HEADROOM_PACKAGE_VERSION"
           cmake --build "$RUNNER_TEMP/desktop-package" --parallel
           (cd server && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/usage-server" ./cmd/usage-server)
-          (cd packaging/headroom-manager && go test ./... && go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-package" ./cmd/headroom-manager)
+          (cd packaging/headroom-manager && go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./... && go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-package" ./cmd/headroom-manager)
           cp "$RUNNER_TEMP/headroom-package" "$RUNNER_TEMP/headroom"
-          packaging/package-linux.sh "$HEADROOM_PACKAGE_VERSION" "$RUNNER_TEMP/desktop-package" "$RUNNER_TEMP/package-work" "$RUNNER_TEMP/package-output" "$RUNNER_TEMP/usage-server" "$RUNNER_TEMP/headroom" "$RUNNER_TEMP/headroom-package" "$QT_ROOT_DIR" "$RUNNER_TEMP/qt-sources"
+          (cd packaging/headroom-manager && go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-cli" ./cmd/headroom && go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION -X main.invocationRole=cli" -o "$RUNNER_TEMP/headroom-cli-launcher" ./cmd/headroom-manager)
+          packaging/package-linux.sh "$HEADROOM_PACKAGE_VERSION" "$RUNNER_TEMP/desktop-package" "$RUNNER_TEMP/package-work" "$RUNNER_TEMP/package-output" "$RUNNER_TEMP/usage-server" "$RUNNER_TEMP/headroom" "$RUNNER_TEMP/headroom-package" "$QT_ROOT_DIR" "$RUNNER_TEMP/qt-sources" "$RUNNER_TEMP/headroom-cli" "$RUNNER_TEMP/headroom-cli-launcher"
       - uses: actions/upload-artifact@v7
         with:
           name: headroom-linux-x64-package
@@ -364,18 +365,22 @@ jobs:
           Pop-Location
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Push-Location packaging/headroom-manager
-          go test ./...
+          go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -trimpath -ldflags "-s -w -X main.buildVersion=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/headroom-package.exe" ./cmd/headroom-manager
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -trimpath -ldflags "-s -w -H windowsgui -X main.buildVersion=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/headroom.exe" ./cmd/headroom-manager
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags "-s -w -X main.version=$env:HEADROOM_PACKAGE_VERSION" -o "$env:RUNNER_TEMP/headroom-cli.exe" ./cmd/headroom
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -trimpath -ldflags "-s -w -X main.buildVersion=$env:HEADROOM_PACKAGE_VERSION -X main.invocationRole=cli" -o "$env:RUNNER_TEMP/headroom-cli-launcher.exe" ./cmd/headroom-manager
           Pop-Location
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet publish clients/windows/Headroom.CredentialHelper/Headroom.CredentialHelper.csproj -c Release -r ${{ matrix.rid }} -p:Version=$env:HEADROOM_PACKAGE_VERSION -p:AssemblyVersion=${{ needs.validate-version.outputs.numeric_version }}.0 -p:FileVersion=${{ needs.validate-version.outputs.numeric_version }}.0 -p:InformationalVersion=$env:HEADROOM_PACKAGE_VERSION -p:IncludeSourceRevisionInInformationalVersion=false -o "$env:RUNNER_TEMP/helper"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $helperVersion = (Get-Item "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe").VersionInfo
           if ($helperVersion.FileVersion -cne '${{ needs.validate-version.outputs.numeric_version }}.0' -or $helperVersion.ProductVersion -cne $env:HEADROOM_PACKAGE_VERSION) { throw 'Credential helper version metadata does not match the package version.' }
-          ./packaging/package-windows.ps1 -Version $env:HEADROOM_PACKAGE_VERSION -Architecture ${{ matrix.architecture }} -BuildDir "$env:RUNNER_TEMP/desktop-package" -WorkDir "$env:RUNNER_TEMP/package-work" -OutputDir "$env:RUNNER_TEMP/package-output" -Server "$env:RUNNER_TEMP/usage-server.exe" -CredentialHelper "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe" -Launcher "$env:RUNNER_TEMP/headroom.exe" -Manager "$env:RUNNER_TEMP/headroom-package.exe" -QtRoot $env:QT_ROOT_DIR -QtSourceCache "$env:RUNNER_TEMP/qt-sources" -ProjectAssets "clients/windows/Headroom.CredentialHelper/obj/project.assets.json"
+          ./packaging/package-windows.ps1 -Version $env:HEADROOM_PACKAGE_VERSION -Architecture ${{ matrix.architecture }} -BuildDir "$env:RUNNER_TEMP/desktop-package" -WorkDir "$env:RUNNER_TEMP/package-work" -OutputDir "$env:RUNNER_TEMP/package-output" -Server "$env:RUNNER_TEMP/usage-server.exe" -CredentialHelper "$env:RUNNER_TEMP/helper/headroom-credential-helper.exe" -Launcher "$env:RUNNER_TEMP/headroom.exe" -Manager "$env:RUNNER_TEMP/headroom-package.exe" -CLI "$env:RUNNER_TEMP/headroom-cli.exe" -CLILauncher "$env:RUNNER_TEMP/headroom-cli-launcher.exe" -QtRoot $env:QT_ROOT_DIR -QtSourceCache "$env:RUNNER_TEMP/qt-sources" -ProjectAssets "clients/windows/Headroom.CredentialHelper/obj/project.assets.json"
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
@@ -424,6 +429,8 @@ jobs:
           go test -race -count=10 -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' -run '^TestDarwin|^TestProcessWatchRejectsCreationTokenMismatchWithoutStoppingProcess$' ./contract
           go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-package" ./cmd/headroom-manager
           cp "$RUNNER_TEMP/headroom-package" "$RUNNER_TEMP/headroom"
+          go build -trimpath -ldflags="-s -w -X main.version=$HEADROOM_PACKAGE_VERSION" -o "$RUNNER_TEMP/headroom-cli" ./cmd/headroom
+          go build -trimpath -ldflags="-s -w -X main.buildVersion=$HEADROOM_PACKAGE_VERSION -X main.invocationRole=cli" -o "$RUNNER_TEMP/headroom-cli-launcher" ./cmd/headroom-manager
       - name: Verify native TLS with the provider-disabled Go server
         id: mac-tls
         if: ${{ !cancelled() && steps.mac-desktop.outcome == 'success' && steps.mac-server.outcome == 'success' }}
@@ -457,6 +464,7 @@ jobs:
           "$RUNNER_TEMP/desktop-package" "$RUNNER_TEMP/package-work" "$RUNNER_TEMP/package-output"
           "$RUNNER_TEMP/usage-server" "$RUNNER_TEMP/headroom" "$RUNNER_TEMP/headroom-package"
           "$QT_ROOT_DIR" "$RUNNER_TEMP/qt-sources"
+          "$RUNNER_TEMP/headroom-cli" "$RUNNER_TEMP/headroom-cli-launcher"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() && steps.mac-package.outcome == 'success' }}
         with:
@@ -666,6 +674,131 @@ jobs:
             ${{ runner.temp }}/headroom-dirty-environment-windows.png
             ${{ runner.temp }}/windows-package-inventory.txt
 
+  package-cli:
+    needs: validate-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-22.04, platform: linux, arch: x86_64, goarch: amd64}
+          - {runner: ubuntu-24.04-arm, platform: linux, arch: arm64, goarch: arm64}
+          - {runner: windows-2022, platform: windows, arch: x86_64, goarch: amd64}
+          - {runner: windows-11-arm, platform: windows, arch: arm64, goarch: arm64}
+          - {runner: macos-15-intel, platform: macos, arch: x86_64, goarch: amd64}
+          - {runner: macos-15, platform: macos, arch: arm64, goarch: arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: {go-version: '1.25.x', cache: false}
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.x'}
+      - name: Build, package, and execute the native CLI without Qt
+        shell: python
+        env:
+          CLI_PLATFORM: ${{ matrix.platform }}
+          CLI_ARCH: ${{ matrix.arch }}
+          CLI_GOARCH: ${{ matrix.goarch }}
+        run: |
+          import os, pathlib, subprocess
+          root = pathlib.Path.cwd()
+          temporary = pathlib.Path(os.environ['RUNNER_TEMP'])
+          version = os.environ['HEADROOM_PACKAGE_VERSION']
+          platform, arch = os.environ['CLI_PLATFORM'], os.environ['CLI_ARCH']
+          extension = '.exe' if platform == 'windows' else ''
+          module = root / 'packaging/headroom-manager'
+          env = os.environ | {'GOARCH': os.environ['CLI_GOARCH'], 'CGO_ENABLED': '0'}
+          subprocess.run(['go', 'test', './cli', './cmd/headroom', './cmd/headroom-manager'], cwd=module, env=env, check=True)
+          subprocess.run(['go', 'test', '-run', '^TestPrivate', './contract'], cwd=module, env=env, check=True)
+          binaries = {}
+          for name, command, flags in (
+              ('headroom-runtime', './cmd/headroom', f'-X main.version={version}'),
+              ('headroom-router', './cmd/headroom-manager', f'-X main.buildVersion={version} -X main.invocationRole=cli'),
+              ('headroom-package', './cmd/headroom-manager', f'-X main.buildVersion={version}')):
+              binaries[name] = temporary / (name + extension)
+              subprocess.run(['go', 'build', '-trimpath', '-ldflags', '-s -w ' + flags, '-o', str(binaries[name]), command], cwd=module, env=env, check=True)
+          subprocess.run(['python', 'packaging/package-cli.py', '--version', version, '--platform', platform,
+              '--arch', arch, '--cli', str(binaries['headroom-runtime']), '--launcher', str(binaries['headroom-router']),
+              '--manager', str(binaries['headroom-package']), '--validator', str(binaries['headroom-package']),
+              '--work', str(temporary / 'cli-work'), '--output', str(temporary / 'cli-output')], check=True)
+          archives = list((temporary / 'cli-output').iterdir())
+          assert len(archives) == 1
+          subprocess.run(['python', 'packaging/tests/cli_package_smoke.py', '--manager', str(binaries['headroom-package']),
+              '--archive', str(archives[0]), '--version', version], check=True, timeout=180)
+      - name: Verify a real per-user server restart and repair
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          sudo loginctl enable-linger "$(id -un)"
+          timeout 30s sudo systemctl start "user@$(id -u).service"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          python3 packaging/tests/cli_systemd_smoke.py --manager "$RUNNER_TEMP/headroom-package" --archive "$RUNNER_TEMP/cli-output/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-${{ matrix.arch }}.tar.gz" --version "$HEADROOM_PACKAGE_VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-cli-${{ matrix.platform }}-${{ matrix.arch }}-package
+          path: ${{ runner.temp }}/cli-output/*
+          if-no-files-found: error
+
+  cli-release-manifest:
+    needs: package-cli
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: {go-version: '1.25.x', cache: false}
+      - uses: actions/download-artifact@v8
+        with: {pattern: 'headroom-cli-*-package', path: '${{ runner.temp }}/cli-packages', merge-multiple: true}
+      - name: Verify the complete CLI matrix
+        working-directory: packaging/headroom-manager
+        run: |
+          go run ./cmd/headroom-manager create-release --kind cli --version "$HEADROOM_PACKAGE_VERSION" --output "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-release.json" \
+            --package "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-windows-x64.zip" \
+            --package "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-windows-arm64.zip" \
+            --package "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-x86_64.tar.gz" \
+            --package "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-arm64.tar.gz" \
+            --package "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-macos-x86_64.tar.gz" \
+            --package "$RUNNER_TEMP/cli-packages/Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-macos-arm64.tar.gz"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: headroom-cli-release-manifest
+          path: ${{ runner.temp }}/cli-packages/Headroom-CLI-*-release.json
+          if-no-files-found: error
+
+  cli-installer-fixtures:
+    needs: cli-release-manifest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-22.04, platform: linux, arch: x86_64, asset: linux-x86_64.tar.gz}
+          - {runner: ubuntu-24.04-arm, platform: linux, arch: arm64, asset: linux-arm64.tar.gz}
+          - {runner: windows-2022, platform: windows, arch: x86_64, asset: windows-x64.zip}
+          - {runner: windows-11-arm, platform: windows, arch: arm64, asset: windows-arm64.zip}
+          - {runner: macos-15-intel, platform: macos, arch: x86_64, asset: macos-x86_64.tar.gz}
+          - {runner: macos-15, platform: macos, arch: arm64, asset: macos-arm64.tar.gz}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.x'}
+      - uses: actions/download-artifact@v8
+        with: {name: 'headroom-cli-${{ matrix.platform }}-${{ matrix.arch }}-package', path: '${{ runner.temp }}/fixture'}
+      - uses: actions/download-artifact@v8
+        with: {name: headroom-cli-release-manifest, path: '${{ runner.temp }}/fixture'}
+      - name: Install and run the CLI through the public installer
+        timeout-minutes: 5
+        shell: python
+        env:
+          CLI_ASSET: ${{ matrix.asset }}
+        run: |
+          import os, pathlib, subprocess
+          fixture = pathlib.Path(os.environ['RUNNER_TEMP']) / 'fixture'
+          version = os.environ['HEADROOM_PACKAGE_VERSION']
+          subprocess.run(['python', 'packaging/tests/cli_package_smoke.py', '--version', version,
+              '--archive', str(fixture / ('Headroom-CLI-v' + version + '-' + os.environ['CLI_ASSET'])),
+              '--release-manifest', str(fixture / ('Headroom-CLI-v' + version + '-release.json'))], check=True, timeout=240)
+
   package-release-manifest:
     needs: [package-linux-x64, package-windows, package-macos, smoke-linux-package, smoke-windows-package, smoke-macos-package]
     runs-on: ubuntu-22.04
@@ -790,7 +923,7 @@ jobs:
           if (Test-Path "$env:LOCALAPPDATA/Headroom") { exit 1 }
 
   release-assets:
-    needs: [installer-fixtures, standalone-server-assets, server-validation, server-docker, manager-validation]
+    needs: [installer-fixtures, cli-installer-fixtures, standalone-server-assets, server-validation, server-docker, manager-validation]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -799,15 +932,18 @@ jobs:
       - uses: actions/download-artifact@v8
         with: {name: headroom-release-manifest, path: '${{ runner.temp }}/release'}
       - uses: actions/download-artifact@v8
+        with: {name: headroom-cli-release-manifest, path: '${{ runner.temp }}/release'}
+      - uses: actions/download-artifact@v8
         with: {pattern: 'usage-server-*', path: '${{ runner.temp }}/release', merge-multiple: true}
       - name: Assemble reviewable release assets
         run: |
           cp install.sh install.ps1 "$RUNNER_TEMP/release/"
           cd "$RUNNER_TEMP/release"
           expected="Headroom-v$HEADROOM_PACKAGE_VERSION-linux-x86_64.tar.gz Headroom-v$HEADROOM_PACKAGE_VERSION-windows-arm64.zip Headroom-v$HEADROOM_PACKAGE_VERSION-windows-x64.zip Headroom-v$HEADROOM_PACKAGE_VERSION-release.json install.ps1 install.sh usage-server-linux-amd64 usage-server-linux-arm64 usage-server-win-arm64.exe usage-server-win-x64.exe usage-server-macos-x86_64 usage-server-macos-arm64 Headroom-v$HEADROOM_PACKAGE_VERSION-macos-x86_64.tar.gz Headroom-v$HEADROOM_PACKAGE_VERSION-macos-arm64.tar.gz Headroom-v$HEADROOM_PACKAGE_VERSION-release-all.json"
+          expected="$expected Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-x86_64.tar.gz Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-linux-arm64.tar.gz Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-windows-x64.zip Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-windows-arm64.zip Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-macos-x86_64.tar.gz Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-macos-arm64.tar.gz Headroom-CLI-v$HEADROOM_PACKAGE_VERSION-release.json"
           for asset in $expected; do test -s "$asset"; done
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 15
+          test "$(wc -l < SHA256SUMS)" -eq 22
       - uses: actions/upload-artifact@v7
         with:
           name: headroom-release-assets

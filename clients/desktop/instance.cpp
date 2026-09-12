@@ -10,6 +10,7 @@
 #include <QLockFile>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QPointer>
 
 #ifndef Q_OS_WIN
 #include <cerrno>
@@ -188,6 +189,36 @@ InstanceService::~InstanceService()
     if (m_lock) { m_lock->unlock(); delete m_lock; }
 }
 
+QByteArray InstanceService::request(const QByteArray &message, int timeoutMilliseconds)
+{
+    constexpr qsizetype maximumReply = 1024 * 1024;
+    m_primaryUnavailable = false;
+    if (!m_pathsReady || message.isEmpty() || message.size() > 4095 || message.contains('\n') || message.contains('\0')) return {};
+#ifndef Q_OS_WIN
+    if (!safeEndpoint(m_scopeName, S_IFSOCK)) { m_error = "Unsafe local desktop endpoint."; return {}; }
+#endif
+    QLocalSocket socket;
+    socket.setReadBufferSize(maximumReply + 1);
+    socket.connectToServer(m_scopeName, QIODevice::ReadWrite);
+    if (!socket.waitForConnected(timeoutMilliseconds)) {
+        m_primaryUnavailable = socket.error() == QLocalSocket::ServerNotFoundError;
+        m_error = "The local desktop is unavailable.";
+        return {};
+    }
+    const QByteArray wire = message + '\n';
+    if (socket.write(wire) != wire.size() || (socket.bytesToWrite() && !socket.waitForBytesWritten(timeoutMilliseconds))) return {};
+    QElapsedTimer timer; timer.start();
+    QByteArray response;
+    while (timer.elapsed() < timeoutMilliseconds) {
+        response += socket.read(maximumReply + 1 - response.size());
+        if (response.size() > maximumReply || socket.bytesAvailable() > 0) return {};
+        if (response.contains('\n')) return response.endsWith('\n') && response.count('\n') == 1 ? response : QByteArray();
+        if (!socket.waitForReadyRead(qMax(1, timeoutMilliseconds - int(timer.elapsed()))) && socket.bytesAvailable() == 0) break;
+    }
+    m_error = "The local desktop did not acknowledge the request.";
+    return {};
+}
+
 InstanceService::Result InstanceService::start(int timeoutMilliseconds)
 {
     if (m_server || m_lock) return m_server ? Result::Primary : Result::Error;
@@ -248,12 +279,12 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
     }
     connect(m_server, &QLocalServer::newConnection, this, [this] {
         while (auto socket = m_server->nextPendingConnection()) {
-            socket->setReadBufferSize(33);
+            socket->setReadBufferSize(4097);
             const auto readActivation = [this, socket] {
                 if (socket->property("headroomActivationComplete").toBool()) return;
                 QByteArray buffered = socket->property("headroomActivation").toByteArray();
-                buffered += socket->read(qMax<qint64>(0, 33 - buffered.size()));
-                if (buffered.size() > 32) {
+                buffered += socket->read(qMax<qint64>(0, 4097 - buffered.size()));
+                if (buffered.size() > 4096) {
                     socket->setProperty("headroomActivationComplete", true);
                     socket->disconnectFromServer(); return;
                 }
@@ -264,9 +295,29 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
                         emit activationRequested();
                         socket->write("ok\n");
                         socket->flush();
+                    } else if (buffered.endsWith('\n') && buffered.count('\n') == 1 && m_requestHandler) {
+                        const auto response = m_requestHandler(buffered.chopped(1));
+                        if (!response.isEmpty() && response.size() <= 1024 * 1024 && !response.contains('\n')) {
+                            socket->write(response + '\n');
+                            socket->flush();
+                        } else if (m_asyncRequestHandler) {
+                            const QPointer<QLocalSocket> guarded(socket);
+                            auto reply = [guarded](const QByteArray &value) {
+                                if (!guarded || guarded->state() != QLocalSocket::ConnectedState) return;
+                                if (!value.isEmpty() && value.size() <= 1024 * 1024 && !value.contains('\n')) {
+                                    guarded->write(value + '\n'); guarded->flush();
+                                }
+                                guarded->disconnectFromServer();
+                            };
+                            if (m_asyncRequestHandler(buffered.chopped(1), std::move(reply))) {
+                                socket->setProperty("headroomAsyncRequest", true);
+                                QTimer::singleShot(8 * 60 * 1000, socket, [socket] { socket->disconnectFromServer(); });
+                                return;
+                            }
+                        }
                     }
                     socket->disconnectFromServer();
-                } else if (buffered.size() >= 32 || socket->bytesAvailable() > 0) {
+                } else if (buffered.size() >= 4096 || socket->bytesAvailable() > 0) {
                     socket->setProperty("headroomActivationComplete", true);
                     socket->disconnectFromServer();
                 }
@@ -274,7 +325,9 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
             connect(socket, &QLocalSocket::readyRead, this, readActivation);
             connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
             QMetaObject::invokeMethod(socket, readActivation, Qt::QueuedConnection);
-            QTimer::singleShot(1000, socket, [socket] { socket->disconnectFromServer(); });
+            QTimer::singleShot(1000, socket, [socket] {
+                if (!socket->property("headroomAsyncRequest").toBool()) socket->disconnectFromServer();
+            });
         }
     });
     return Result::Primary;

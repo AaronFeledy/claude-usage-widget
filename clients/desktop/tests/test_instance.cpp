@@ -121,6 +121,32 @@ private slots:
         QCOMPARE(activated.size(), 1);
     }
 
+    void cliRequestReadsOnlyTheExistingInstance()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("settings.json"), ready = dir.filePath("ready"), activated = dir.filePath("activated");
+        QProcess primary;
+        primary.start(helperPath(), {path, ready, activated});
+        QVERIFY(primary.waitForStarted(2000));
+        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(ready), 3000);
+        InstanceService client(path);
+        QCOMPARE(client.request(R"({"command":"usage"})"), QByteArray("{\"ok\":true,\"result\":[]}\n"));
+        QVERIFY(!QFileInfo::exists(activated));
+        QVERIFY(client.request(QByteArray(4096, 'x')).isEmpty());
+        QVERIFY(client.request("{\"command\":\"usage\"}\nactivate").isEmpty());
+        QVERIFY(client.request(R"({"command":"unknown"})").isEmpty());
+        primary.kill(); QVERIFY(primary.waitForFinished(3000));
+    }
+
+    void cliRequestDoesNotBecomePrimary()
+    {
+        QTemporaryDir dir;
+        InstanceService client(dir.filePath("settings.json"));
+        QVERIFY(client.request(R"({"command":"usage"})", 100).isEmpty());
+        QVERIFY(client.primaryUnavailable());
+        QVERIFY(!QFileInfo::exists(client.lockPath()));
+    }
+
     void malformedAndOversizedMessagesAreRejected()
     {
         QTemporaryDir dir;

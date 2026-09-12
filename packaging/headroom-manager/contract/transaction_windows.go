@@ -60,7 +60,7 @@ func captureProcessToken(pid int, expected string) (string, error) {
 	}
 	procCloseHandle.Call(uintptr(h))
 	if !samePath(actual, expected) {
-		return "", errors.New("process executable identity does not match")
+		return "", errProcessExecutableMismatch
 	}
 	return token, nil
 }

@@ -3,6 +3,7 @@ package contract
 import (
 	"archive/tar"
 	"archive/zip"
+	"compress/flate"
 	"compress/gzip"
 	"crypto/sha256"
 	"debug/elf"
@@ -175,7 +176,7 @@ func finishInspection(manifest PackageManifest, found bool, roots map[string]boo
 	for value := range roots {
 		root = value
 	}
-	expected, _ := ArchiveRoot(manifest.Version, manifest.Platform, manifest.Architecture)
+	expected, _ := ArchiveRootForKind(manifest.PackageKind, manifest.Version, manifest.Platform, manifest.Architecture)
 	if root != expected {
 		return manifest, "", fmt.Errorf("archive root %q does not match %q", root, expected)
 	}
@@ -500,6 +501,21 @@ func VerifyTree(root string, manifest PackageManifest) error {
 			return err
 		}
 	}
+	// Desktop schema stays compatible with older managers; new managers also
+	// validate the optional CLI executables before making them public entries.
+	if manifest.PackageKind == "" {
+		extension := ""
+		if manifest.Platform == "windows" {
+			extension = ".exe"
+		}
+		for _, name := range []string{PackageCLIPath(manifest.Platform, ""), "bootstrap/headroom-cli" + extension} {
+			if _, exists := fileRecord(manifest.Files, name); exists {
+				if err := verifyExecutableArchitecture(filepath.Join(root, filepath.FromSlash(name)), manifest.Platform, manifest.Architecture); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -560,6 +576,12 @@ func verifyExecutableArchitecture(filename, platform, architecture string) error
 }
 
 func WriteArchive(root, output string) error {
+	return writeArchiveWithCompression(root, output, flate.DefaultCompression)
+}
+
+// Fixtures use the same archive writer with fast compression so race builds
+// spend their time exercising validation and transactions, not deflate search.
+func writeArchiveWithCompression(root, output string, compressionLevel int) error {
 	base := filepath.Base(root)
 	if strings.HasSuffix(output, ".zip") {
 		file, err := os.Create(output)
@@ -567,6 +589,11 @@ func WriteArchive(root, output string) error {
 			return err
 		}
 		writer := zip.NewWriter(file)
+		if compressionLevel != flate.DefaultCompression {
+			writer.RegisterCompressor(zip.Deflate, func(output io.Writer) (io.WriteCloser, error) {
+				return flate.NewWriter(output, compressionLevel)
+			})
+		}
 		walkErr := walkArchiveFiles(root, func(rel, name string, info os.FileInfo) error {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("symlink forbidden in zip: %s", rel)
@@ -604,7 +631,11 @@ func WriteArchive(root, output string) error {
 		if err != nil {
 			return err
 		}
-		gz := gzip.NewWriter(file)
+		gz, err := gzip.NewWriterLevel(file, compressionLevel)
+		if err != nil {
+			file.Close()
+			return err
+		}
 		gz.ModTime = gzip.Header{}.ModTime
 		writer := tar.NewWriter(gz)
 		walkErr := walkArchiveFiles(root, func(rel, name string, info os.FileInfo) error {

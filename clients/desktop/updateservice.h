@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QTimer>
 #include <functional>
 
@@ -37,11 +38,11 @@ public:
     QString state() const { return m_state; }
     QString statusText() const { return m_status; }
     QString latestVersion() const { return m_latestVersion; }
-    bool busy() const { return m_process; }
+    bool busy() const { return m_process || m_pairProcess; }
     bool canCancel() const { return m_process && m_operation != Operation::Apply; }
-    bool canCheck() const { return m_allowed && m_official && !busy(); }
+    bool canCheck() const { return m_allowed && m_official && !busy() && !m_cliReply; }
     bool canStage() const { return m_allowed && m_state == QStringLiteral("available") && !busy(); }
-    bool canRepair() const { return m_allowed && m_repairable && !busy(); }
+    bool canRepair() const { return m_allowed && m_repairable && !busy() && !m_cliReply; }
     bool restartAvailable() const { return m_allowed && m_state == QStringLiteral("staged"); }
     QString updateMethod() const { return m_method; }
     QJsonObject verifiedStage() const { return m_verifiedStage; }
@@ -55,6 +56,7 @@ public:
     void setPublicTrafficAllowed(bool allowed);
     void setOwnedProcessProvider(std::function<QPair<qint64, QString>()> provider) { m_ownedProcessProvider = std::move(provider); }
     void setRelaunchArguments(QStringList arguments) { m_relaunchArguments = std::move(arguments); }
+    void requestCLIUpdate(const QJsonObject &request, std::function<void(const QJsonObject &)> reply);
 signals:
     void changed();
     void applyPrepared();
@@ -71,18 +73,25 @@ private:
     void handleUpdateResult(Operation operation, const QJsonObject &result);
     void restoreAllowedState();
     void applyDeferredTrafficState();
+    void finishCLIRequest(const QString &status, bool ok);
+    void startPairedUpdate();
     QString guidePath() const;
     UpdateServiceOptions m_options;
     QPointer<QProcess> m_process;
+    QPointer<QProcess> m_pairProcess;
+    bool m_cliAvailable = false;
+    QString m_cliEntryPath;
     QTimer m_timeout;
     QByteArray m_output;
     QByteArray m_errorOutput;
     QJsonObject m_verifiedStage;
+    bool m_stageIsRepair = false;
     QString m_state = QStringLiteral("unavailable");
     QString m_status;
     QString m_latestVersion;
     QString m_platform;
     QString m_architecture;
+    QString m_packageKind;
     QString m_method = QStringLiteral("source");
     QString m_prePauseState;
     QString m_prePauseStatus;
@@ -101,5 +110,8 @@ private:
     bool m_deferredAllowed = true;
     std::function<QPair<qint64, QString>()> m_ownedProcessProvider;
     QStringList m_relaunchArguments;
+    QJsonArray m_cliParticipants;
+    QString m_cliRequestNonce;
+    std::function<void(const QJsonObject &)> m_cliReply;
     Operation m_operation = Operation::None;
 };

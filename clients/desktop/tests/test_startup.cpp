@@ -10,6 +10,8 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QUuid>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 namespace {
@@ -171,6 +173,22 @@ private slots:
         QVERIFY(repairedEntry.contains((QStringLiteral("Exec=\"") + launcher + QStringLiteral("\" --background")).toUtf8()));
         QVERIFY(!repairedEntry.contains(previous.toUtf8()));
 
+        const QString publicCLI = dir.filePath(QStringLiteral("public bin/headroom"));
+        QVERIFY(writeFile(publicCLI, "CLI router", true));
+        QVERIFY(writeFile(publicCLI + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
+        QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("install-state.json")),
+            QJsonDocument(QJsonObject{{"schema", 1}, {"product", "Headroom"}, {"cli_entry_path", publicCLI}}).toJson()));
+        const QByteArray oldPublicEntry = QByteArray(oldEntry).replace(previous.toUtf8(), publicCLI.toUtf8());
+        QVERIFY(writeFile(entry, oldPublicEntry));
+        StartupService migratedCLI(config, current, true);
+        QVERIFY(migratedCLI.enabled());
+        QVERIFY(readFile(entry).contains(launcher.toUtf8()));
+        QVERIFY(!readFile(entry).contains(publicCLI.toUtf8()));
+        QVERIFY(writeFile(entry, oldPublicEntry));
+        QVERIFY(writeFile(publicCLI + QStringLiteral(".root"), "/different-install\n"));
+        StartupService unrelatedCLI(config, current, true);
+        QCOMPARE(readFile(entry), oldPublicEntry);
+
         QVERIFY(writeFile(entry, QByteArray(oldEntry).replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false")));
         StartupService disabled(config, current, true);
         QVERIFY(!disabled.enabled()); QCOMPARE(readFile(entry), QByteArray(oldEntry).replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false"));
@@ -220,13 +238,19 @@ private slots:
         // at. Start at login must still be switchable off instead of leaving a
         // stale plist that launches a missing binary at every login.
         QTemporaryDir dir; QVERIFY(dir.isValid());
+#ifdef Q_OS_WIN
+        const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom.exe"));
+        QVERIFY(QDir().mkpath(QFileInfo(executable).absolutePath()));
+        QVERIFY(QFile::copy(currentExecutable(), executable));
+#else
         const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom"));
         QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+#endif
         StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
                                StartupService::Platform::Mac);
         bool stored = false;
         service.setPreferenceWriter([&](bool enabled) { stored = enabled; return QString(); });
-        QVERIFY(service.setEnabled(true));
+        QVERIFY2(service.setEnabled(true), qPrintable(service.error()));
         QVERIFY(QFileInfo::exists(service.entryPath()));
 
         QVERIFY(QFile::remove(executable));

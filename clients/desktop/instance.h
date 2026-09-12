@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QByteArray>
+#include <functional>
 
 class QLocalServer;
 class QLockFile;
@@ -16,6 +18,12 @@ public:
     QString error() const { return m_error; }
     QString scopeName() const { return m_scopeName; }
     QString lockPath() const { return m_lockPath; }
+    // Bounded, same-user local control. The handler never receives credentials.
+    void setRequestHandler(std::function<QByteArray(const QByteArray &)> handler) { m_requestHandler = std::move(handler); }
+    using Reply = std::function<void(const QByteArray &)>;
+    void setAsyncRequestHandler(std::function<bool(const QByteArray &, Reply)> handler) { m_asyncRequestHandler = std::move(handler); }
+    QByteArray request(const QByteArray &message, int timeoutMilliseconds = 3000);
+    bool primaryUnavailable() const { return m_primaryUnavailable; }
 signals:
     void activationRequested();
 private:
@@ -23,6 +31,9 @@ private:
     QString m_lockPath;
     QString m_error;
     bool m_pathsReady = false;
+    bool m_primaryUnavailable = false;
+    std::function<QByteArray(const QByteArray &)> m_requestHandler;
+    std::function<bool(const QByteArray &, Reply)> m_asyncRequestHandler;
     QLocalServer *m_server = nullptr;
     QLockFile *m_lock = nullptr;
 };

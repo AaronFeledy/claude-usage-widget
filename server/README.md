@@ -5,12 +5,25 @@ Assistant REST sensors, and compatible API clients. The `usage-server` binary,
 configuration keys, environment variables, default paths, and API wire names
 remain compatible with Claude Usage Widget deployments.
 
+## Managed installation
+
+The managed distribution provides `headroom serve` for this server and
+`headroom update` for verified self-updates. Install the CLI-only package with
+`install.sh --cli` or `install.ps1 -CLI`; it contains no Qt dependencies. A
+shared native desktop installation updates its desktop, CLI, and bundled server
+together. Windows desktops can explicitly pair with a WSL CLI installation for
+coordinated updates. See the [CLI and service guide](../docs/cli.md).
+
+Existing standalone `usage-server` deployments remain supported. Their YAML,
+service configuration paths, flags, and API do not change. Unmanaged binaries
+and source checkouts use their original deployment method to update.
+
 ## Build
 
 From `server/`:
 
 ```bash
-go test ./...
+go test -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
 go build -trimpath -ldflags='-s -w -buildid=' -o usage-server ./cmd/usage-server

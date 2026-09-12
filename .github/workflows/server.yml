@@ -7,7 +7,7 @@ on:
       - 'server/**'
       - '.github/workflows/server.yml'
   pull_request:
-    branches: [main]
+    branches: [main, 'codex/**']
     paths:
       - 'server/**'
       - '.github/workflows/server.yml'

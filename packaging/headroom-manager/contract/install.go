@@ -17,17 +17,22 @@ import (
 const StateName = "install-state.json"
 
 type InstallState struct {
-	Schema         int    `json:"schema"`
-	Product        string `json:"product"`
-	Platform       string `json:"platform"`
-	Architecture   string `json:"architecture"`
-	ActiveVersion  string `json:"active_version"`
-	VersionPath    string `json:"version_path"`
-	ManifestSHA256 string `json:"manifest_sha256"`
-	PackageAsset   string `json:"package_asset"`
+	PackageKind          string `json:"package_kind,omitempty"`
+	Schema               int    `json:"schema"`
+	Product              string `json:"product"`
+	Platform             string `json:"platform"`
+	Architecture         string `json:"architecture"`
+	ActiveVersion        string `json:"active_version"`
+	VersionPath          string `json:"version_path"`
+	ManifestSHA256       string `json:"manifest_sha256"`
+	PackageAsset         string `json:"package_asset"`
+	ApplicationEntryPath string `json:"application_entry_path,omitempty"`
+	CLIEntryPath         string `json:"cli_entry_path,omitempty"`
+	ServerEntryPath      string `json:"server_entry_path,omitempty"`
 }
 
 type StageResult struct {
+	PackageKind    string `json:"package_kind,omitempty"`
 	Schema         int    `json:"schema"`
 	Product        string `json:"product"`
 	Version        string `json:"version"`
@@ -39,6 +44,7 @@ type StageResult struct {
 }
 
 type Inspection struct {
+	PackageKind      string   `json:"package_kind,omitempty"`
 	Installed        bool     `json:"installed"`
 	TrustedIdentity  bool     `json:"trusted_identity"`
 	Complete         bool     `json:"complete"`
@@ -48,6 +54,8 @@ type Inspection struct {
 	Architecture     string   `json:"architecture,omitempty"`
 	PackageAsset     string   `json:"package_asset,omitempty"`
 	LauncherPath     string   `json:"launcher_path,omitempty"`
+	CLIEntryPath     string   `json:"cli_entry_path,omitempty"`
+	ServerEntryPath  string   `json:"server_entry_path,omitempty"`
 	ActiveExecutable string   `json:"active_executable,omitempty"`
 	Missing          []string `json:"missing,omitempty"`
 	ApplyStatus      string   `json:"apply_status,omitempty"`
@@ -111,7 +119,7 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 		os.RemoveAll(stage)
 		return StageResult{}, err
 	}
-	result := StageResult{Schema: SchemaVersion, Product: "Headroom", Version: manifest.Version, Platform: manifest.Platform, Architecture: manifest.Architecture, PackageAsset: manifest.AssetName, ManifestSHA256: manifestHash, PackageRoot: packageRoot}
+	result := StageResult{PackageKind: manifest.PackageKind, Schema: SchemaVersion, Product: "Headroom", Version: manifest.Version, Platform: manifest.Platform, Architecture: manifest.Architecture, PackageAsset: manifest.AssetName, ManifestSHA256: manifestHash, PackageRoot: packageRoot}
 	if err = WriteJSON(filepath.Join(stage, "verified-stage.json"), result); err != nil {
 		os.RemoveAll(stage)
 		return StageResult{}, err
@@ -120,6 +128,10 @@ func StageArchive(archive, installRoot string, expected Expectations) (StageResu
 }
 
 func InstallArchive(archive, installRoot, entryPath string, expected Expectations) (InstallState, error) {
+	return InstallArchiveWithCLIEntry(archive, installRoot, entryPath, "", expected)
+}
+
+func InstallArchiveWithCLIEntry(archive, installRoot, entryPath, cliEntryPath string, expected Expectations) (InstallState, error) {
 	var err error
 	installRoot, err = NormalizeInstallRoot(installRoot)
 	if err != nil {
@@ -131,7 +143,16 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 			return InstallState{}, err
 		}
 	}
+	if cliEntryPath != "" {
+		cliEntryPath, err = normalizeAbsolutePath(cliEntryPath, "CLI entry path")
+		if err != nil {
+			return InstallState{}, err
+		}
+	}
 	if err = validateInstallTargets(installRoot, entryPath); err != nil {
+		return InstallState{}, err
+	}
+	if err = validateInstallTargets(installRoot, cliEntryPath); err != nil {
 		return InstallState{}, err
 	}
 	stage, err := StageArchive(archive, installRoot, expected)
@@ -145,6 +166,10 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 	stage, manifest, err := LoadVerifiedStage(installRoot, record)
 	if err != nil {
 		return InstallState{}, err
+	}
+	managedCLIEntry := cliEntryPath
+	if manifest.PackageKind == PackageKindCLI {
+		managedCLIEntry = entryPath
 	}
 	lock, err := acquireInstallLock(installRoot, 10*time.Second)
 	if err != nil {
@@ -164,6 +189,25 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 	} else if err = rejectIncompleteTransactions(installRoot); err != nil {
 		return InstallState{}, err
 	}
+	if managedCLIEntry != "" && manifest.Platform != "windows" {
+		serverEntry := filepath.Join(filepath.Dir(managedCLIEntry), "usage-server")
+		if info, statErr := os.Lstat(serverEntry); statErr == nil {
+			prior, priorErr := readTrustedState(installRoot, true)
+			if priorErr != nil || prior == nil || !info.Mode().IsRegular() || !samePath(prior.ServerEntryPath, serverEntry) {
+				return InstallState{}, errors.New("existing usage-server compatibility path is not managed by this Headroom installation")
+			}
+			priorManifest, manifestErr := installedManifest(installRoot, *prior)
+			recordPath := "bootstrap/headroom-cli"
+			if prior.PackageKind == PackageKindCLI {
+				recordPath = "bootstrap/headroom"
+			}
+			if manifestErr != nil || verifyStableEntry(installRoot, serverEntry, priorManifest, recordPath) != nil {
+				return InstallState{}, errors.New("existing usage-server compatibility path is not managed by this Headroom installation")
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return InstallState{}, statErr
+		}
+	}
 	transactions, err := ensureOwnedDirectory(installRoot, "transactions", 0o700)
 	if err != nil {
 		return InstallState{}, err
@@ -181,8 +225,20 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 		_ = os.RemoveAll(backup)
 		return InstallState{}, err
 	}
+	if manifest.PackageKind == PackageKindCLI {
+		state.CLIEntryPath = entryPath
+	} else {
+		state.ApplicationEntryPath = entryPath
+		state.CLIEntryPath = cliEntryPath
+		if cliEntryPath != "" && manifest.Platform != "windows" {
+			state.ServerEntryPath = filepath.Join(filepath.Dir(cliEntryPath), "usage-server")
+		}
+	}
+	if managedCLIEntry != "" && manifest.Platform != "windows" {
+		state.ServerEntryPath = filepath.Join(filepath.Dir(managedCLIEntry), "usage-server")
+	}
 	journal := InstallJournal{Schema: SchemaVersion, Product: "Headroom", Phase: "generation-ready", InstallRoot: installRoot,
-		EntryPath: entryPath, GenerationDir: generation, Candidate: state}
+		EntryPath: entryPath, CLIEntryPath: managedCLIEntry, GenerationDir: generation, Candidate: state}
 	for _, directory := range superseded {
 		journal.Supersedes = append(journal.Supersedes, filepath.Base(directory))
 	}
@@ -217,7 +273,7 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 		_ = os.RemoveAll(backup)
 		return InstallState{}, err
 	}
-	if err = prepareBootstrapBackup(installRoot, entryPath, backup); err != nil {
+	if err = prepareBootstrapBackupWithCLI(installRoot, entryPath, managedCLIEntry, backup); err != nil {
 		_ = os.RemoveAll(generation)
 		return InstallState{}, err
 	}
@@ -230,7 +286,7 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 			return InstallState{}, errors.Join(hookErr, recoverInstallJournal(journal, backup))
 		}
 	}
-	if err = applyBootstrap(stage.PackageRoot, installRoot, entryPath, manifest); err != nil {
+	if err = applyBootstrapWithCLI(stage.PackageRoot, installRoot, entryPath, managedCLIEntry, manifest); err != nil {
 		return InstallState{}, errors.Join(err, recoverInstallJournal(journal, backup))
 	}
 	journal.Phase = "state-intent"
@@ -250,6 +306,165 @@ func InstallArchive(archive, installRoot, entryPath string, expected Expectation
 		_ = os.RemoveAll(directory)
 	}
 	return state, nil
+}
+
+// MigrateManagedEntries installs the public CLI router from an already verified
+// desktop generation. It is used after an older manager has installed a new
+// generation but did not know about the CLI bootstrap record.
+func MigrateManagedEntries(installRoot, applicationEntry, cliEntry string, replaceLegacyServer bool) (InstallState, error) {
+	root, err := NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return InstallState{}, err
+	}
+	applicationEntry, err = normalizeAbsolutePath(applicationEntry, "application entry path")
+	if err != nil {
+		return InstallState{}, err
+	}
+	cliEntry, err = normalizeAbsolutePath(cliEntry, "CLI entry path")
+	if err != nil {
+		return InstallState{}, err
+	}
+	if err = validateInstallTargets(root, applicationEntry); err != nil {
+		return InstallState{}, err
+	}
+	if err = validateInstallTargets(root, cliEntry); err != nil {
+		return InstallState{}, err
+	}
+	if err = RecoverInstall(root); err != nil {
+		return InstallState{}, err
+	}
+	lock, err := acquireInstallLock(root, 10*time.Second)
+	if err != nil {
+		return InstallState{}, err
+	}
+	defer lock.Close()
+	state, err := readTrustedState(root, true)
+	if err != nil || state == nil {
+		return InstallState{}, errors.New("installed desktop generation is not trusted")
+	}
+	if state.PackageKind == PackageKindCLI {
+		return InstallState{}, errors.New("CLI-only installations do not need desktop entry migration")
+	}
+	manifest, err := installedManifest(root, *state)
+	if err != nil {
+		return InstallState{}, err
+	}
+	ext := ""
+	if manifest.Platform == "windows" {
+		ext = ".exe"
+	}
+	routerRecord, routerOK := fileRecord(manifest.Files, "bundle/bin/headroom-cli-launcher"+ext)
+	bootstrapRecord, bootstrapOK := fileRecord(manifest.Files, "bootstrap/headroom-cli"+ext)
+	if !routerOK || !bootstrapOK || routerRecord.LinkTarget != "" || bootstrapRecord.LinkTarget != "" || routerRecord.SHA256 != bootstrapRecord.SHA256 || routerRecord.Size != bootstrapRecord.Size {
+		return InstallState{}, errors.New("installed generation has no verified CLI migration router")
+	}
+	router := filepath.Join(root, filepath.FromSlash(state.VersionPath), "bin", "headroom-cli-launcher"+ext)
+	if digest, digestErr := digestFile(router); digestErr != nil || digest != routerRecord.SHA256 {
+		return InstallState{}, errors.New("installed CLI migration router failed verification")
+	}
+	serverEntry := ""
+	if manifest.Platform != "windows" {
+		serverEntry = filepath.Join(filepath.Dir(cliEntry), "usage-server")
+	}
+	if state.ApplicationEntryPath == applicationEntry && state.CLIEntryPath == cliEntry && state.ServerEntryPath == serverEntry {
+		inspection := InspectInstall(root)
+		if inspection.TrustedIdentity && inspection.Complete {
+			return *state, nil
+		}
+	}
+	applicationMissing := false
+	if err = verifyStableEntry(root, applicationEntry, manifest, "bootstrap/headroom"+ext); err != nil {
+		if _, statErr := os.Lstat(applicationEntry); !errors.Is(statErr, os.ErrNotExist) {
+			return InstallState{}, errors.New("application entry does not match the trusted legacy launcher")
+		}
+		applicationMissing = true
+	}
+	cliIsLegacyGUI := false
+	if info, statErr := os.Lstat(cliEntry); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return InstallState{}, errors.New("existing public CLI path is unsafe")
+		}
+		if currentErr := verifyStableEntry(root, cliEntry, manifest, "bootstrap/headroom-cli"+ext); currentErr != nil {
+			if legacyErr := verifyStableEntry(root, cliEntry, manifest, "bootstrap/headroom"+ext); legacyErr != nil {
+				return InstallState{}, errors.New("existing public CLI path is not the managed legacy GUI launcher")
+			}
+			cliIsLegacyGUI = true
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return InstallState{}, statErr
+	}
+	if manifest.Platform != "windows" {
+		if info, statErr := os.Lstat(serverEntry); statErr == nil {
+			if currentErr := verifyStableEntry(root, serverEntry, manifest, "bootstrap/headroom-cli"); currentErr == nil {
+				// Already the managed compatibility router.
+			} else if !replaceLegacyServer || !info.Mode().IsRegular() {
+				return InstallState{}, errors.New("existing usage-server compatibility path requires explicit legacy replacement")
+			}
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return InstallState{}, statErr
+		}
+	}
+	backupDir, err := os.MkdirTemp(filepath.Join(root, "transactions"), "migrate-entries-")
+	if err != nil {
+		return InstallState{}, err
+	}
+	if err = prepareBootstrapBackupWithCLI(root, applicationEntry, cliEntry, backupDir); err != nil {
+		_ = os.RemoveAll(backupDir)
+		return InstallState{}, err
+	}
+	updated := *state
+	updated.ApplicationEntryPath, updated.CLIEntryPath, updated.ServerEntryPath = applicationEntry, cliEntry, serverEntry
+	journal := EntryMigrationJournal{Schema: SchemaVersion, Product: "Headroom", Phase: "entry-intent", InstallRoot: root,
+		EntryPath: applicationEntry, CLIEntryPath: cliEntry, Previous: *state, Candidate: updated}
+	journalPath := filepath.Join(backupDir, EntryMigrationJournalName)
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		_ = os.RemoveAll(backupDir)
+		return InstallState{}, err
+	}
+	rollback := func(cause error) error {
+		return errors.Join(cause, restoreBootstrapWithCLI(root, applicationEntry, cliEntry, backupDir), writeDurableJSON(filepath.Join(root, StateName), state))
+	}
+	if applicationMissing {
+		if !cliIsLegacyGUI {
+			return InstallState{}, rollback(errors.New("missing application entry has no trusted legacy source"))
+		}
+		if err = replaceFile(cliEntry, applicationEntry, 0o755); err != nil {
+			return InstallState{}, rollback(err)
+		}
+		if err = replaceBytes([]byte(root+"\n"), applicationEntry+".root", 0o600); err != nil {
+			return InstallState{}, rollback(err)
+		}
+	}
+	if err = replaceFile(router, cliEntry, 0o755); err != nil {
+		return InstallState{}, rollback(err)
+	}
+	if err = replaceBytes([]byte(root+"\n"), cliEntry+".root", 0o600); err != nil {
+		return InstallState{}, rollback(err)
+	}
+	if serverEntry != "" {
+		if err = replaceFile(router, serverEntry, 0o755); err != nil {
+			return InstallState{}, rollback(err)
+		}
+		if err = replaceBytes([]byte(root+"\n"), serverEntry+".root", 0o600); err != nil {
+			return InstallState{}, rollback(err)
+		}
+	}
+	journal.Phase = "state-intent"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return InstallState{}, rollback(err)
+	}
+	if err = writeDurableJSON(filepath.Join(root, StateName), updated); err != nil {
+		return InstallState{}, rollback(err)
+	}
+	if inspection := InspectInstall(root); !inspection.TrustedIdentity || !inspection.Complete {
+		return InstallState{}, rollback(errors.New("migrated entries failed verification"))
+	}
+	journal.Phase = "complete"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return InstallState{}, err
+	}
+	_ = os.RemoveAll(backupDir)
+	return updated, nil
 }
 
 func InspectInstall(installRoot string) Inspection {
@@ -283,7 +498,16 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	if state.Schema != SchemaVersion || state.Product != "Headroom" || !validVersion(state.ActiveVersion) || !validVersionPath(state) {
 		return result, errors.New("installed state identity is invalid")
 	}
-	expectedAsset, err := AssetName(state.ActiveVersion, state.Platform, state.Architecture)
+	for _, entry := range []string{state.ApplicationEntryPath, state.CLIEntryPath, state.ServerEntryPath} {
+		if entry == "" {
+			continue
+		}
+		normalized, pathErr := normalizeAbsolutePath(entry, "installed entry path")
+		if pathErr != nil || normalized != entry || validateInstallTargets(installRoot, entry) != nil {
+			return result, errors.New("installed entry path is invalid")
+		}
+	}
+	expectedAsset, err := AssetNameForKind(state.PackageKind, state.ActiveVersion, state.Platform, state.Architecture)
 	if err != nil || expectedAsset != state.PackageAsset || !hashPattern.MatchString(state.ManifestSHA256) {
 		return result, errors.New("installed state package identity is invalid")
 	}
@@ -301,10 +525,11 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	}
 	manifest, err := DecodePackageManifest(file)
 	file.Close()
-	if err != nil || manifest.Version != state.ActiveVersion || manifest.Platform != state.Platform || manifest.Architecture != state.Architecture || manifest.AssetName != state.PackageAsset {
+	if err != nil || manifest.PackageKind != state.PackageKind || manifest.Version != state.ActiveVersion || manifest.Platform != state.Platform || manifest.Architecture != state.Architecture || manifest.AssetName != state.PackageAsset {
 		return result, errors.New("installed manifest identity is invalid")
 	}
 	result.TrustedIdentity = true
+	result.PackageKind = state.PackageKind
 	result.Version, result.VersionPath = state.ActiveVersion, state.VersionPath
 	result.Platform, result.Architecture, result.PackageAsset = state.Platform, state.Architecture, state.PackageAsset
 	ext := ""
@@ -315,6 +540,11 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	if state.Platform == "windows" {
 		result.LauncherPath = filepath.Join(installRoot, "headroom.exe")
 	}
+	if state.ApplicationEntryPath != "" {
+		result.LauncherPath = state.ApplicationEntryPath
+	}
+	result.CLIEntryPath = state.CLIEntryPath
+	result.ServerEntryPath = state.ServerEntryPath
 	versionRoot := filepath.Join(installRoot, filepath.FromSlash(state.VersionPath))
 	result.ActiveExecutable = installedComponentPath(installRoot, state.VersionPath, manifest.Components.Application.Path)
 	for _, record := range manifest.Files {
@@ -370,6 +600,28 @@ func inspectState(installRoot string, state InstallState) (Inspection, error) {
 	if data, associationErr := readBoundedFile(result.LauncherPath+".root", 4096); associationErr != nil || string(data) != installRoot+"\n" {
 		result.Missing = append(result.Missing, "bootstrap/association")
 	}
+	if state.CLIEntryPath != "" {
+		record := "bootstrap/headroom-cli"
+		if state.Platform == "windows" {
+			record += ".exe"
+		}
+		if state.PackageKind == PackageKindCLI {
+			record = "bootstrap/headroom"
+			if state.Platform == "windows" {
+				record += ".exe"
+			}
+		}
+		bootstrapMissing(record, state.CLIEntryPath)
+		if data, associationErr := readBoundedFile(state.CLIEntryPath+".root", 4096); associationErr != nil || string(data) != installRoot+"\n" {
+			result.Missing = append(result.Missing, "bootstrap/cli-association")
+		}
+		if state.ServerEntryPath != "" {
+			bootstrapMissing(record, state.ServerEntryPath)
+			if data, associationErr := readBoundedFile(state.ServerEntryPath+".root", 4096); associationErr != nil || string(data) != installRoot+"\n" {
+				result.Missing = append(result.Missing, "bootstrap/server-association")
+			}
+		}
+	}
 	result.Complete = len(result.Missing) == 0
 	return result, nil
 }
@@ -402,6 +654,54 @@ func validVersionPath(state InstallState) bool {
 }
 
 func ActiveExecutable(installRoot string) (string, Inspection, error) {
+	return ActiveExecutableForRole(installRoot, RoleApplication)
+}
+
+func ManagerExecutable(installRoot string) (string, Inspection, error) {
+	root, err := NormalizeInstallRoot(installRoot)
+	if err != nil {
+		return "", Inspection{}, err
+	}
+	inspection := InspectInstall(root)
+	if !inspection.TrustedIdentity {
+		return "", inspection, errors.New("Headroom installation identity is not valid")
+	}
+	manifest, err := installedManifest(root, InstallState{Schema: SchemaVersion, Product: "Headroom", ActiveVersion: inspection.Version, VersionPath: inspection.VersionPath})
+	if err != nil {
+		return "", inspection, err
+	}
+	ext := ""
+	if manifest.Platform == "windows" {
+		ext = ".exe"
+	}
+	path := filepath.Join(root, "headroom-package"+ext)
+	record, ok := fileRecord(manifest.Files, "bootstrap/headroom-package"+ext)
+	if !ok || record.LinkTarget != "" {
+		return "", inspection, errors.New("manager bootstrap is not inventoried")
+	}
+	if err = validateInstallTargets(root, path); err != nil {
+		return "", inspection, err
+	}
+	info, statErr := os.Lstat(path)
+	digest, digestErr := digestFile(path)
+	if statErr != nil || !info.Mode().IsRegular() || info.Size() != record.Size || digestErr != nil || digest != record.SHA256 {
+		return "", inspection, errors.New("installed manager failed verification")
+	}
+	return path, inspection, nil
+}
+
+const (
+	RoleApplication     = "application"
+	RoleCLI             = "cli"
+	RoleServer          = "server"
+	RolePublicLauncher  = "public_launcher"
+	RoleManagedServer   = "managed_server"
+	RoleManagedLauncher = "managed_launcher"
+)
+
+// ActiveExecutableForRole resolves a fixed, inventoried component. A caller
+// cannot make an arbitrary path trusted by labeling it an update participant.
+func ActiveExecutableForRole(installRoot, role string) (string, Inspection, error) {
 	canonicalRoot, err := NormalizeInstallRoot(installRoot)
 	if err != nil {
 		return "", Inspection{}, err
@@ -420,9 +720,40 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 	if manifestErr != nil {
 		return "", inspection, manifestErr
 	}
-	executable := installedComponentPath(installRoot, inspection.VersionPath, manifest.Components.Application.Path)
+	packagePath := manifest.Components.Application.Path
+	switch role {
+	case "", RoleApplication:
+	case RoleCLI, RoleManagedServer:
+		packagePath = PackageCLIPath(manifest.Platform, manifest.PackageKind)
+	case RoleServer:
+		packagePath = manifest.Components.Server.Path
+	case RolePublicLauncher, RoleManagedLauncher:
+		if inspection.CLIEntryPath == "" {
+			return "", inspection, errors.New("trusted public CLI entry is not recorded")
+		}
+		ext := ""
+		if manifest.Platform == "windows" {
+			ext = ".exe"
+		}
+		if err := verifyStableEntry(installRoot, inspection.CLIEntryPath, manifest, "bootstrap/headroom-cli"+ext); err != nil {
+			if manifest.PackageKind == PackageKindCLI {
+				err = verifyStableEntry(installRoot, inspection.CLIEntryPath, manifest, "bootstrap/headroom"+ext)
+			}
+			if err != nil {
+				return "", inspection, err
+			}
+		}
+		return inspection.CLIEntryPath, inspection, nil
+	default:
+		return "", inspection, errors.New("unknown Headroom component role")
+	}
+	record, listed := fileRecord(manifest.Files, packagePath)
+	if !listed || record.LinkTarget != "" {
+		return "", inspection, errors.New("requested Headroom component is not installed")
+	}
+	executable := installedComponentPath(installRoot, inspection.VersionPath, packagePath)
 	for _, missing := range inspection.Missing {
-		if !isAuxiliaryPath(missing) {
+		if !isAuxiliaryPath(missing) || missing == strings.TrimPrefix(packagePath, "bundle/") {
 			return "", inspection, fmt.Errorf("Headroom %s runtime is incomplete; reinstall %s", inspection.Version, inspection.PackageAsset)
 		}
 	}
@@ -430,7 +761,34 @@ func ActiveExecutable(installRoot string) (string, Inspection, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return "", inspection, fmt.Errorf("Headroom %s application is missing; reinstall %s", inspection.Version, inspection.PackageAsset)
 	}
+	digest, err := digestFile(executable)
+	if err != nil || digest != record.SHA256 {
+		return "", inspection, errors.New("requested Headroom component failed verification")
+	}
 	return executable, inspection, nil
+}
+
+func verifyStableEntry(root, entry string, manifest PackageManifest, recordPath string) error {
+	record, ok := fileRecord(manifest.Files, recordPath)
+	if !ok || record.LinkTarget != "" {
+		return errors.New("public CLI bootstrap is not inventoried")
+	}
+	if err := validateInstallTargets(root, entry); err != nil {
+		return err
+	}
+	info, err := os.Lstat(entry)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != record.Size {
+		return errors.New("public CLI entry is invalid")
+	}
+	digest, err := digestFile(entry)
+	if err != nil || digest != record.SHA256 {
+		return errors.New("public CLI entry failed verification")
+	}
+	association, err := readBoundedFile(entry+".root", 4096)
+	if err != nil || string(association) != root+"\n" {
+		return errors.New("public CLI association is invalid")
+	}
+	return nil
 }
 
 func isAuxiliaryPath(path string) bool {

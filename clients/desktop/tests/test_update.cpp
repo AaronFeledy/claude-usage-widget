@@ -24,12 +24,20 @@ private:
         return value;
     }
     QByteArray record() const { QFile file(m_record); return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray(); }
+    QJsonObject cliRequest() const {
+        return {{"schema", 1}, {"product", "Headroom"}, {"command", "update"},
+            {"install_root", options().installRoot}, {"request_nonce", QString(48, QLatin1Char('b'))},
+            {"additional_processes", QJsonArray{QJsonObject{{"role", "cli"}, {"pid", 12345},
+                {"executable", QCoreApplication::applicationFilePath()}}}}};
+    }
 private slots:
     void initTestCase() { QVERIFY(m_dir.isValid()); m_record = m_dir.filePath(QStringLiteral("record")); QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0")); }
     void init() {
         QFile::remove(m_record);
         QDir(m_dir.filePath(QStringLiteral("transactions"))).removeRecursively();
         QDir(m_dir.filePath(QStringLiteral("staging"))).removeRecursively();
+        QDir(m_dir.filePath(QStringLiteral("pairing"))).removeRecursively();
+        qunsetenv("HEADROOM_UPDATE_FIXTURE_CLI");
         qputenv("HEADROOM_UPDATE_FIXTURE_RECORD", m_record.toUtf8());
 		qunsetenv("HEADROOM_UPDATE_FIXTURE_MODE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_MISSING"); qunsetenv("HEADROOM_UPDATE_FIXTURE_INTERNAL_LAUNCHER"); qunsetenv("HEADROOM_UPDATE_FIXTURE_BAD_STAGE"); qunsetenv("HEADROOM_UPDATE_FIXTURE_APPLY_STATUS");
     }
@@ -48,6 +56,185 @@ private slots:
         official.systemManaged = true; UpdateService system(true, official); system.startAutomaticCheck(); QTest::qWait(50);
         QVERIFY(record().isEmpty()); QCOMPARE(system.updateMethod(), QStringLiteral("system"));
         QCOMPARE(system.statusText(), QStringLiteral("This installation is managed by your system package manager."));
+    }
+    void desktopUpdateAcceptsOnlyItsManagersRegisteredStandaloneServer() {
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "managed-server");
+        UpdateService service(true, options());
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        service.restartToApply(); QTRY_COMPARE(prepared.count(), 1);
+    }
+    void cliPreparedStageIsAppliedWithoutResolvingAnotherRelease() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        const auto before = record();
+        auto request = cliRequest(); request["prepared_stage"] = service.verifiedStage();
+        QJsonObject reply;
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.requestCLIUpdate(request, [&](const QJsonObject &value) { reply = value; });
+        QTRY_COMPARE(prepared.count(), 1);
+        QVERIFY(reply.value("ok").toBool());
+        const auto added = record().mid(before.size());
+        QVERIFY(added.contains("prepare-apply"));
+        QVERIFY(!added.contains("check-update")); QVERIFY(!added.contains("stage-update"));
+    }
+    void cliPreparedStageCannotChangePackageProfile() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        auto stage = service.verifiedStage(); stage["package_kind"] = "cli";
+        const QString path = QDir(stage.value("package_root").toString()).absoluteFilePath("../../verified-stage.json");
+        QFile stagedRecord(path); QVERIFY(stagedRecord.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        stagedRecord.write(QJsonDocument(stage).toJson()); stagedRecord.close();
+        auto request = cliRequest(); request["prepared_stage"] = stage;
+        QJsonObject reply;
+        service.requestCLIUpdate(request, [&](const QJsonObject &value) { reply = value; });
+        QCOMPARE(reply.value("ok").toBool(), false);
+        QCOMPARE(service.state(), QString("failed"));
+        QVERIFY(!record().contains("prepare-apply"));
+    }
+    void pendingOrInvalidPairingRetainsVerifiedStage() {
+        for (const auto &body : {QByteArray(R"({"schema":1,"product":"Headroom","state":"pending"})"), QByteArray("not json"), QByteArray("{}")}) {
+            UpdateService service(true, options());
+            QTRY_VERIFY(service.canCheck());
+            service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+            service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+            const auto stage = service.verifiedStage();
+            const auto before = record();
+            QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+            QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly | QIODevice::Truncate)); pair.write(body); pair.close();
+            QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+            service.restartToApply();
+            QVERIFY(!service.busy()); QVERIFY(service.restartAvailable());
+            QCOMPARE(service.verifiedStage(), stage); QCOMPARE(record(), before);
+            QCOMPARE(prepared.count(), 0);
+            QVERIFY(service.statusText().contains("pairing needs attention"));
+            QVERIFY(service.statusText().contains("--this-install-only"));
+        }
+    }
+    void failedPairingCoordinatorRetainsVerifiedStage() {
+        const QString directory = m_dir.filePath("paired runtime");
+        QVERIFY(QDir().mkpath(directory));
+#ifdef Q_OS_WIN
+        const QString executable = QDir(directory).filePath("headroom-cli.exe");
+#else
+        const QString executable = QDir(directory).filePath("headroom-cli");
+#endif
+        QFile::remove(executable);
+        QVERIFY(QFile::copy(QStringLiteral(UPDATE_FIXTURE_PATH), executable));
+        qputenv("HEADROOM_UPDATE_FIXTURE_CLI", executable.toUtf8());
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write(R"({"schema":1,"product":"Headroom","state":"active"})"); pair.close();
+        auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
+        qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
+        UpdateService service(true, value);
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        service.restartToApply();
+        QTRY_VERIFY(service.busy());
+        QProcess *coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        // The paired coordinator is public update tooling, so it never inherits the
+        // server bearer token. The leading newline keeps this off the check-update
+        // and stage-update lines, which also end in "update token=".
+        QTRY_VERIFY(record().contains("\nupdate token="));
+        QVERIFY(record().contains("\nupdate token=absent"));
+        QVERIFY(!record().contains("\nupdate token=present"));
+        const auto stage = service.verifiedStage();
+        coordinator->kill();
+        QTRY_VERIFY(!service.busy());
+        QVERIFY(service.restartAvailable());
+        QCOMPARE(service.verifiedStage(), stage);
+        QVERIFY(service.statusText().contains("downloaded package is still available"));
+    }
+    void pairedUpdateOnlyAcceptsItsOwnCoordinator() {
+        const QString directory = m_dir.filePath("paired runtime");
+        QVERIFY(QDir().mkpath(directory));
+#ifdef Q_OS_WIN
+        const QString executable = QDir(directory).filePath("headroom-cli.exe");
+#else
+        const QString executable = QDir(directory).filePath("headroom-cli");
+#endif
+        QFile::remove(executable);
+        QVERIFY(QFile::copy(QStringLiteral(UPDATE_FIXTURE_PATH), executable));
+        qputenv("HEADROOM_UPDATE_FIXTURE_CLI", executable.toUtf8());
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write(R"({"schema":1,"product":"Headroom","state":"active"})"); pair.close();
+        auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
+        qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
+        UpdateService service(true, value);
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        service.restartToApply();
+        QTRY_VERIFY(service.busy());
+        QProcess *coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        // The paired coordinator is public update tooling, so it never inherits the
+        // server bearer token. The leading newline keeps this off the check-update
+        // and stage-update lines, which also end in "update token=".
+        QTRY_VERIFY(record().contains("\nupdate token="));
+        QVERIFY(record().contains("\nupdate token=absent"));
+        QVERIFY(!record().contains("\nupdate token=present"));
+        QJsonObject reply;
+        service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &result) { reply = result; });
+        QCOMPARE(reply.value("status").toString(), QString("busy"));
+        QVERIFY(!record().contains("prepare-apply"));
+        auto request = cliRequest();
+        request["additional_processes"] = QJsonArray{QJsonObject{{"role", "cli"}, {"pid", coordinator->processId()}, {"executable", executable}}};
+        request["prepared_stage"] = service.verifiedStage();
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.requestCLIUpdate(request, [&](const QJsonObject &result) { reply = result; });
+        QTRY_COMPARE(prepared.count(), 1); QVERIFY(reply.value("ok").toBool());
+    }
+    void cliRequestIsRejectedForUnmanagedOrDifferentInstall() {
+        UpdateService isolated(false, options());
+        QJsonObject result;
+        isolated.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) { result = reply; });
+        QCOMPARE(result.value("status").toString(), QString("unmanaged_installation"));
+        QVERIFY(record().isEmpty());
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        const auto before = record();
+        auto request = cliRequest(); request["install_root"] = QDir(options().installRoot).filePath("other");
+        service.requestCLIUpdate(request, [&](const QJsonObject &reply) { result = reply; });
+        QCOMPARE(result.value("status").toString(), QString("invalid_request"));
+        QCOMPARE(record(), before);
+    }
+    void cliUpdateAcknowledgesOnlyAfterVerifiedCommit() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        QStringList events;
+        connect(&service, &UpdateService::applyPrepared, this, [&] { events.append("quit"); });
+        service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) {
+            QCOMPARE(reply.value("status").toString(), QString("accepted"));
+            QVERIFY(reply.value("ok").toBool());
+            QCOMPARE(reply.value("request_nonce"), cliRequest().value("request_nonce"));
+            QVERIFY(QFileInfo::exists(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef/commit.json")));
+            events.append("reply");
+        });
+        QTRY_COMPARE(events, QStringList({"reply", "quit"}));
+        QVERIFY(record().contains("--participant"));
+    }
+    void cliUpdateRejectsChangedParticipantBeforeCommit() {
+        UpdateService service(true, options());
+        QTRY_VERIFY(service.canCheck());
+        QJsonObject result;
+        qputenv("HEADROOM_UPDATE_FIXTURE_MODE", "mismatched-participant");
+        // Stage normally, then corrupt only the manager's captured identity.
+        service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &reply) { result = reply; });
+        QTRY_VERIFY(!result.isEmpty());
+        QVERIFY(!result.value("ok").toBool());
+        QVERIFY(record().contains("prepare-apply"));
+        QVERIFY(!QFileInfo::exists(m_dir.filePath("transactions/apply-0123456789abcdef0123456789abcdef/commit.json")));
     }
     void externalStableEntryIsValidatedWithoutPathEquality() {
         const QString rootAlias = m_dir.filePath(QStringLiteral("native identity"));
@@ -146,6 +333,12 @@ private slots:
         QTRY_VERIFY(service.canRepair()); QVERIFY(service.statusText().contains(QStringLiteral("needs repair")));
         service.repairInstallation(); QTRY_COMPARE(service.state(), QStringLiteral("staged"));
         QCOMPARE(service.latestVersion(), QStringLiteral("0.1.0")); QVERIFY(record().contains("stage-repair"));
+        // Local repair must remain available even when paired identity is incomplete.
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write("{}"); pair.close();
+        QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+        service.restartToApply(); QTRY_COMPARE(prepared.count(), 1);
+        QVERIFY(record().contains("prepare-apply"));
     }
     void bootstrapDamageIsRepairableForVerifiedIdentity() {
         qputenv("HEADROOM_UPDATE_FIXTURE_MISSING", "bootstrap/headroom-package");

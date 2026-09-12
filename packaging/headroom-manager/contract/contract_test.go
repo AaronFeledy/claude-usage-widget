@@ -196,6 +196,30 @@ func TestInstallFreshUpgradeAndAuxiliaryRepair(t *testing.T) {
 	}
 }
 
+func TestInstallRefusesUnmanagedUsageServerCompatibilityPath(t *testing.T) {
+	if runtimeWindows() {
+		t.Skip("the Windows package has no usage-server compatibility entry")
+	}
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "install")
+	entry := filepath.Join(root, "bin", "headroom-gui")
+	cliEntry := filepath.Join(root, "bin", "headroom")
+	if err := os.MkdirAll(filepath.Dir(cliEntry), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	serverEntry := filepath.Join(filepath.Dir(cliEntry), "usage-server")
+	if err := os.WriteFile(serverEntry, []byte("unmanaged\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := makePackage(t, root, "1.0.0", false)
+	if _, err := InstallArchiveWithCLIEntry(archive, installRoot, entry, cliEntry, Expectations{}); err == nil || !strings.Contains(err.Error(), "not managed") {
+		t.Fatalf("unmanaged compatibility entry result = %v", err)
+	}
+	if data, err := os.ReadFile(serverEntry); err != nil || string(data) != "unmanaged\n" {
+		t.Fatalf("unmanaged compatibility entry changed: %q, %v", data, err)
+	}
+}
+
 func TestSuccessfulExternalReinstallClearsStaleApplyOutcome(t *testing.T) {
 	root := t.TempDir()
 	installRoot := filepath.Join(root, "install")
@@ -578,7 +602,8 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 		t.Fatal(err)
 	}
 	ext := nativeExtension()
-	names := []string{packageApplicationPath(platform), packageServerPath(platform), "bundle/bin/headroom-package" + ext, "bootstrap/headroom" + ext, "bootstrap/headroom-package" + ext}
+	names := []string{packageApplicationPath(platform), packageServerPath(platform), PackageCLIPath(platform, ""), "bundle/bin/headroom-cli-launcher" + ext,
+		"bundle/bin/headroom-package" + ext, "bootstrap/headroom" + ext, "bootstrap/headroom-cli" + ext, "bootstrap/headroom-package" + ext}
 	if platform == "windows" {
 		names = append(names, "bundle/bin/headroom-credential-helper.exe")
 	}
@@ -628,7 +653,7 @@ func makePackage(t *testing.T, parent, version string, corrupt bool) string {
 		}
 	}
 	archive := filepath.Join(parent, asset)
-	if err = WriteArchive(root, archive); err != nil {
+	if err = writeArchiveWithCompression(root, archive, gzip.BestSpeed); err != nil {
 		t.Fatal(err)
 	}
 	return archive

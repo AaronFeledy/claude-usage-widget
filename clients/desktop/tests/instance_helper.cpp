@@ -42,6 +42,9 @@ int main(int argc, char **argv)
         return app.exec();
     }
     if (instance.start(2000) != InstanceService::Result::Primary) return 3;
+    instance.setRequestHandler([](const QByteArray &request) {
+        return request == R"({"command":"usage"})" ? QByteArray(R"({"ok":true,"result":[]})") : QByteArray();
+    });
     QObject::connect(&instance, &InstanceService::activationRequested, &app, [&] {
         if (!writeMarker(arguments[3], "activated")) app.exit(5);
     });

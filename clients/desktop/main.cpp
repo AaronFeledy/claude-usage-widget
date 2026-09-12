@@ -28,8 +28,34 @@
 #include <QSaveFile>
 #include <QSignalBlocker>
 #include <QSystemTrayIcon>
+#include <QJsonArray>
+#include <cstdio>
+#include <cstring>
+
+namespace {
+int desktopCLIRequest(int argc, char **argv) {
+    QCoreApplication app(argc, argv);
+    app.setOrganizationName("Headroom"); app.setApplicationName("Headroom");
+    QFile input;
+    if (!input.open(stdin, QIODevice::ReadOnly)) return 1;
+    const auto bytes = input.read(4097);
+    if (bytes.isEmpty() || bytes.size() > 4096) return 1;
+    const auto command = QJsonDocument::fromJson(bytes);
+    if (!command.isObject()) return 1;
+    InstanceService instance(SettingsService::defaultPath());
+    const int timeout = command.object().value(QStringLiteral("command")).toString() == QStringLiteral("update") ? 8 * 60 * 1000 : 3000;
+    const auto response = instance.request(command.toJson(QJsonDocument::Compact), timeout);
+    if (response.isEmpty()) return instance.primaryUnavailable() ? 3 : 1;
+    QFile output;
+    if (!output.open(stdout, QIODevice::WriteOnly) || output.write(response) != response.size() || !output.flush()) return 1;
+    return 0;
+}
+}
 
 int main(int argc, char **argv) {
+    // The CLI bridge is headless and only talks to an existing desktop. It must
+    // never instantiate Controller, discover credentials, or start a poller.
+    if (argc == 2 && std::strcmp(argv[1], "--headroom-cli-request") == 0) return desktopCLIRequest(argc, argv);
     QQuickStyle::setStyle("Basic");
     QApplication app(argc, argv);
     app.setPalette(headroomPalette());
@@ -63,7 +89,40 @@ int main(int argc, char **argv) {
     Controller controller(parser.value("config"), nullptr, !capture && !isolated, {}, {}, {}, !capture);
     StartupService startup({}, {}, !capture && !isolated);
     AppInfo appInfo;
+    // Version checks use the selected transport after startup, including after
+    // an update restart. An SSH/HTTP address never grants local update ownership.
+    QObject::connect(&appInfo, &AppInfo::backendChanged, &appInfo, &AppInfo::refreshServer, Qt::QueuedConnection);
+    QTimer serverVersionTimer;
+    serverVersionTimer.setInterval(5 * 60 * 1000);
+    QObject::connect(&serverVersionTimer, &QTimer::timeout, &appInfo, &AppInfo::refreshServer);
+    if (!capture) serverVersionTimer.start();
     UpdateService updateService(!capture && !isolated);
+    if (!capture && !isolated) instance.setRequestHandler([&](const QByteArray &request) {
+        const auto document = QJsonDocument::fromJson(request);
+        if (!document.isObject()) return QByteArray();
+        const auto object = document.object();
+        const auto command = object.value(QStringLiteral("command")).toString();
+        QJsonObject response;
+        if (command == QStringLiteral("usage")) {
+            response = {{"ok", true}, {"result", QJsonArray::fromVariantList(controller.providers())},
+                        {"status", controller.state().value(QStringLiteral("status")).toString()},
+                        {"last_good", controller.state().value(QStringLiteral("lastGood")).toLongLong()}};
+        } else if (command == QStringLiteral("info")) {
+            response = {{"ok", true}, {"version", QCoreApplication::applicationVersion()},
+                        {"pid", qint64(QCoreApplication::applicationPid())},
+                        {"executable", QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath()},
+                        {"install_root", QFileInfo(qEnvironmentVariable("HEADROOM_INSTALL_ROOT")).canonicalFilePath()}};
+        } else return QByteArray();
+        return QJsonDocument(response).toJson(QJsonDocument::Compact);
+    });
+    if (!capture && !isolated) instance.setAsyncRequestHandler([&](const QByteArray &request, InstanceService::Reply reply) {
+        const auto object = QJsonDocument::fromJson(request).object();
+        if (object.value(QStringLiteral("command")).toString() != QStringLiteral("update")) return false;
+        updateService.requestCLIUpdate(object, [reply = std::move(reply)](const QJsonObject &response) {
+            reply(QJsonDocument(response).toJson(QJsonDocument::Compact));
+        });
+        return true;
+    });
     updateService.setOwnedProcessProvider([&controller] {
         return qMakePair(controller.ownedServerProcessId(), controller.ownedServerExecutablePath());
     });
@@ -80,7 +139,8 @@ int main(int argc, char **argv) {
         updateService.setPublicTrafficAllowed(!capture && !isolated);
         appInfo.setBackend(capture ? QString() : controller.backendUrl(),
                            capture ? QString() : controller.backendToken(),
-                           capture ? QSslCertificate() : controller.backendCertificate());
+                           capture ? QSslCertificate() : controller.backendCertificate(),
+                           controller.settings().value(QStringLiteral("mode")).toString() != QStringLiteral("local"));
     };
     QObject::connect(&controller, &Controller::settingsChanged, &app, syncServices);
     QObject::connect(&controller, &Controller::changed, &app, syncServices);

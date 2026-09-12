@@ -140,6 +140,13 @@ ApplicationWindow {
                 anchors { left: parent.left; right: parent.right; top: parent.top; margins: window.compact ? 16 : 24; topMargin: 12 }
                 spacing: 10
                 Text {
+                    objectName: "serverUpdateNotice"
+                    visible: appInfo.serverUpdateNotice.length > 0
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    text: appInfo.serverUpdateNotice
+                    textFormat: Text.PlainText; color: Theme.orange; font.pixelSize: 11
+                }
+                Text {
                     visible: window.state.status === "offline"
                     Layout.fillWidth: true; wrapMode: Text.WordWrap
                     text: window.state.message + (window.state.lastGood ? " Last readings are retained." : "")
