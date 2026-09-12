@@ -12,6 +12,10 @@ func TestServiceRegistrationDistinguishesLiveAndReplacedProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
 	token, err := captureProcessToken(os.Getpid(), executable)
 	if err != nil {
 		t.Fatal(err)
