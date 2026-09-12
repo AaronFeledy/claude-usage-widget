@@ -112,6 +112,7 @@ private slots:
         QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
         QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write("{}"); pair.close();
         auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
+        qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
         UpdateService service(true, value);
         QTRY_VERIFY(service.canCheck());
         service.checkForUpdates(); QTRY_VERIFY(service.canStage());
@@ -121,6 +122,12 @@ private slots:
         QProcess *coordinator = nullptr;
         for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
         QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        // The paired coordinator is public update tooling, so it never inherits the
+        // server bearer token. The leading newline keeps this off the check-update
+        // and stage-update lines, which also end in "update token=".
+        QTRY_VERIFY(record().contains("\nupdate token="));
+        QVERIFY(record().contains("\nupdate token=absent"));
+        QVERIFY(!record().contains("\nupdate token=present"));
         QJsonObject reply;
         service.requestCLIUpdate(cliRequest(), [&](const QJsonObject &result) { reply = result; });
         QCOMPARE(reply.value("status").toString(), QString("busy"));

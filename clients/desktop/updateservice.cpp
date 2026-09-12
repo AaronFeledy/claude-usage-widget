@@ -29,6 +29,16 @@ QString cleanAbsolute(const QString &path) {
     return QDir::toNativeSeparators(normalized);
 }
 
+// Public update tooling resolves releases and packages only. It never needs
+// the server bearer token, the server configuration, or the credential
+// snapshot root, so every public child starts without them.
+QProcessEnvironment publicToolEnvironment() {
+    auto environment = QProcessEnvironment::systemEnvironment();
+    for (const auto &name : {QStringLiteral("USAGE_AUTH_TOKEN"), QStringLiteral("USAGE_CONFIG"),
+                             QStringLiteral("HEADROOM_CREDENTIAL_SNAPSHOT_ROOT")}) environment.remove(name);
+    return environment;
+}
+
 QByteArray digest(const QString &path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return {};
@@ -252,7 +262,7 @@ void UpdateService::startPairedUpdate() {
         QStringLiteral("headroom-cli")));
 #endif
     process->setArguments({QStringLiteral("update")});
-    auto environment = QProcessEnvironment::systemEnvironment();
+    auto environment = publicToolEnvironment();
     environment.remove(QStringLiteral("HEADROOM_PUBLIC_LAUNCHER_PID"));
     environment.remove(QStringLiteral("HEADROOM_PUBLIC_LAUNCHER_PATH"));
     process->setProcessEnvironment(environment);
@@ -305,10 +315,8 @@ void UpdateService::run(Operation operation, const QString &command, const QStri
     process->setProgram(m_options.managerPath);
     process->setArguments(arguments);
     process->setProcessChannelMode(QProcess::SeparateChannels);
-    auto environment = QProcessEnvironment::systemEnvironment();
-    if (operation != Operation::Apply)
-        for (const auto &name : {QStringLiteral("USAGE_AUTH_TOKEN"), QStringLiteral("USAGE_CONFIG"),
-                                 QStringLiteral("HEADROOM_CREDENTIAL_SNAPSHOT_ROOT")}) environment.remove(name);
+    // Apply hands the approved server environment to the transaction manager.
+    const auto environment = operation == Operation::Apply ? QProcessEnvironment::systemEnvironment() : publicToolEnvironment();
     process->setProcessEnvironment(environment);
 #ifdef Q_OS_WIN
     if (operation == Operation::Apply)
