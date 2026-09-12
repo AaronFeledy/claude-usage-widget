@@ -56,7 +56,7 @@ func newUpdateFixture(t *testing.T, version, archive string) *updateFixture {
 
 func (f *updateFixture) client() UpdateClient {
 	origin, _ := url.Parse(f.server.URL)
-	return UpdateClient{ReleaseAPI: f.server.URL + "/repos/AaronFeledy/claude-usage-widget/releases/latest", FixtureOrigin: origin, Timeout: 30 * time.Second}
+	return UpdateClient{ReleaseAPI: f.server.URL + "/repos/AaronFeledy/headroom/releases/latest", FixtureOrigin: origin, Timeout: 30 * time.Second}
 }
 
 func (f *updateFixture) serve(writer http.ResponseWriter, request *http.Request) {
@@ -507,9 +507,9 @@ func TestUpdateRedirectAndStreamingFailuresLeaveNoStage(t *testing.T) {
 func TestProductionRedirectPolicyRejectsForeignDowngradePortAndPath(t *testing.T) {
 	client := DefaultUpdateClient()
 	for _, raw := range []string{
-		"http://github.com/AaronFeledy/claude-usage-widget/releases/download/v1/a",
+		"http://github.com/AaronFeledy/headroom/releases/download/v1/a",
 		"https://evil.example/a",
-		"https://github.com:444/AaronFeledy/claude-usage-widget/releases/download/v1/a",
+		"https://github.com:444/AaronFeledy/headroom/releases/download/v1/a",
 		"https://github.com/another/repository/releases/download/v1/a",
 	} {
 		candidate, _ := url.Parse(raw)
@@ -518,6 +518,7 @@ func TestProductionRedirectPolicyRejectsForeignDowngradePortAndPath(t *testing.T
 		}
 	}
 	for _, raw := range []string{
+		"https://github.com/AaronFeledy/headroom/releases/download/v1/a",
 		"https://github.com/AaronFeledy/claude-usage-widget/releases/download/v1/a",
 		"https://release-assets.githubusercontent.com/signed?token=value",
 	} {
@@ -528,11 +529,35 @@ func TestProductionRedirectPolicyRejectsForeignDowngradePortAndPath(t *testing.T
 	}
 }
 
+func TestProductionReleaseURLsAcceptCanonicalAndLegacyRepositories(t *testing.T) {
+	client := DefaultUpdateClient()
+	version := "1.2.3"
+	name := "Headroom-v1.2.3-linux-x86_64.tar.gz"
+	for _, repository := range []string{canonicalRepository, legacyRepository} {
+		api, _ := url.Parse("https://api.github.com/repos/" + repository + "/releases/latest")
+		if !client.validAPIURL(api) {
+			t.Fatalf("rejected release API for %s", repository)
+		}
+		asset := "https://github.com/" + repository + "/releases/download/v" + version + "/" + name
+		if err := client.validateAssetURL(asset, version, name); err != nil {
+			t.Fatalf("rejected release asset for %s: %v", repository, err)
+		}
+	}
+	foreignAPI, _ := url.Parse("https://api.github.com/repos/another/repository/releases/latest")
+	if client.validAPIURL(foreignAPI) {
+		t.Fatal("accepted foreign release API")
+	}
+	extraPath := "https://github.com/" + canonicalRepository + "/releases/download/v" + version + "/" + name + ".extra"
+	if err := client.validateAssetURL(extraPath, version, name); err == nil {
+		t.Fatal("accepted release asset with an appended path suffix")
+	}
+}
+
 func TestBuildMetadataAssetURLAcceptsCanonicalPercentEncoding(t *testing.T) {
 	client := DefaultUpdateClient()
 	version := "1.2.3+build-linux"
 	name := "Headroom-v1.2.3+build-linux-linux-x86_64.tar.gz"
-	raw := "https://github.com/AaronFeledy/claude-usage-widget/releases/download/v1.2.3%2Bbuild-linux/Headroom-v1.2.3%2Bbuild-linux-linux-x86_64.tar.gz"
+	raw := "https://github.com/AaronFeledy/headroom/releases/download/v1.2.3%2Bbuild-linux/Headroom-v1.2.3%2Bbuild-linux-linux-x86_64.tar.gz"
 	if err := client.validateAssetURL(raw, version, name); err != nil {
 		t.Fatalf("valid encoded build metadata rejected: %v", err)
 	}

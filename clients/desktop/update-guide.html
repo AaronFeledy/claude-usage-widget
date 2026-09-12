@@ -9,7 +9,7 @@
 <pre><code>cmake -S clients/desktop -B clients/desktop/build -DCMAKE_BUILD_TYPE=Release
 cmake --build clients/desktop/build --parallel
 ctest --test-dir clients/desktop/build --output-on-failure</code></pre>
-<p>On Windows, use the same CMake source with an architecture-matching Qt kit and Visual Studio developer shell. See the <a href="https://github.com/AaronFeledy/claude-usage-widget/tree/main/clients/desktop#build-and-run">Windows source instructions</a> for the native configure and test commands.</p>
+<p>On Windows, use the same CMake source with an architecture-matching Qt kit and Visual Studio developer shell. See the <a href="https://github.com/AaronFeledy/headroom/tree/main/clients/desktop#build-and-run">Windows source instructions</a> for the native configure and test commands.</p>
 <p>On Linux, after the build and tests succeed, choose <strong>Quit Headroom</strong>, install with the same prefix used previously, and reopen it:</p>
 <pre><code>cmake --install clients/desktop/build --prefix "$HOME/.local"
 "$HOME/.local/bin/headroom"</code></pre>
@@ -20,5 +20,5 @@ ctest --test-dir clients/desktop/build --output-on-failure</code></pre>
 <p>If you rerun an official installer while Headroom is already open, quit and reopen the app after installation. The verified files are replaced on disk, but a launcher invocation may activate the existing primary process until it exits.</p>
 <h2>Source requirements</h2>
 <p>CMake 3.21+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2, Widgets, Network, SVG, and Test. Linux package builds also use Qt WaylandClient. Tests bind isolated loopback fixtures and render Qt offscreen.</p>
-<p><a href="https://github.com/AaronFeledy/claude-usage-widget/releases">Project releases</a> · <a href="https://github.com/AaronFeledy/claude-usage-widget">Source repository</a></p>
+<p><a href="https://github.com/AaronFeledy/headroom/releases">Project releases</a> · <a href="https://github.com/AaronFeledy/headroom">Source repository</a></p>
 </html>

@@ -57,7 +57,7 @@ CLI-only packages contain the usage client, server, and package manager without
 Qt. They support Windows x64/ARM64, Linux x86_64/ARM64, and macOS Intel/Apple Silicon.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.sh | sh -s -- --cli
+curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh -s -- --cli
 ```
 
 On Windows, download the official `install.ps1` and run it with `-CLI`.

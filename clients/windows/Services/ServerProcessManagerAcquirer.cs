@@ -6,7 +6,7 @@ namespace ClaudeUsageWidget.Services;
 
 public sealed class UpdateServiceServerBinaryAcquirer : IServerBinaryAcquirer
 {
-    private const string LatestReleaseUrl = "https://api.github.com/repos/AaronFeledy/claude-usage-widget/releases/latest";
+    private const string LatestReleaseUrl = "https://api.github.com/repos/AaronFeledy/headroom/releases/latest";
     private const long DefaultMaxDownloadBytes = 100 * 1024 * 1024;
     private readonly HttpClient _httpClient;
     private readonly Architecture? _architectureOverride;
