@@ -166,6 +166,12 @@ coordinates and LayerShellQt placement, accommodating any panel edge and
 clamping the popup to the selected monitor. Without a known icon position,
 opening from the app menu uses the lower-right of the active screen. There is
 no native title bar, minimize/maximize controls, or taskbar entry in tray mode.
+Drag any edge or corner to resize the window. Headroom remembers the selected
+dimensions in its existing settings file and reuses them when the popup is
+reopened or the app is launched again. Restored sizes are constrained to
+460 × 420 logical pixels where the screen permits, an absolute 1600 × 1200
+ceiling, and the current screen's available area with a 24-pixel margin on every
+side. This keeps every edge reachable after display, resolution, or scale changes.
 Use **Quit Headroom** from the tray menu or Ctrl+Q to exit. A second launch in the
 same user and configuration scope opens the existing popup. An explicit `--config`
 path uses its own instance scope and never imports or changes the normal profile.
@@ -275,17 +281,18 @@ Headroom uses the server's provider names, subtitles, bucket labels, variable
 meter counts, status text, and authentication errors. Live accounts may return
 different bucket layouts. Both clients retain pacing and provider ordering.
 When ChatGPT reports one or more banked usage resets, Headroom shows the available
-count by the provider name. The label turns red only while ChatGPT's weekly meter
-is in the shared Critical warning state. The count is read-only, is not a usage
+count at the right of its weekly meter's bottom text row. The label turns red only
+while ChatGPT's weekly meter is in the shared Critical warning state. The count is read-only, is not a usage
 meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
 Activate the label to open ChatGPT's usage and reset controls in a browser.
 At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
 is available. It requires explicit confirmation and uses the selected backend
-transport. Requests are never retried automatically; an uncertain manual retry
-reuses the saved request ID for the same opaque account fingerprint, including
-after switching between equivalent HTTP and SSH connections. Completed requests
-are released when a fresh snapshot shows a later weekly window. Both the desktop
-and server must support resets.
+transport. Each confirmed request is submitted once, without retries. The button
+stays disabled after submission, including after a connection failure or app
+restart, until fresh usage for the same account falls below 95%. Headroom schedules
+read-only usage refreshes after submission to pick up the reset's effect. The
+button can appear again when weekly usage subsequently reaches 95%. Both the
+desktop and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
 Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies

@@ -40,7 +40,7 @@ private slots:
     void placement() {
         QFETCH(QRect, screen); QFETCH(QRect, work); QFETCH(QPoint, anchor); QFETCH(QString, edge);
         const auto popup = PopupPlacement::bounds(screen, work, anchor, QSize(960,820));
-        QVERIFY(work.adjusted(12,12,-12,-12).contains(popup));
+        QVERIFY(work.adjusted(24,24,-24,-24).contains(popup));
         if (edge == "bottom") QVERIFY(popup.bottom() < anchor.y());
         if (edge == "top") QVERIFY(popup.top() > anchor.y());
         if (edge == "left") QVERIFY(popup.left() > anchor.x());
@@ -49,7 +49,74 @@ private slots:
     void clampsOversizedPopupAndUnknownAnchor() {
         const QRect screen(100, 200, 640, 480), work(100, 240, 640, 440);
         const auto popup = PopupPlacement::bounds(screen, work, QPoint(-9000, -9000), QSize(1200, 900));
-        QCOMPARE(popup, work.adjusted(12, 12, -12, -12));
+        QCOMPARE(popup, work.adjusted(24, 24, -24, -24));
+    }
+    void constrainsRememberedSizeForCurrentScreen() {
+        QCOMPARE(PopupPlacement::constrainedSize(QSize(1896, 1056), QSize(1200, 900)), QSize(1200, 900));
+        QCOMPARE(PopupPlacement::constrainedSize(QSize(1896, 1056), QSize(9000, 9000)), QSize(1600, 1056));
+        QCOMPARE(PopupPlacement::constrainedSize(QSize(700, 500), QSize(200, 100)), QSize(460, 420));
+        QCOMPARE(PopupPlacement::constrainedSize(QSize(400, 300), QSize(1200, 900)), QSize(400, 300));
+    }
+    void resizeHitTestingCoversEdgesAndCorners() {
+        const QSize size(960, 820);
+        QCOMPARE(PopupPlacement::resizeEdges(size, QPoint(0, 0)), Qt::Edges(Qt::LeftEdge | Qt::TopEdge));
+        QCOMPARE(PopupPlacement::resizeEdges(size, QPoint(959, 410)), Qt::Edges(Qt::RightEdge));
+        QCOMPARE(PopupPlacement::resizeEdges(size, QPoint(480, 819)), Qt::Edges(Qt::BottomEdge));
+        QCOMPARE(PopupPlacement::resizeEdges(size, QPoint(480, 410)), Qt::Edges{});
+    }
+    void fallbackGeometryUsesTrackedCoordinates() {
+        const QRect work(-1896, 24, 1848, 1032);
+        const QRect start(-1500, 100, 700, 600);
+        const QRect first = PopupPlacement::resizedBounds(start, Qt::LeftEdge, QPoint(20, 0), work);
+        QCOMPARE(first.left(), -1480);
+        QCOMPARE(first.right(), start.right());
+        QCOMPARE(first.size(), QSize(680, 600));
+        // Before an asynchronous LayerShell configure, another local event is
+        // still relative to the configured start rectangle, so the total delta
+        // remains relative to that rectangle rather than the pending target.
+        const QRect beforeConfigure = PopupPlacement::resizedBounds(start, Qt::LeftEdge, QPoint(30, 0), work);
+        QCOMPARE(beforeConfigure.left(), -1470);
+        QCOMPARE(beforeConfigure.right(), start.right());
+        // After configure, the same pointer is 10 pixels into the moved surface.
+        const QRect afterConfigure = PopupPlacement::resizedBounds(first, Qt::LeftEdge, QPoint(10, 0), work);
+        QCOMPARE(afterConfigure, beforeConfigure);
+    }
+    void resizeFlushesOnHideAndSurvivesReopen() {
+        QQuickWindow window;
+        QSize saved;
+        int writes = 0;
+        TrayPopup popup(&window, false, QSize(700, 600), [&](QSize size) { saved = size; ++writes; });
+        popup.show();
+        QTRY_VERIFY(window.isVisible());
+        window.resize(640, 520);
+        QTRY_COMPARE(window.size(), QSize(640, 520));
+        QCoreApplication::processEvents();
+        window.hide();
+        QCOMPARE(saved, QSize(640, 520));
+        QCOMPARE(writes, 1);
+        popup.show();
+        QCOMPARE(window.size(), QSize(640, 520));
+    }
+    void hiddenScreenClampDoesNotReplacePreferredSize() {
+        QQuickWindow window;
+        int writes = 0;
+        {
+            TrayPopup popup(&window, false, QSize(1200, 900), [&](QSize) { ++writes; });
+            window.resize(700, 500); // Models a programmatic clamp while hidden.
+        }
+        QCOMPARE(writes, 0);
+    }
+    void fallbackEdgeDragResizesWindow() {
+        QQuickWindow window;
+        TrayPopup popup(&window, false, QSize(700, 600));
+        popup.show();
+        QTRY_VERIFY(window.isVisible());
+        const QSize before = window.size();
+        const QPoint corner(before.width() - 1, before.height() - 1);
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, corner);
+        QTest::mouseMove(&window, corner - QPoint(80, 60), 10);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, corner - QPoint(80, 60));
+        QTRY_COMPARE(window.size(), before - QSize(80, 60));
     }
 };
 QTEST_MAIN(PopupTest)

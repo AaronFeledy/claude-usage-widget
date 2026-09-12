@@ -41,6 +41,8 @@ public:
     QString settingsPath() const { return m_settingsService.path(); }
     QString saveStartupPreference(bool enabled);
     QString completeStartupMigration();
+    QSize windowSize() const { return m_settingsService.value().windowSize; }
+    QString saveWindowSize(const QSize &size) { return m_settingsService.saveWindowSize(size); }
     // C++ integration seam for update preparation; attached/remote servers are untouched.
     void stopOwnedServer() { m_server.stopOwned(); }
     qint64 ownedServerProcessId() const { return m_server.ownedProcessId(); }

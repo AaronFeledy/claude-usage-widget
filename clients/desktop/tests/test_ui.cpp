@@ -436,9 +436,9 @@ private slots:
         auto rows = findItem(window->contentItem(), "providerRows");
         auto footer = findItem(window->contentItem(), "stickyFooter");
         QVERIFY(rows); QVERIFY(footer);
-        for (int width : {960, 420}) {
-            window->resize(width, 900);
-            QTRY_COMPARE(window->size(), QSize(width, 900));
+        for (const QSize size : {QSize(960, 900), window->minimumSize()}) {
+            window->resize(size);
+            QTRY_COMPARE(window->size(), size);
             QTest::qWait(100);
             const bool compact = window->width() < 700;
             QCOMPARE(window->property("compact").toBool(), compact);

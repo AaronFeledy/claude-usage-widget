@@ -172,7 +172,10 @@ int main(int argc, char **argv) {
 #endif
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-    TrayPopup popup(window, hasTray, &app);
+    TrayPopup popup(window, hasTray, controller.windowSize(),
+        capture ? TrayPopup::SizeWriter{} : TrayPopup::SizeWriter{[&controller](QSize size) {
+            controller.saveWindowSize(size);
+        }}, &app);
     QSystemTrayIcon tray(TrayVisual::icon({}));
     QMenu fallbackMenu;
     QMenu *trayMenu = &fallbackMenu;

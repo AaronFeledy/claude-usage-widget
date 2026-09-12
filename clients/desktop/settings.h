@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 
@@ -15,6 +16,7 @@ struct DesktopSettings {
     QStringList order;
     bool startup = false;
     bool startupMigrationPending = false;
+    QSize windowSize;
 };
 
 class SettingsService {
@@ -35,6 +37,7 @@ public:
     QString saveOrder(const QStringList &order, const QString &primary);
     QString saveStartupPreference(bool enabled);
     QString completeStartupMigration();
+    QString saveWindowSize(const QSize &size);
 
     static QString defaultPath(Platform platform = Platform::Current);
     static QString defaultLegacyPath();

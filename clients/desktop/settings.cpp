@@ -166,6 +166,12 @@ bool SettingsService::loadHeadroom()
         return false;
     }
     m_document = document.object();
+    const int schemaVersion = readInt(m_document, "schemaVersion", 0);
+    if (schemaVersion > CurrentSchemaVersion) {
+        m_loadError = "Settings were written by a newer Headroom version and were not changed.";
+        m_blockImplicitWrites = true;
+        return false;
+    }
     const QString rawUrl = readString(m_document, "url");
     const QString rawToken = readString(m_document, "token");
     const QString rawSshUrl = readString(m_document, "sshUrl");
@@ -184,6 +190,9 @@ bool SettingsService::loadHeadroom()
     m_value.primary = m_value.order.first();
     m_value.startup = readBool(m_document, "startup", false);
     m_value.startupMigrationPending = readBool(m_document, "startupMigrationPending", false);
+    const int windowWidth = readInt(m_document, "windowWidth", 0);
+    const int windowHeight = readInt(m_document, "windowHeight", 0);
+    if (windowWidth > 0 && windowHeight > 0) m_value.windowSize = QSize(windowWidth, windowHeight);
     const bool invalidSsh = !m_value.sshUrl.isEmpty() && !SshTransport::parseAddress(m_value.sshUrl);
     if (invalidSsh && mode != QStringLiteral("ssh")) m_value.sshUrl.clear();
     if (!validRemoteUrl(url) || !validToken(rawToken) || (invalidSsh && mode == QStringLiteral("ssh"))) {
@@ -194,7 +203,7 @@ bool SettingsService::loadHeadroom()
         m_value.sshUrl.clear();
         return false;
     }
-    const bool needsSchema = readInt(m_document, "schemaVersion", 0) < CurrentSchemaVersion;
+    const bool needsSchema = schemaVersion < CurrentSchemaVersion;
     if (m_allowAutomaticMigration && (needsMode || needsSchema)) {
         const QString backupPath = m_path + ".bak";
         if (!createPrivateBackup(backupPath, original)) {
@@ -286,6 +295,13 @@ QJsonObject SettingsService::serialized(const DesktopSettings &settings) const
     result["order"] = QJsonArray::fromStringList(settings.order);
     result["startup"] = settings.startup;
     result["startupMigrationPending"] = settings.startupMigrationPending;
+    if (settings.windowSize.isValid()) {
+        result["windowWidth"] = settings.windowSize.width();
+        result["windowHeight"] = settings.windowSize.height();
+    } else {
+        result.remove("windowWidth");
+        result.remove("windowHeight");
+    }
     return result;
 }
 
@@ -351,5 +367,13 @@ QString SettingsService::completeStartupMigration()
 {
     DesktopSettings updated = m_value;
     updated.startupMigrationPending = false;
+    return save(updated);
+}
+
+QString SettingsService::saveWindowSize(const QSize &size)
+{
+    if (!size.isValid()) return QStringLiteral("Could not save an invalid window size.");
+    DesktopSettings updated = m_value;
+    updated.windowSize = size;
     return save(updated);
 }
