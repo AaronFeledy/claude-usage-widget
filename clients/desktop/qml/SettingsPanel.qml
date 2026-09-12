@@ -25,7 +25,7 @@ Popup {
     modal: true; focus: true; padding: 28
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
-    Overlay.modal: Rectangle { color: Theme.overlay }
+    Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     onOpened: {
         startupService.refresh(); appInfo.refreshServer()
         localMode.checked = backend.settings.mode === "local"

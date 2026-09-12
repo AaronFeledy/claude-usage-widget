@@ -10,7 +10,7 @@ Popup {
     height: Math.min(640, parent.height - 32)
     modal: true; focus: true; padding: 24
     background: Rectangle { color: Theme.surface; radius: 18; border.color: Theme.selection }
-    Overlay.modal: Rectangle { color: Theme.overlay }
+    Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
     ColumnLayout {
         anchors.fill: parent; spacing: 14
         RowLayout {

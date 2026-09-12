@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 
 QtObject {
+    readonly property int windowRadius: 16
     // Dracula palette: https://draculatheme.com/contribute
     readonly property color background: "#282a36"
     readonly property color surface: "#303341"

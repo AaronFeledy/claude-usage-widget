@@ -8,7 +8,8 @@ ApplicationWindow {
     visible: !startHidden
     title: "Headroom"
     flags: Qt.FramelessWindowHint | (trayAvailable ? Qt.Tool | Qt.WindowStaysOnTopHint : Qt.Window)
-    color: Theme.background
+    color: "transparent"
+    background: Rectangle { color: Theme.background; radius: Theme.windowRadius; antialiasing: true }
     font.family: "Inter"
     property bool compact: width < 700
     property string filter: "All providers"
@@ -58,7 +59,7 @@ ApplicationWindow {
         onOpened: resetCancel.forceActiveFocus()
         onClosed: backend.cancelChatGptResetConfirmation()
         background: Rectangle { color: Theme.surface; radius: 16; border.color: Theme.selection }
-        Overlay.modal: Rectangle { color: Theme.overlay }
+        Overlay.modal: Rectangle { color: Theme.overlay; radius: Theme.windowRadius }
         contentItem: ColumnLayout {
             spacing: 18
             Text { text: "Use a banked reset?"; color: Theme.foreground; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap }
@@ -97,11 +98,14 @@ ApplicationWindow {
         ScrollView {
             id: scroll; objectName: "meterScroll"
             Layout.fillWidth: true; Layout.fillHeight: true; contentWidth: availableWidth; clip: true
+            // Keep scrolling content inside the rounded top edge without a full-window texture mask.
+            Layout.topMargin: Theme.windowRadius
             ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
             ColumnLayout {
                 width: scroll.availableWidth; spacing: 0
                 ColumnLayout {
-                    Layout.fillWidth: true; Layout.margins: window.compact ? 16 : 24; spacing: 12
+                    Layout.fillWidth: true; Layout.margins: window.compact ? 16 : 24
+                    Layout.topMargin: (window.compact ? 16 : 24) - Theme.windowRadius; spacing: 12
                     ColumnLayout {
                         id: providerRows; objectName: "providerRows"
                         visible: window.providers.length > 0
@@ -133,7 +137,8 @@ ApplicationWindow {
         Rectangle {
             objectName: "stickyFooter"
             Layout.fillWidth: true; implicitHeight: footerBody.implicitHeight + 24
-            color: Theme.inset
+            color: Theme.inset; radius: Theme.windowRadius; antialiasing: true
+            Rectangle { anchors.top: parent.top; width: parent.width; height: parent.radius; color: parent.color }
             Rectangle { objectName: "footerBorder"; anchors.top: parent.top; width: parent.width; height: 1; color: window.serverOffline ? Theme.red : Theme.selection }
             ColumnLayout {
                 id: footerBody

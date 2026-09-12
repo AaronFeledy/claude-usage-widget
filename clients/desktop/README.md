@@ -166,6 +166,7 @@ coordinates and LayerShellQt placement, accommodating any panel edge and
 clamping the popup to the selected monitor. Without a known icon position,
 opening from the app menu uses the lower-right of the active screen. There is
 no native title bar, minimize/maximize controls, or taskbar entry in tray mode.
+The window has softly rounded, transparent corners, including its footer and dialog overlays.
 Drag any edge or corner to resize the window. Headroom remembers the selected
 dimensions in its existing settings file and reuses them when the popup is
 reopened or the app is launched again. Restored sizes are constrained to
