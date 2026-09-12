@@ -101,7 +101,7 @@ func fetchHTTP(ctx context.Context, options Options, base string) ([]byte, error
 	if base == "" {
 		base = "http://127.0.0.1:7823"
 	}
-	endpoint, local, err := usageURL(base)
+	endpoint, err := usageURL(base)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,9 @@ func fetchHTTP(ctx context.Context, options Options, base string) ([]byte, error
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "Headroom/"+options.Version)
-	if !local {
+	// Automatic localhost discovery never sends a saved token. An address the
+	// user selected explicitly may be a token-protected loopback server.
+	if !usingDefault {
 		token, err := readToken(options.Env)
 		if err != nil {
 			return nil, err
@@ -138,17 +140,14 @@ func fetchHTTP(ctx context.Context, options Options, base string) ([]byte, error
 	return body, nil
 }
 
-func usageURL(base string) (string, bool, error) {
+func usageURL(base string) (string, error) {
 	parsed, err := url.ParseRequestURI(base)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", false, errors.New("--url must be an HTTP(S) base URL without credentials, query, or fragment")
+		return "", errors.New("--url must be an HTTP(S) base URL without credentials, query, or fragment")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/api/v1/usage"
-	host := strings.ToLower(parsed.Hostname())
-	ip := net.ParseIP(host)
-	local := host == "localhost" || ip != nil && ip.IsLoopback()
-	return parsed.String(), local, nil
+	return parsed.String(), nil
 }
 
 func readToken(env []string) (string, error) {

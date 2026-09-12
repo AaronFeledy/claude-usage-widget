@@ -115,6 +115,30 @@ func TestExplicitRemoteUsesEnvironmentTokenAndPreservesPrefix(t *testing.T) {
 	}
 }
 
+func TestExplicitLoopbackURLUsesEnvironmentToken(t *testing.T) {
+	body := fixtureUsage(t)
+	options, _, _ := baseOptions(body)
+	options.Args = []string{"--once", "--url", "http://127.0.0.1:7823"}
+	options.Env = []string{"HEADROOM_AUTH_TOKEN=fixture-token"}
+	requests := 0
+	options.HTTPClient.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if got := request.URL.String(); got != "http://127.0.0.1:7823/api/v1/usage" {
+			t.Fatalf("URL = %q", got)
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer fixture-token" {
+			t.Fatalf("Authorization = %q, want the explicitly selected endpoint to authenticate", got)
+		}
+		return response(body), nil
+	})
+	if err := Run(context.Background(), options); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
 func TestLocalIntegrationCallbackPrecedesDefaultHTTP(t *testing.T) {
 	body := fixtureUsage(t)
 	options, stdout, _ := baseOptions(body)
