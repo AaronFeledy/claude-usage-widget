@@ -329,7 +329,8 @@ private slots:
         auto failed = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
         auto failedCodex = failed[1].toObject(); failedCodex["error"] = "Unavailable"; failedCodex["is_success"] = false; failed[1] = failedCodex;
         controller.replaceSnapshot(QJsonDocument(failed).toJson());
-        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+        // Failed providers have no meters, so the weekly footer is removed too.
+        QTRY_VERIFY(!resetLabel() || !resetLabel()->isVisible());
 
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 1, halfWeekReset));
         label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());
@@ -435,9 +436,9 @@ private slots:
         auto rows = findItem(window->contentItem(), "providerRows");
         auto footer = findItem(window->contentItem(), "stickyFooter");
         QVERIFY(rows); QVERIFY(footer);
-        for (int width : {960, 420}) {
-            window->resize(width, 900);
-            QTRY_COMPARE(window->size(), QSize(width, 900));
+        for (const QSize size : {QSize(960, 900), window->minimumSize()}) {
+            window->resize(size);
+            QTRY_COMPARE(window->size(), size);
             QTest::qWait(100);
             const bool compact = window->width() < 700;
             QCOMPARE(window->property("compact").toBool(), compact);
@@ -477,5 +478,5 @@ private slots:
         }
     }
 };
-int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QApplication app(argc, argv); app.setPalette(headroomPalette()); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
+int main(int argc, char **argv) { QQuickStyle::setStyle("Basic"); QQuickWindow::setDefaultAlphaBuffer(true); QApplication app(argc, argv); app.setPalette(headroomPalette()); app.setApplicationVersion(HEADROOM_VERSION); UiTest test; return QTest::qExec(&test, argc, argv); }
 #include "test_ui.moc"

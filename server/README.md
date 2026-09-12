@@ -84,18 +84,27 @@ without exposing the provider account ID. The field is `null` when the count is
 unknown or on provider errors.
 
 The reset response contains `outcome`: `reset`, `already_redeemed`,
-`nothing_to_reset`, or `no_credit`. The server never automatically retries a
-redemption. An uncertain manual retry must reuse the same request ID. The desktop
-saves that ID before sending and uses its selected local, HTTP(S), or SSH transport.
+`nothing_to_reset`, or `no_credit`. Reset submission is a single attempt: no
+automatic or manual retry, upload replay, redirect, or transport fallback. The
+desktop saves its request ID before sending through the selected local, HTTP(S),
+or SSH transport and keeps the button disabled across restarts. Only a successful
+weekly reading below 95% releases that account's lock; the button becomes eligible
+again when weekly usage later reaches 95% and a banked reset is available.
 
 Reset requests reject browser-origin headers and require JSON, the configured
 bearer authentication (or the trusted SSH peer), a fresh weekly reading of at
 least 95%, a positive credit count, and the same account fingerprint for
 eligibility and consumption. The fingerprint is checked against current
-credentials immediately before every provider request. An ambiguous attempt must
-be retried with its original UUID;
-the server remembers that guard for its process lifetime, while the upstream UUID
-remains the idempotency key across restarts.
+credentials immediately before every provider request. Repeated request IDs return
+the recorded result or an error without another OpenAI reset request. The server
+remembers attempted IDs for its process lifetime; the saved desktop receipt and
+upstream UUID retain their protection across server restarts. Every submitted
+attempt blocks further new requests in that process until the same account's
+usage below 95% has been observed, including while a successful reset propagates.
+
+After submission, the server waits three seconds and performs one read-only OpenAI
+usage fetch. The desktop checks the usage cache after 5, 12, and 25 seconds while
+waiting, then continues normal polling. These reads never resubmit a reset.
 
 When `auth_token` or `USAGE_AUTH_TOKEN` is set, every public HTTP endpoint requires
 `Authorization: Bearer <token>`. The protected SSH socket authenticates the local

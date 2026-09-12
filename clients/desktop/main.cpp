@@ -57,6 +57,8 @@ int main(int argc, char **argv) {
     // never instantiate Controller, discover credentials, or start a poller.
     if (argc == 2 && std::strcmp(argv[1], "--headroom-cli-request") == 0) return desktopCLIRequest(argc, argv);
     QQuickStyle::setStyle("Basic");
+    // QML windows need an alpha buffer before creation for transparent corners.
+    QQuickWindow::setDefaultAlphaBuffer(true);
     QApplication app(argc, argv);
     app.setPalette(headroomPalette());
     app.setOrganizationName("Headroom"); app.setApplicationName("Headroom"); app.setApplicationVersion(HEADROOM_VERSION);
@@ -172,7 +174,10 @@ int main(int argc, char **argv) {
 #endif
     }
     auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
-    TrayPopup popup(window, hasTray, &app);
+    TrayPopup popup(window, hasTray, controller.windowSize(),
+        capture ? TrayPopup::SizeWriter{} : TrayPopup::SizeWriter{[&controller](QSize size) {
+            controller.saveWindowSize(size);
+        }}, &app);
     QSystemTrayIcon tray(TrayVisual::icon({}));
     QMenu fallbackMenu;
     QMenu *trayMenu = &fallbackMenu;

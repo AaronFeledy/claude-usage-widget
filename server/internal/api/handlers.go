@@ -25,15 +25,17 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type handler struct {
-	cache         Cache
-	cursor        CursorCredentials
-	grok          GrokCredentials
-	codex         CodexResetter
-	poller        ProviderPoller
-	version       string
-	providerNames []string
-	credentialMu  sync.Mutex
-	resetMu       sync.Mutex
+	cache               Cache
+	cursor              CursorCredentials
+	grok                GrokCredentials
+	codex               CodexResetter
+	poller              ProviderPoller
+	version             string
+	providerNames       []string
+	credentialMu        sync.Mutex
+	resetMu             sync.Mutex
+	codexRefreshMu      sync.Mutex
+	codexRefreshPending bool
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -121,13 +123,13 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.resetMu.Unlock()
-	retry, blocked := h.codex.ResetAttemptStatus(request.RequestID)
+	known, blocked := h.codex.ResetAttemptStatus(request.RequestID)
 	if blocked {
-		writeError(w, http.StatusConflict, "retry the previous request_id")
+		writeError(w, http.StatusConflict, "previous reset awaiting usage confirmation; no retry permitted")
 		return
 	}
 	expectedAccountID := ""
-	if !retry {
+	if !known {
 		entry, ok, err := h.poller.PollProvider(resetCtx, "codex")
 		if err != nil || !ok || !eligibleForCodexReset(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
 			writeError(w, http.StatusConflict, "fresh eligible ChatGPT usage is required")
@@ -136,15 +138,42 @@ func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
 		expectedAccountID = entry.Data.ProviderAccountID
 	}
 	outcome, ambiguous, err := h.codex.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
+	// Reconcile even an uncertain response with a delayed read-only fetch. Never
+	// repeat ConsumeResetCredit automatically or exercise this flow in tests.
+	h.scheduleCodexUsageRefresh()
 	if err != nil {
 		if ambiguous {
-			writeError(w, http.StatusBadGateway, "reset outcome unknown; retry with the same request_id")
+			writeError(w, http.StatusBadGateway, "reset outcome unknown; request will not be retried")
 		} else {
 			writeError(w, http.StatusBadGateway, "reset request unavailable")
 		}
 		return
 	}
 	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
+}
+
+func (h *handler) scheduleCodexUsageRefresh() {
+	h.codexRefreshMu.Lock()
+	if h.codexRefreshPending {
+		h.codexRefreshMu.Unlock()
+		return
+	}
+	h.codexRefreshPending = true
+	h.codexRefreshMu.Unlock()
+	go func() {
+		defer func() {
+			h.codexRefreshMu.Lock()
+			h.codexRefreshPending = false
+			h.codexRefreshMu.Unlock()
+		}()
+		// Give OpenAI time to apply the reset, then update the ordinary usage
+		// cache once. This is only a provider GET, never another redemption.
+		// It outlives the response but has its own bounded fetch deadline.
+		time.Sleep(3 * time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, _, _ = h.poller.PollProvider(ctx, "codex")
+	}()
 }
 
 func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {

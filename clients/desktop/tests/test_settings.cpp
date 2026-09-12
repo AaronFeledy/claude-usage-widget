@@ -168,6 +168,42 @@ private slots:
         QVERIFY(service.value().sshUrl.isEmpty());
     }
 
+    void windowSizeRoundTripsWithoutClobberingSettings()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"connectionMode\":\"local\",\"custom\":{\"keep\":true}}")));
+        SettingsService service(path, false, SettingsService::Platform::Linux);
+        QVERIFY(service.saveWindowSize(QSize(1040, 760)).isEmpty());
+        SettingsService reopened(path, false, SettingsService::Platform::Linux);
+        QCOMPARE(reopened.value().windowSize, QSize(1040, 760));
+        QCOMPARE(readObject(path).value("custom").toObject().value("keep").toBool(), true);
+        QVERIFY(reopened.saveStartupPreference(true).isEmpty());
+        SettingsService afterOtherSave(path, false, SettingsService::Platform::Linux);
+        QCOMPARE(afterOtherSave.value().windowSize, QSize(1040, 760));
+    }
+
+    void incompleteWindowSizeIsIgnored()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        QVERIFY(writeFile(path, QByteArrayLiteral("{\"windowWidth\":1040}")));
+        SettingsService service(path, false, SettingsService::Platform::Linux);
+        QVERIFY(!service.value().windowSize.isValid());
+    }
+
+    void windowSizeDoesNotDowngradeFutureSettings()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString path = dir.filePath(QStringLiteral("settings.json"));
+        const QByteArray original = QByteArrayLiteral("{\"schemaVersion\":2,\"windowWidth\":1040,\"windowHeight\":760}");
+        QVERIFY(writeFile(path, original));
+        SettingsService service(path, false, SettingsService::Platform::Linux);
+        QVERIFY(!service.loadError().isEmpty());
+        QVERIFY(!service.saveWindowSize(QSize(900, 700)).isEmpty());
+        QCOMPARE(readFile(path), original);
+    }
+
     void rejectsInvalidActiveSshAddressWithoutChangingFile()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());
@@ -221,6 +257,7 @@ private slots:
             QVERIFY(writeFile(path, original));
             SettingsService service(path, true, SettingsService::Platform::Linux);
             QVERIFY(!service.loadError().isEmpty());
+            QVERIFY(!service.saveWindowSize(QSize(900, 700)).isEmpty());
             QCOMPARE(readFile(path), original);
             QVERIFY(!service.saveOrder({"Grok"}, "Grok").isEmpty());
             QCOMPARE(readFile(path), original);

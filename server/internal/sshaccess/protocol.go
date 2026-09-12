@@ -192,6 +192,11 @@ func doRequest(ctx context.Context, home string, request requestFrame) (int, []b
 	if err != nil {
 		return 0, nil, err
 	}
+	if request.Method == http.MethodPost && request.Path == "/api/v1/providers/codex/reset" {
+		// DO NOT test this path. The reset upload may be sent only once,
+		// including when a socket connection fails before a reply arrives.
+		httpRequest.GetBody = nil
+	}
 	if request.Method == http.MethodPut || request.Method == http.MethodPost {
 		httpRequest.Header.Set("Content-Type", "application/json")
 	}
