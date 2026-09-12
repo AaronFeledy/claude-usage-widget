@@ -11,6 +11,15 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
 )
 
+// exitStatusError reports that the public CLI ran and chose its own exit code.
+// The launcher mirrors that status instead of inventing one, and it stays off
+// stdout so piped usage output keeps the documented single-snapshot contract.
+type exitStatusError struct{ code int }
+
+func (e exitStatusError) Error() string { return fmt.Sprintf("Headroom CLI exited with status %d", e.code) }
+
+func (e exitStatusError) ExitCode() int { return e.code }
+
 func launch(arguments []string) error { return launchRole(contract.RoleApplication, arguments) }
 
 func launchRole(role string, arguments []string) error {

@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
@@ -34,7 +33,11 @@ func startApplication(executable string, arguments, environment []string, detach
 		return err
 	}
 	if !state.Success() {
-		return fmt.Errorf("Headroom CLI exited with status %d", state.ExitCode())
+		code := state.ExitCode()
+		if code <= 0 {
+			code = 2
+		}
+		return exitStatusError{code: code}
 	}
 	return nil
 }

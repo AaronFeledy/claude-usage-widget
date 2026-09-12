@@ -40,7 +40,7 @@ func run(args []string) int {
 			arguments = append([]string{"serve"}, arguments...)
 		}
 		if err := launchRole(contract.RoleCLI, arguments); err != nil {
-			return emit("headroom", nil, err)
+			return reportCLILaunchFailure(err)
 		}
 		return 0
 	}
@@ -214,6 +214,18 @@ func assetName(args []string) (any, error) {
 	root, err := contract.ArchiveRoot(*version, *platform, *arch)
 	return map[string]string{"asset_name": asset, "archive_root": root}, err
 }
+// reportCLILaunchFailure keeps the public command's stdout reserved for usage
+// output. A CLI that ran already reported its own diagnostics, so only its exit
+// status is mirrored; a launcher failure is described on stderr.
+func reportCLILaunchFailure(err error) int {
+	var status exitStatusError
+	if errors.As(err, &status) {
+		return status.ExitCode()
+	}
+	fmt.Fprintln(os.Stderr, "headroom: "+err.Error())
+	return 2
+}
+
 func emit(command string, result any, err error) int {
 	o := output{OK: err == nil, Command: command, Result: result}
 	if err != nil {
