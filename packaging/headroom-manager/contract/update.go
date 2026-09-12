@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	defaultReleaseAPI = "https://api.github.com/repos/AaronFeledy/claude-usage-widget/releases/latest"
-	maxReleaseBytes   = int64(4 << 20)
+	canonicalRepository = "AaronFeledy/headroom"
+	legacyRepository    = "AaronFeledy/claude-usage-widget"
+	defaultReleaseAPI   = "https://api.github.com/repos/" + canonicalRepository + "/releases/latest"
+	maxReleaseBytes     = int64(4 << 20)
 )
 
 // UpdateResult is the stable machine-readable result used by the desktop UI.
@@ -410,7 +412,7 @@ func (c UpdateClient) validAPIURL(candidate *url.URL) bool {
 		return sameOrigin(candidate, c.FixtureOrigin)
 	}
 	return candidate.Scheme == "https" && candidate.Hostname() == "api.github.com" && (candidate.Port() == "" || candidate.Port() == "443") &&
-		strings.HasPrefix(candidate.EscapedPath(), "/repos/AaronFeledy/claude-usage-widget/releases/") && candidate.RawQuery == "" && candidate.User == nil
+		repositoryReleasePath(candidate.EscapedPath(), "/repos/", "/releases/") && candidate.RawQuery == "" && candidate.User == nil
 }
 
 func (c UpdateClient) validateAssetURL(rawURL, version, name string) error {
@@ -424,8 +426,8 @@ func (c UpdateClient) validateAssetURL(rawURL, version, name string) error {
 		}
 		return nil
 	}
-	want := "/AaronFeledy/claude-usage-widget/releases/download/v" + version + "/" + name
-	if candidate.Scheme != "https" || candidate.Host != "github.com" || candidate.Path != want {
+	wantSuffix := "/releases/download/v" + version + "/" + name
+	if candidate.Scheme != "https" || candidate.Host != "github.com" || !exactRepositoryReleasePath(candidate.Path, "/", wantSuffix) {
 		return errors.New("release asset URL is not allowed")
 	}
 	return nil
@@ -447,10 +449,28 @@ func (c UpdateClient) validateRedirectURL(candidate *url.URL) error {
 	if candidate.Scheme != "https" || (candidate.Port() != "" && candidate.Port() != "443") || !allowed[host] {
 		return errors.New("release redirect origin is not allowed")
 	}
-	if host == "github.com" && !strings.HasPrefix(candidate.EscapedPath(), "/AaronFeledy/claude-usage-widget/releases/download/") {
+	if host == "github.com" && !repositoryReleasePath(candidate.EscapedPath(), "/", "/releases/download/") {
 		return errors.New("release redirect path is not allowed")
 	}
 	return nil
+}
+
+func repositoryReleasePath(path, prefix, suffix string) bool {
+	for _, repository := range []string{canonicalRepository, legacyRepository} {
+		if strings.HasPrefix(path, prefix+repository+suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func exactRepositoryReleasePath(path, prefix, suffix string) bool {
+	for _, repository := range []string{canonicalRepository, legacyRepository} {
+		if path == prefix+repository+suffix {
+			return true
+		}
+	}
+	return false
 }
 
 func sameOrigin(left, right *url.URL) bool {

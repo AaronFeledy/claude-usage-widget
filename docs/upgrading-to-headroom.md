@@ -2,8 +2,10 @@
 
 Existing Windows users can switch to Headroom with a one-time installation.
 Headroom imports supported settings and startup preferences, and keeps the old
-settings intact. Headroom packages were first published in
-[v1.8.0](https://github.com/AaronFeledy/claude-usage-widget/releases/tag/v1.8.0).
+settings intact. Current downloadable Headroom packages are available from
+[v2.0.0](https://github.com/AaronFeledy/headroom/releases/tag/v2.0.0) onward.
+Historical v1.x release records remain, but their binary assets have been
+retired.
 
 The old app's **Check for updates** does not perform this transition. Its updater
 looks for `ClaudeUsageWidget-win-x64.exe` or `ClaudeUsageWidget-win-arm64.exe`;
@@ -22,7 +24,7 @@ future Headroom releases.
    that ran the old app:
 
    ```powershell
-   irm https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.ps1 | iex
+   irm https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.ps1 | iex
    ```
 
    The installer chooses Windows x64 or ARM64 automatically, validates the

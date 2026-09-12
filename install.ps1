@@ -11,7 +11,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = 'AaronFeledy/claude-usage-widget'
+$repo = 'AaronFeledy/headroom'
 $localAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { throw 'LOCALAPPDATA is not defined.' }
 if (-not $InstallRoot) { $InstallRoot = Join-Path $localAppData 'Headroom' }
 if (-not $CLIEntryPath) { $CLIEntryPath = Join-Path $InstallRoot 'cli\headroom.exe' }

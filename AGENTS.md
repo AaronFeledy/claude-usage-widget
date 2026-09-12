@@ -6,6 +6,12 @@ Headroom is a shared Qt Quick tray app for Windows, macOS, and Linux plus a Go u
 server. It monitors Claude, ChatGPT, Cursor, and Grok usage. The compatible API
 and configuration name for ChatGPT remains `Codex`.
 
+The canonical repository is `https://github.com/AaronFeledy/headroom`, with the
+default checkout name `headroom`. The former repository URL redirects there.
+For Go compatibility, module declarations and imports intentionally remain under
+`github.com/AaronFeledy/claude-usage-widget`; do not rename them as incidental
+branding cleanup.
+
 ## Layout
 
 - `clients/desktop/` — primary Qt 6.6+ Windows/macOS/Linux UI, local-server manager,
@@ -70,12 +76,14 @@ Keep usage, version, and credential requests on the same selected transport.
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
 `USAGE_AUTH_TOKEN`, or `--auth-token` before listen/provider construction.
 
-Keep these compatibility contracts unless the task explicitly changes them:
-repository URL and checkout name, Go modules/imports, `usage-server` binary,
-legacy server config/service paths, API provider key `Codex`, and snake_case API
-fields. Headroom displays that provider as ChatGPT. On first normal Windows
-launch it may import `%APPDATA%\ClaudeUsageWidget\settings.json`; the retained
-WinForms project is not the default packaged UI.
+Keep these compatibility contracts unless the task explicitly changes them: Go
+modules/imports, `usage-server` binary, legacy server config/service paths, API
+provider key `Codex`, and snake_case API fields. Use the canonical Headroom
+repository URL for public acquisition and user-facing links while accepting the
+former repository's exact release URLs where updater compatibility requires it.
+Headroom displays `Codex` as ChatGPT. On first normal Windows launch it may import
+`%APPDATA%\ClaudeUsageWidget\settings.json`; the retained WinForms project is not
+the default packaged UI.
 
 The API contract is frozen in `server/internal/usage`: optional strings and
 reset timestamps are explicit `null`; `is_success` is derived from
@@ -112,9 +120,18 @@ and macOS x86_64/ARM64 (deployment target 12.0) with Qt 6.8.3. It verifies the e
 legacy harness and server Go/race/vet/build/Docker gates, and assembles five
 desktop packages, six CLI packages, legacy/full/CLI release manifests, six standalone servers, both installers,
 and `SHA256SUMS`. PR workflows have read-only contents permission and never
-publish. The release resolver is read-only; only the final gated job may create
-or verify the tag at the initiating commit and publish. Never publish a tag or
-release during local validation.
+publish. Merges to `main` do not release automatically: the `Release` workflow
+must be deliberately dispatched on `main`. After dispatch, version resolution,
+native package validation, tag creation, and publication are automated. The
+release resolver is read-only; only the final gated job may create or verify the
+tag at the initiating commit and publish. Historical v1.x release records and
+tags remain, but their binary assets were retired after v2.0.0. Never publish a
+tag or release during local validation.
+
+The published v2.0.0 updater predates the repository rename and rejects the old
+GitHub API endpoint's redirect. The first post-rename release must tell v2.0.0
+users to rerun a current external installer once; builds after v2.0.0 use the
+canonical release endpoint.
 
 Qt notices come from the hash-pinned official 6.8.3 source archives recorded in
 `packaging/qt-sources-6.8.3.json`. Preserve referenced notices and license texts,

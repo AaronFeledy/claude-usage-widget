@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -11,6 +12,12 @@ func TestServiceRegistrationDistinguishesLiveAndReplacedProcess(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS == "darwin" {
+		executable, err = filepath.EvalSymlinks(executable)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	token, err := captureProcessToken(os.Getpid(), executable)
 	if err != nil {

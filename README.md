@@ -1,13 +1,14 @@
 # Headroom
 
-Headroom is a Windows, macOS, and Linux tray app and terminal dashboard for Claude,
-ChatGPT, Cursor, and Grok usage. The shared Qt interface shows every usage meter returned by the bundled
-Go server, keeps the chosen provider order, estimates pace within reset windows,
-and alerts when usage moves into Warning or Critical.
+Headroom is a cross-platform tray app and terminal dashboard for monitoring
+Claude, ChatGPT, Cursor, and Grok usage. The shared Qt interface shows every
+usage meter returned by the bundled Go server, keeps the chosen provider order,
+estimates pace within reset windows, and alerts when usage moves into Warning or
+Critical.
 
-[![Build](https://github.com/AaronFeledy/claude-usage-widget/actions/workflows/build.yml/badge.svg)](https://github.com/AaronFeledy/claude-usage-widget/actions/workflows/build.yml)
-[![Release](https://img.shields.io/github/v/release/AaronFeledy/claude-usage-widget)](https://github.com/AaronFeledy/claude-usage-widget/releases/latest)
-[![License](https://img.shields.io/github/license/AaronFeledy/claude-usage-widget)](LICENSE)
+[![Build](https://github.com/AaronFeledy/headroom/actions/workflows/build.yml/badge.svg)](https://github.com/AaronFeledy/headroom/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/AaronFeledy/headroom)](https://github.com/AaronFeledy/headroom/releases/latest)
+[![License](https://img.shields.io/github/license/AaronFeledy/headroom)](LICENSE)
 
 ## Supported desktop packages
 
@@ -35,7 +36,7 @@ and every packaged file before changing the active installation.
 Windows PowerShell 5.1 or newer:
 
 ```powershell
-irm https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.ps1 | iex
 ```
 
 Linux x86_64 or macOS (Apple Silicon and Intel):
@@ -45,14 +46,21 @@ Python 3, install it first (for example, through Apple Command Line Tools or
 your existing package manager).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AaronFeledy/claude-usage-widget/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/AaronFeledy/headroom/main/install.sh | sh
 ```
 
-Headroom packages are available starting with
-[v1.8.0](https://github.com/AaronFeledy/claude-usage-widget/releases/tag/v1.8.0).
-The installers require a Headroom release manifest and do not accept the older
-legacy executable releases. Existing Claude Usage Widget users should follow the
-[upgrade guide](docs/upgrading-to-headroom.md) for the one-time transition.
+Current Headroom packages are available from
+[v2.0.0](https://github.com/AaronFeledy/headroom/releases/tag/v2.0.0) onward.
+Historical v1.x release records and tags remain for changelog history, but their
+binary assets have been retired. The installers require a Headroom release
+manifest and do not accept legacy executable releases. Existing Claude Usage
+Widget users should follow the [upgrade guide](docs/upgrading-to-headroom.md)
+for the one-time transition.
+
+The published v2.0.0 app predates the repository rename, and its in-app updater
+does not follow GitHub's redirect from the former release API. After the next
+release is published, v2.0.0 users must run the current installer once to move
+to it; subsequent builds use the canonical Headroom release endpoint.
 See [desktop build instructions](clients/desktop/README.md) for source builds.
 
 Windows installs under `%LOCALAPPDATA%\Headroom`, adds a Start menu shortcut,
@@ -143,12 +151,14 @@ Local mode; a configured URL remains a direct HTTP(S) connection. The installer
 stops the legacy executable at its standard installation path before launching
 Headroom; quit portable or custom-path copies yourself.
 
-The old path, repository URL, Go module names, server config directories,
-`usage-server` binary name, API provider value `Codex`, and API field names stay
-compatible. Headroom displays that provider as **ChatGPT** while preserving the
-wire identifier so existing servers, Home Assistant sensors, and saved order
-continue to work. The [WinForms client](clients/windows/README.md) remains in the
-repository for reference and rollback; it is not the default packaged UI.
+Legacy settings and server paths, Go module/import paths, the `usage-server`
+binary name, API provider value `Codex`, and API field names stay compatible.
+The former `AaronFeledy/claude-usage-widget` repository URL redirects to the
+canonical [AaronFeledy/headroom](https://github.com/AaronFeledy/headroom)
+repository. Headroom displays `Codex` as **ChatGPT** while preserving the wire
+identifier so existing servers, Home Assistant sensors, and saved order continue
+to work. The [WinForms client](clients/windows/README.md) remains for reference
+and rollback; it is not the default packaged UI.
 
 ## Settings, startup, and updates
 

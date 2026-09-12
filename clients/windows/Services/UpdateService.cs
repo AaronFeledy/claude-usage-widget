@@ -8,7 +8,7 @@ namespace ClaudeUsageWidget.Services;
 /// </summary>
 public partial class UpdateService
 {
-    private const string GitHubApiUrl = "https://api.github.com/repos/AaronFeledy/claude-usage-widget/releases/latest";
+    private const string GitHubApiUrl = "https://api.github.com/repos/AaronFeledy/headroom/releases/latest";
 
     private readonly HttpClient _httpClient;
     private readonly NotifyIcon _notifyIcon;

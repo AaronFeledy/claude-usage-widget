@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repo=AaronFeledy/claude-usage-widget
+repo=AaronFeledy/headroom
 package_path=
 manifest_path=
 platform=linux

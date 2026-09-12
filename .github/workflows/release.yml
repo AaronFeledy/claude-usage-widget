@@ -1,9 +1,7 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,20 +14,21 @@ jobs:
   resolve:
     runs-on: ubuntu-22.04
     outputs:
-      version: ${{ steps.reuse.outputs.version || steps.branch.outputs.version || steps.tag.outputs.version }}
-      tag: ${{ steps.reuse.outputs.tag || steps.branch.outputs.tag || steps.tag.outputs.tag }}
-      changelog: ${{ steps.reuse.outputs.changelog || steps.tag.outputs.changelog || steps.bump.outputs.changelog }}
+      version: ${{ steps.reuse.outputs.version || steps.branch.outputs.version }}
+      tag: ${{ steps.reuse.outputs.tag || steps.branch.outputs.tag }}
+      changelog: ${{ steps.reuse.outputs.changelog || steps.bump.outputs.changelog }}
     steps:
+      - name: Require the main branch
+        run: test "$GITHUB_REF" = refs/heads/main
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Reuse a release tag already created for this main commit
         id: reuse
-        if: startsWith(github.ref, 'refs/heads/')
         run: python3 packaging/release_tag.py --commit "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT"
       - name: Resolve the next main-branch tag
         id: bump
-        if: startsWith(github.ref, 'refs/heads/') && steps.reuse.outputs.reused != 'true'
+        if: steps.reuse.outputs.reused != 'true'
         uses: mathieudutour/github-tag-action@v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -38,7 +37,7 @@ jobs:
           dry_run: true
       - name: Validate generated tag and version
         id: branch
-        if: startsWith(github.ref, 'refs/heads/') && steps.reuse.outputs.reused != 'true'
+        if: steps.reuse.outputs.reused != 'true'
         env:
           NEW_TAG: ${{ steps.bump.outputs.new_tag }}
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
@@ -46,13 +45,6 @@ jobs:
           test -n "$NEW_TAG" && test "$NEW_TAG" = "v$NEW_VERSION"
           python3 packaging/validate_version.py "$NEW_VERSION" --github-output "$GITHUB_OUTPUT"
           printf 'tag=%s\n' "$NEW_TAG" >> "$GITHUB_OUTPUT"
-      - name: Validate explicitly pushed tag
-        id: tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 packaging/release_tag.py --commit "$GITHUB_SHA" --tag "$RELEASE_TAG" --github-output "$GITHUB_OUTPUT"
-
   packages:
     needs: resolve
     if: needs.resolve.outputs.version != ''
