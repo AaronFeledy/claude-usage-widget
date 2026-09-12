@@ -128,6 +128,11 @@ tag at the initiating commit and publish. Historical v1.x release records and
 tags remain, but their binary assets were retired after v2.0.0. Never publish a
 tag or release during local validation.
 
+The published v2.0.0 updater predates the repository rename and rejects the old
+GitHub API endpoint's redirect. The first post-rename release must tell v2.0.0
+users to rerun a current external installer once; builds after v2.0.0 use the
+canonical release endpoint.
+
 Qt notices come from the hash-pinned official 6.8.3 source archives recorded in
 `packaging/qt-sources-6.8.3.json`. Preserve referenced notices and license texts,
 label the module-source inventory as a conservative superset rather than an
