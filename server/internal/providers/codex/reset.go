@@ -23,7 +23,7 @@ const maxRememberedResetAttempts = 1024
 const accountFingerprintDomain = "headroom/codex/account-fingerprint/v1\x00"
 
 var errResetUnavailable = errors.New("reset request unavailable")
-var errDifferentResetPending = errors.New("a different reset request has an unknown outcome")
+var errDifferentResetPending = errors.New("a different reset request is awaiting usage confirmation")
 
 type resetAttempt struct {
 	accountID string
@@ -36,7 +36,7 @@ func (c *Client) ResetAttemptStatus(requestID string) (known, blocked bool) {
 	if _, exists := c.resetAttempts[strings.ToLower(requestID)]; exists {
 		return true, false
 	}
-	return false, c.resetAttemptID != "" && c.resetOutcome == "" && !c.resetUsageObserved
+	return false, c.resetAttemptID != "" && !c.resetUsageObserved
 }
 
 // Only a successful provider GET begun after submission can establish that
@@ -90,7 +90,7 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 		}
 		return previous.outcome, false, nil
 	}
-	if c.resetAttemptID != "" && c.resetAttemptID != requestID && c.resetOutcome == "" && !c.resetUsageObserved {
+	if c.resetAttemptID != "" && c.resetAttemptID != requestID && !c.resetUsageObserved {
 		return "", false, errDifferentResetPending
 	}
 	if c.resetAttemptID != requestID && expectedAccountID == "" {
@@ -124,7 +124,6 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	// DO NOT exercise this path to test either behavior.
 	c.resetAttemptID = requestID
 	c.resetAccountID = accountID
-	c.resetOutcome = ""
 	c.resetStartedAt = time.Now()
 	c.resetUsageObserved = false
 	if c.resetAttempts == nil {
@@ -157,7 +156,6 @@ func (c *Client) ConsumeResetCredit(ctx context.Context, requestID, expectedAcco
 	if err := json.Unmarshal(responseBody, &decoded); err != nil || !validResetOutcome(decoded.Code) {
 		return "", true, errResetUnavailable
 	}
-	c.resetOutcome = decoded.Code
 	c.resetAttempts[requestID] = resetAttempt{accountID: accountID, outcome: decoded.Code}
 	return decoded.Code, false, nil
 }

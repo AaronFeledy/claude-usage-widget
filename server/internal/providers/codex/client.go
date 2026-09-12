@@ -23,7 +23,6 @@ type Client struct {
 	resetMu            sync.Mutex
 	resetAttemptID     string
 	resetAccountID     string
-	resetOutcome       string
 	resetStartedAt     time.Time
 	resetUsageObserved bool
 	resetAttempts      map[string]resetAttempt

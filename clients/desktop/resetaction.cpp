@@ -219,13 +219,8 @@ void Controller::observeResetUsage() {
             m_resetMessage = "Weekly usage has been updated.";
         }
     }
-    for (const QString &legacyPath : legacyResetReceiptPaths()) {
-        QJsonObject legacy;
-        if (readReceipt(legacyPath, legacy) && legacy.value("completed").toBool()
-            && QFile::remove(legacyPath) && m_resetBlockedReceipt == legacyPath) {
-            m_resetBlockedReceipt.clear();
-        }
-    }
+    // Legacy receipts have no account identity. Even a completed receipt may
+    // belong to another account, so this reading cannot safely release it.
 }
 
 void Controller::cancelResetRequest() {

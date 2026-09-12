@@ -98,8 +98,9 @@ eligibility and consumption. The fingerprint is checked against current
 credentials immediately before every provider request. Repeated request IDs return
 the recorded result or an error without another OpenAI reset request. The server
 remembers attempted IDs for its process lifetime; the saved desktop receipt and
-upstream UUID retain their protection across server restarts. An uncertain outcome
-does not make another reset eligible until usage below 95% has been observed.
+upstream UUID retain their protection across server restarts. Every submitted
+attempt blocks further new requests in that process until the same account's
+usage below 95% has been observed, including while a successful reset propagates.
 
 After submission, the server waits three seconds and performs one read-only OpenAI
 usage fetch. The desktop checks the usage cache after 5, 12, and 25 seconds while
