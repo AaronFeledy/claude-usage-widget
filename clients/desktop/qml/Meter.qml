@@ -8,6 +8,8 @@ ColumnLayout {
     required property var bucket
     required property string providerName
     property color accent: Theme.purple
+    property Component footerAccessory: null
+    property bool footerAccessoryVisible: false
     property var concern: { meter.clock; return backend.concern(providerName, bucket) }
     property bool warning: concern.severity > 0
     property color usageColor: concern.color || Theme.purple
@@ -96,18 +98,26 @@ ColumnLayout {
             ToolTip.visible: paceHover.hovered
             ToolTip.text: meter.concern.detail
         }
-        Text {
-            objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
-            visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
-            text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
-            color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+        RowLayout {
+            Layout.fillWidth: true; spacing: 8
+            Text {
+                objectName: "meterReset_" + meter.providerName + "_" + meter.bucket.id
+                visible: !meter.bucket.status_text || !meter.bucket.status_text.trim()
+                text: { meter.clock; return backend.countdown(meter.bucket.resets_at || "") }
+                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+            }
+            Text {
+                visible: !!meter.bucket.status_text
+                objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
+                textFormat: Text.PlainText
+                text: meter.bucket.status_text || ""
+                color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+            }
+            Loader {
+                sourceComponent: meter.footerAccessory
+                visible: meter.footerAccessoryVisible
+                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+            }
         }
-    }
-    Text {
-        visible: !!meter.bucket.status_text
-        objectName: "meterStatus_" + meter.providerName + "_" + meter.bucket.id
-        textFormat: Text.PlainText
-        text: meter.bucket.status_text || ""
-        color: Theme.muted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
     }
 }

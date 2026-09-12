@@ -15,15 +15,18 @@ import (
 )
 
 type Client struct {
-	store          *CredentialStore
-	http           *http.Client
-	usageURL       string
-	tokenURL       string
-	refreshMu      sync.Mutex
-	resetMu        sync.Mutex
-	resetAttemptID string
-	resetAccountID string
-	resetOutcome   string
+	store              *CredentialStore
+	http               *http.Client
+	usageURL           string
+	tokenURL           string
+	refreshMu          sync.Mutex
+	resetMu            sync.Mutex
+	resetAttemptID     string
+	resetAccountID     string
+	resetOutcome       string
+	resetStartedAt     time.Time
+	resetUsageObserved bool
+	resetAttempts      map[string]resetAttempt
 }
 
 func New(opts Options) *Client {
@@ -54,6 +57,7 @@ func New(opts Options) *Client {
 func (c *Client) Name() string { return providerName }
 
 func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
+	fetchStartedAt := time.Now()
 	data := baseUsage()
 	if err := ctx.Err(); err != nil {
 		return data, err
@@ -149,6 +153,7 @@ func (c *Client) Fetch(ctx context.Context) (usage.UsageData, error) {
 	if parsed.RateLimitResetCredits != nil {
 		parsed.RateLimitResetCredits.AccountFingerprint = accountFingerprint(creds.AccountID)
 	}
+	c.observeResetUsage(parsed, fetchStartedAt)
 	return parsed, nil
 }
 

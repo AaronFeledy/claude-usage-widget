@@ -329,7 +329,8 @@ private slots:
         auto failed = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
         auto failedCodex = failed[1].toObject(); failedCodex["error"] = "Unavailable"; failedCodex["is_success"] = false; failed[1] = failedCodex;
         controller.replaceSnapshot(QJsonDocument(failed).toJson());
-        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+        // Failed providers have no meters, so the weekly footer is removed too.
+        QTRY_VERIFY(!resetLabel() || !resetLabel()->isVisible());
 
         controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 1, halfWeekReset));
         label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());

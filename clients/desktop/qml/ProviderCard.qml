@@ -30,6 +30,50 @@ Rectangle {
         card.clock
         return card.weeklyBucket ? backend.concern(card.name, card.weeklyBucket) : ({})
     }
+    Component {
+        id: bankedResetsFooter
+        RowLayout {
+            spacing: 8
+            Text {
+                function openUsage() { Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
+                objectName: "bankedResets_" + card.name
+                visible: card.hasBankedResets
+                textFormat: Text.PlainText
+                text: !card.hasBankedResets ? "" : card.resetCredits.available_count === 1 ? "1 banked reset"
+                    : card.resetCredits.available_count + " banked resets"
+                color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
+                font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
+                horizontalAlignment: Text.AlignRight
+                font.underline: bankedResetHover.hovered || activeFocus
+                activeFocusOnTab: visible
+                Accessible.role: Accessible.Link
+                Accessible.name: text
+                Accessible.description: "Open ChatGPT usage and reset controls"
+                Accessible.onPressAction: openUsage()
+                Keys.onReturnPressed: openUsage()
+                Keys.onEnterPressed: openUsage()
+                Keys.onSpacePressed: openUsage()
+                TapHandler { onTapped: parent.openUsage() }
+                HoverHandler { id: bankedResetHover; cursorShape: Qt.PointingHandCursor }
+                ToolTip.visible: bankedResetHover.hovered
+                ToolTip.text: "Open ChatGPT usage and reset controls"
+            }
+            // IMPORTANT: DO NOT test this button, the endpoint, or any code
+            // that might trigger a reset. It can burn a very valuable reset.
+            // The intentionally skipped tests must not be filled in or enabled.
+            ActionButton {
+                objectName: "useBankedReset_" + card.name
+                visible: card.hasBankedResets && card.hasResetAccountBinding
+                    && !!card.weeklyBucket && card.weeklyBucket.utilization >= 95
+                enabled: backend.resetAction.enabled
+                text: backend.resetAction.busy ? "Resetting…" : backend.resetAction.awaitingUsage ? "Waiting…" : "Use reset…"
+                implicitHeight: 24; implicitWidth: contentItem.implicitWidth + 16
+                padding: 6; font.pixelSize: 11
+                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                onClicked: card.resetRequested()
+            }
+        }
+    }
     implicitHeight: body.implicitHeight + 36
     radius: 12
     color: Theme.surface
@@ -67,6 +111,7 @@ Rectangle {
         columnSpacing: 20; rowSpacing: 20
         ColumnLayout {
             Layout.fillWidth: card.stacked
+            Layout.fillHeight: true
             Layout.preferredWidth: card.stacked ? -1 : 138
             Layout.maximumWidth: card.stacked ? Infinity : 138
             Layout.alignment: Qt.AlignTop
@@ -84,48 +129,14 @@ Rectangle {
                     Text { visible: card.pinned; text: "TRAY METER"; font.pixelSize: 8; font.letterSpacing: 0.9; color: card.accent }
                 }
             }
-            Text {
-                function openUsage() { Qt.openUrlExternally("https://chatgpt.com/codex/settings/usage") }
-                objectName: "bankedResets_" + card.name
-                visible: card.hasBankedResets
-                textFormat: Text.PlainText
-                text: !card.hasBankedResets ? "" : card.resetCredits.available_count === 1 ? "1 banked reset"
-                    : card.resetCredits.available_count + " banked resets"
-                color: card.weeklyConcern.severity === 3 ? Theme.red : Theme.muted
-                font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight
-                font.underline: bankedResetHover.hovered || activeFocus
-                activeFocusOnTab: visible
-                Accessible.role: Accessible.Link
-                Accessible.name: text
-                Accessible.description: "Open ChatGPT usage and reset controls"
-                Accessible.onPressAction: openUsage()
-                Keys.onReturnPressed: openUsage()
-                Keys.onEnterPressed: openUsage()
-                Keys.onSpacePressed: openUsage()
-                TapHandler { onTapped: parent.openUsage() }
-                HoverHandler { id: bankedResetHover; cursorShape: Qt.PointingHandCursor }
-                ToolTip.visible: bankedResetHover.hovered
-                ToolTip.text: "Open ChatGPT usage and reset controls"
-            }
-            // IMPORTANT: DO NOT test this button, the endpoint, or any code
-            // that might trigger a reset. It can burn a very valuable reset.
-            // The intentionally skipped tests must not be filled in or enabled.
-            ActionButton {
-                objectName: "useBankedReset_" + card.name
-                visible: card.hasBankedResets && card.hasResetAccountBinding
-                    && !!card.weeklyBucket && card.weeklyBucket.utilization >= 95
-                enabled: backend.resetAction.enabled
-                text: backend.resetAction.busy ? "Resetting…" : "Use reset…"
-                implicitHeight: 32; font.pixelSize: 12
-                Layout.alignment: Qt.AlignLeft
-                onClicked: card.resetRequested()
-            }
             Item {
-                Layout.preferredWidth: 35; Layout.preferredHeight: 28
+                Layout.preferredWidth: 35; Layout.minimumHeight: 28
+                Layout.fillHeight: true
                 Layout.alignment: Qt.AlignLeft
                 Text { anchors.centerIn: parent; text: "⠿"; font.pixelSize: 22; color: Theme.muted }
                 MouseArea {
-                    id: dragMouse; objectName: "dragHandle_" + card.name; anchors.fill: parent
+                    id: dragMouse; objectName: "dragHandle_" + card.name
+                    width: 35; height: 28; anchors.centerIn: parent
                     hoverEnabled: true
                     cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                     drag.target: dragGhost
@@ -152,6 +163,8 @@ Rectangle {
                     required property var modelData
                     required property int index
                     bucket: modelData; providerName: card.name; accent: card.accent
+                    footerAccessory: card.name === "Codex" && modelData.id === "weekly" ? bankedResetsFooter : null
+                    footerAccessoryVisible: card.hasBankedResets && modelData.id === "weekly"
                     Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
                     Layout.columnSpan: {
                         if (card.stacked && index === 0) return meters.columns

@@ -10,11 +10,39 @@
 #include <QSaveFile>
 #include <QRegularExpression>
 #include <QUuid>
+#include <cmath>
+#include <cstring>
+#include <utility>
 
 // IMPORTANT: DO NOT test the reset button, its endpoint, or any code that might
 // trigger a reset. It can burn a very valuable banked reset. The corresponding
 // skipped tests are deliberate safeguards, not missing tests to implement.
 namespace {
+// DO NOT test this upload through a reset path. It is deliberately sequential
+// and cannot rewind: Qt must fail a resend instead of replaying a redemption.
+class ResetUpload final : public QIODevice {
+public:
+    explicit ResetUpload(QByteArray body, QObject *parent) : QIODevice(parent), m_body(std::move(body)) {
+        open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+    }
+    bool isSequential() const override { return true; }
+    bool reset() override { return false; }
+    bool seek(qint64) override { return false; }
+    qint64 bytesAvailable() const override { return m_body.size() - m_offset + QIODevice::bytesAvailable(); }
+protected:
+    qint64 readData(char *data, qint64 maxSize) override {
+        const qint64 count = qMin(maxSize, qint64(m_body.size()) - m_offset);
+        if (count <= 0) return maxSize == 0 ? 0 : -1;
+        std::memcpy(data, m_body.constData() + m_offset, size_t(count));
+        m_offset += count;
+        return count;
+    }
+    qint64 writeData(const char *, qint64) override { return -1; }
+private:
+    QByteArray m_body;
+    qint64 m_offset = 0;
+};
+
 bool validFingerprint(const QString &value) {
     static const QRegularExpression pattern(QStringLiteral("^[0-9a-f]{64}$"));
     return value.size() == 64 && pattern.match(value).hasMatch();
@@ -69,7 +97,15 @@ bool Controller::chatGptResetEligible() const {
         && weekly.value("utilization").toDouble() >= 95
         && weekly.value("available_count").toDouble() > 0
         && validFingerprint(weekly.value("account_fingerprint").toString())
-        && m_resetBlockedReceipt != resetReceiptPath();
+        && !chatGptResetAwaitingUsage();
+}
+
+bool Controller::chatGptResetAwaitingUsage() const {
+    const QString path = resetReceiptPath();
+    // Any submitted request stays latched, including an uncertain result or
+    // an app restart. Never offer another spend while usage is still >= 95%.
+    return !path.isEmpty() && (m_resetBlockedReceipt == path || QFileInfo::exists(path)
+        || !legacyResetReceiptPaths().isEmpty());
 }
 
 QString Controller::resetConnectionIdentity() const {
@@ -106,7 +142,8 @@ QStringList Controller::legacyResetReceiptPaths() const {
 
 QVariantMap Controller::resetAction() const {
     return {{"busy", m_resetBusy}, {"message", m_resetMessage},
-        {"enabled", chatGptResetEligible()},
+        {"awaitingUsage", chatGptResetAwaitingUsage()},
+        {"enabled", m_resetConfirmation.isEmpty() && chatGptResetEligible()},
         {"canConfirm", !m_resetConfirmation.isEmpty() && m_resetConfirmation == resetConnectionIdentity() && chatGptResetEligible()}};
 }
 
@@ -114,7 +151,9 @@ bool Controller::prepareChatGptReset() {
     m_resetConfirmation.clear();
     m_resetMessage.clear();
     if (!chatGptResetEligible()) {
-        m_resetMessage = "Refresh usage before using a reset. Weekly usage must be at least 95% and a banked reset must be available.";
+        m_resetMessage = chatGptResetAwaitingUsage()
+            ? "A reset has already been requested. Waiting for weekly usage to drop below 95%."
+            : "Refresh usage before using a reset. Weekly usage must be at least 95% and a banked reset must be available.";
         emit changed(); return false;
     }
     const auto weekly = chatGptWeekly();
@@ -146,7 +185,11 @@ bool Controller::prepareChatGptReset() {
         m_resetMessage = "A reset was already used. Waiting for updated weekly usage.";
         emit changed(); return false;
     }
-    if (!receipt.isEmpty()) m_resetMessage = "The previous result was uncertain. Continuing will reuse the same reset request.";
+    if (!receipt.isEmpty()) {
+        m_resetBlockedReceipt = receiptPath;
+        m_resetMessage = "A reset has already been requested. Waiting for weekly usage to drop below 95%.";
+        emit changed(); return false;
+    }
     m_resetConfirmation = resetConnectionIdentity();
     emit changed(); return true;
 }
@@ -156,35 +199,31 @@ void Controller::cancelChatGptResetConfirmation() {
 }
 
 void Controller::observeResetUsage() {
-    // Read-only usage polling never sends a redemption. Only a successful new
-    // reading below the threshold, zero credits, or a later weekly window
-    // releases a completed account-bound receipt.
+    // Read-only usage polling never sends a redemption. Only a successful
+    // reading below 95% releases the account-bound latch. A different reset
+    // timestamp, missing/zero credits, an error, or an uncertain response does
+    // not prove that the usage reset has been observed.
+    if (m_resetBusy) return;
     const auto weekly = chatGptWeekly();
     if (weekly.isEmpty()) return;
-    const bool lowOrEmpty = weekly.value("utilization").toDouble() < 95
-        || (weekly.value("available_count").isValid() && weekly.value("available_count").toDouble() <= 0);
+    bool validUsage = false;
+    const double utilization = weekly.value("utilization").toDouble(&validUsage);
+    if (!validUsage || !std::isfinite(utilization) || utilization < 0 || utilization >= 95) return;
     const QString path = resetReceiptPath();
     QJsonObject receipt;
-    const QString currentWindow = canonicalWindow(weekly);
     if (!path.isEmpty() && readReceipt(path, receipt)) {
-        const QString receiptWindow = receipt.value("weekly_resets_at").toString();
-        const auto receiptReset = QDateTime::fromString(receiptWindow, Qt::ISODateWithMs);
-        const auto currentReset = QDateTime::fromString(currentWindow, Qt::ISODateWithMs);
-        const bool newWindow = receiptReset.isValid() && currentReset.isValid()
-            && currentReset.toUTC() > receiptReset.toUTC();
-        if (receipt.value("completed").toBool()
+        if (!receipt.isEmpty()
             && receipt.value("account_fingerprint").toString() == weekly.value("account_fingerprint").toString()
-            && (lowOrEmpty || newWindow) && QFile::remove(path)) {
+            && QFile::remove(path)) {
             if (m_resetBlockedReceipt == path) m_resetBlockedReceipt.clear();
+            m_resetMessage = "Weekly usage has been updated.";
         }
     }
-    if (lowOrEmpty) {
-        for (const QString &legacyPath : legacyResetReceiptPaths()) {
-            QJsonObject legacy;
-            if (readReceipt(legacyPath, legacy) && legacy.value("completed").toBool()
-                && QFile::remove(legacyPath) && m_resetBlockedReceipt == legacyPath) {
-                m_resetBlockedReceipt.clear();
-            }
+    for (const QString &legacyPath : legacyResetReceiptPaths()) {
+        QJsonObject legacy;
+        if (readReceipt(legacyPath, legacy) && legacy.value("completed").toBool()
+            && QFile::remove(legacyPath) && m_resetBlockedReceipt == legacyPath) {
+            m_resetBlockedReceipt.clear();
         }
     }
 }
@@ -195,25 +234,23 @@ void Controller::cancelResetRequest() {
     disconnect(m_resetReply, nullptr, this, nullptr);
     m_resetReply->abort(); m_resetReply->deleteLater(); m_resetReply.clear();
     m_resetBusy = false;
-    m_resetMessage = "The reset result is unknown. Check your usage; any retry will reuse the same request.";
+    m_resetMessage = "The reset result is unknown. Waiting for weekly usage to drop below 95% before allowing another reset.";
     // Leave the durable receipt intact, including when the app quits mid-request.
 }
 
 void Controller::consumeChatGptReset() {
     // DO NOT TEST OR INVOKE for validation: this spends a valuable real reset.
     // Only the explicit confirmation button may call this method. Never retry
-    // automatically, follow redirects, or replace an uncertain request's UUID.
+    // automatically, follow redirects, or offer another request until a usage
+    // reading below 95% has released the durable account latch.
     if (!resetAction().value("canConfirm").toBool()) return;
     const QString receiptPath = resetReceiptPath();
     const auto weekly = chatGptWeekly();
     const QString fingerprint = weekly.value("account_fingerprint").toString();
     QJsonObject receipt;
-    if (!readReceipt(receiptPath, receipt) || receipt.value("completed").toBool()) {
+    if (!readReceipt(receiptPath, receipt) || !receipt.isEmpty()) {
+        m_resetBlockedReceipt = receiptPath;
         m_resetMessage = "Check your previous reset in ChatGPT before continuing.";
-        m_resetConfirmation.clear(); emit changed(); return;
-    }
-    if (!receipt.isEmpty() && receipt.value("account_fingerprint").toString() != fingerprint) {
-        m_resetMessage = "The saved reset request does not match this ChatGPT account.";
         m_resetConfirmation.clear(); emit changed(); return;
     }
     if (!legacyResetReceiptPaths().isEmpty()) {
@@ -221,11 +258,9 @@ void Controller::consumeChatGptReset() {
         m_resetConfirmation.clear(); emit changed(); return;
     }
     const QString requestWindow = canonicalWindow(weekly);
-    if (receipt.isEmpty()) {
-        receipt = {{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
-            {"completed", false}, {"account_fingerprint", fingerprint},
-            {"weekly_resets_at", requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow)}};
-    }
+    receipt = {{"request_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+        {"completed", false}, {"account_fingerprint", fingerprint},
+        {"weekly_resets_at", requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow)}};
     if (!writeReceipt(receiptPath, receipt)) {
         m_resetMessage = "The reset request could not be saved safely. No reset was requested.";
         m_resetConfirmation.clear(); emit changed(); return;
@@ -245,11 +280,19 @@ void Controller::consumeChatGptReset() {
     if (m_mode == "local") ServerTransport::secureRequest(request, transport.certificate);
     const auto body = QJsonDocument(QJsonObject{{"request_id", receipt.value("request_id")},
         {"confirmed", true}, {"account_fingerprint", fingerprint}}).toJson(QJsonDocument::Compact);
+    request.setHeader(QNetworkRequest::ContentLengthHeader, qint64(body.size()));
+    request.setAttribute(QNetworkRequest::DoNotBufferUploadDataAttribute, true);
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    // Latch synchronously before POST, not after a response: rapid clicks,
+    // errors, cancellation, and restarts must not allow a second spend.
+    m_resetBlockedReceipt = receiptPath;
     cancel(); m_poll.stop(); m_resetBusy = true; m_resetConfirmation.clear(); m_resetMessage = "Using one banked reset…";
     emit changed();
     QNetworkAccessManager *network = m_mode == "local" ? &m_localNetwork
         : m_mode == "ssh" ? static_cast<QNetworkAccessManager *>(&m_sshNetwork) : &m_network;
-    auto reply = network->post(request, body); m_resetReply = reply;
+    auto upload = new ResetUpload(body, this);
+    auto reply = network->post(request, upload); m_resetReply = reply;
+    upload->setParent(reply);
     if (m_mode == "local") ServerTransport::requirePinnedPeer(reply, transport.certificate);
     auto deadline = new QTimer(reply); deadline->setSingleShot(true);
     connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort); deadline->start(100000);
@@ -262,13 +305,12 @@ void Controller::consumeChatGptReset() {
         const auto outcome = bytes.size() <= 4096 ? QJsonDocument::fromJson(bytes).object().value("outcome").toString() : QString();
         const bool terminal = outcome == "reset" || outcome == "already_redeemed" || outcome == "nothing_to_reset" || outcome == "no_credit";
         if (!redirected && error == QNetworkReply::NoError && status == 200 && terminal) {
-            // A reset outcome may represent a new spend after a delayed retry;
-            // bind it to the window in which this request was sent. An
-            // already_redeemed outcome retains the original receipt window.
+            // Retain the submitted window as receipt metadata, never as a
+            // reason to release the latch while usage remains at or above 95%.
             if (outcome == "reset") receipt.insert("weekly_resets_at",
                 requestWindow.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(requestWindow));
             receipt.insert("completed", true);
-            writeReceipt(receiptPath, receipt); // A failed write retains the original UUID for a safe manual retry.
+            writeReceipt(receiptPath, receipt); // The original receipt keeps the latch if this write fails.
             m_resetBlockedReceipt = receiptPath;
             if (outcome == "reset") m_resetMessage = "One banked reset was used. Refreshing usage…";
             else if (outcome == "already_redeemed") m_resetMessage = "This reset request was already completed. Refreshing usage…";
@@ -277,8 +319,18 @@ void Controller::consumeChatGptReset() {
         } else if (status == 404) m_resetMessage = "Update your usage server to use resets here, or open ChatGPT's usage page.";
         else if (status == 409) m_resetMessage = "The server could not safely proceed. Refresh usage or check the previous reset in ChatGPT.";
         else if (status == 401 || status == 403) m_resetMessage = "The reset request was rejected. Check your connection and ChatGPT sign-in.";
-        else m_resetMessage = "The reset result is unknown. Check your usage; any retry will reuse the same request.";
+        else m_resetMessage = "The reset result is unknown. Waiting for weekly usage to drop below 95% before allowing another reset.";
         emit changed();
-        refresh(); // Only GET usage; never repeat the mutation automatically.
+        // DO NOT test these callbacks as part of the redemption flow. They
+        // only GET usage; they must never repeat or confirm a reset request.
+        // The server refetches OpenAI after three seconds. These bounded reads
+        // allow for propagation/network delay, then normal polling takes over.
+        const QString connection = resetConnectionIdentity();
+        if (m_startPolling) m_poll.start(m_interval * 1000);
+        for (const int delay : {5000, 12000, 25000}) {
+            QTimer::singleShot(delay, this, [this, connection] {
+                if (chatGptResetAwaitingUsage() && resetConnectionIdentity() == connection) refresh();
+            });
+        }
     });
 }

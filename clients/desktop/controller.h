@@ -82,6 +82,7 @@ private:
     void syncConnection();
     QVariantMap chatGptWeekly() const;
     bool chatGptResetEligible() const;
+    bool chatGptResetAwaitingUsage() const;
     QString resetConnectionIdentity() const;
     QString resetReceiptPath() const;
     QStringList legacyResetReceiptPaths() const;
