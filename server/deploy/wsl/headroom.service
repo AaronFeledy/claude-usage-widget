@@ -1,0 +1,19 @@
+# Per-user service for an official managed Headroom installation.
+# Install as ~/.config/systemd/user/headroom.service; do not use a system unit.
+[Unit]
+Description=Headroom usage API
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+WorkingDirectory=%h
+EnvironmentFile=-%h/.config/claude-usage-widget/server.env
+ExecStart=%h/.local/bin/headroom serve --config %h/.config/claude-usage-widget/config.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

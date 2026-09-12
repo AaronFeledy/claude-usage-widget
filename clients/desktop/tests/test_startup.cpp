@@ -10,6 +10,8 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QUuid>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 namespace {
@@ -39,29 +41,33 @@ private slots:
     {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
-        const QString launcher = dir.filePath("external/headroom");
+        const QString root = QFileInfo(dir.path()).canonicalFilePath();
+        QVERIFY(!root.isEmpty());
+        const QString launcher = QDir(root).filePath("external/headroom");
         QVERIFY(writeFile(launcher, "fixture", true));
-        QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(dir.path()).toUtf8() + '\n'));
-        qputenv("HEADROOM_INSTALL_ROOT", dir.path().toUtf8());
+        QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
+        qputenv("HEADROOM_INSTALL_ROOT", root.toUtf8());
         qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());
         qputenv("HEADROOM_PACKAGE_VERSION", "9.8.7");
         QCOMPARE(StartupService::defaultExecutablePath(), QCoreApplication::applicationFilePath());
-        const QString packaged = dir.filePath(QStringLiteral("versions/9.8.7/bin/%1")
 #ifdef Q_OS_WIN
-            .arg("headroom.exe"));
+        const QString relativeApplication = QStringLiteral("bin/headroom.exe");
+#elif defined(Q_OS_MACOS)
+        const QString relativeApplication = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
 #else
-            .arg("headroom"));
+        const QString relativeApplication = QStringLiteral("bin/headroom");
 #endif
+        const QString packaged = QDir(root).filePath(QStringLiteral("versions/9.8.7/") + relativeApplication);
         QVERIFY(writeFile(packaged, "fixture", true));
         QCOMPARE(StartupService::packagedExecutablePath(packaged), QFileInfo(launcher).absoluteFilePath());
-        const QString generation = dir.filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-fedcba9876543210/bin/%1")
-#ifdef Q_OS_WIN
-            .arg("headroom.exe"));
-#else
-            .arg("headroom"));
-#endif
+        const QString generation = QDir(root).filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-fedcba9876543210/") + relativeApplication);
         QVERIFY(writeFile(generation, "fixture", true));
         QCOMPARE(StartupService::packagedExecutablePath(generation), QFileInfo(launcher).absoluteFilePath());
+        const QString macApplication = QDir(root).filePath(
+            QStringLiteral("versions/9.8.7/Headroom.app/Contents/MacOS/headroom"));
+        QVERIFY(writeFile(macApplication, "fixture", true));
+        QCOMPARE(StartupService::packagedExecutablePath(macApplication, StartupService::Platform::Mac),
+                 QFileInfo(launcher).absoluteFilePath());
 #ifdef Q_OS_WIN
         QString generationCaseAlias = generation;
         generationCaseAlias.replace(QStringLiteral("generation-0123456789abcdef"),
@@ -70,10 +76,10 @@ private slots:
 #endif
 
         for (const QString &unsafe : {
-                 dir.filePath(QStringLiteral("versions/9.8.6.generation-0123456789abcdef-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
-                 dir.filePath(QStringLiteral("versions/9.8.7.generation-1123456789ABCDEf-fedcba9876543210/bin/") + QFileInfo(packaged).fileName()),
-                 dir.filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-short/bin/") + QFileInfo(packaged).fileName()),
-                 dir.filePath(QStringLiteral("foreign/bin/") + QFileInfo(packaged).fileName())}) {
+                 QDir(root).filePath(QStringLiteral("versions/9.8.6.generation-0123456789abcdef-fedcba9876543210/") + relativeApplication),
+                 QDir(root).filePath(QStringLiteral("versions/9.8.7.generation-1123456789ABCDEf-fedcba9876543210/") + relativeApplication),
+                 QDir(root).filePath(QStringLiteral("versions/9.8.7.generation-0123456789abcdef-short/") + relativeApplication),
+                 QDir(root).filePath(QStringLiteral("foreign/") + relativeApplication)}) {
             QVERIFY(writeFile(unsafe, "fixture", true));
             QCOMPARE(StartupService::packagedExecutablePath(unsafe), QFileInfo(unsafe).absoluteFilePath());
         }
@@ -85,15 +91,26 @@ private slots:
     void repairsPriorGenerationStartupEntryToStableLauncher()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());
-        const QString root = dir.filePath(QStringLiteral("install"));
+        const QString rootAlias = dir.filePath(QStringLiteral("install"));
+        QVERIFY(QDir().mkpath(rootAlias));
+        const QString root = QFileInfo(rootAlias).canonicalFilePath();
+        QVERIFY(!root.isEmpty());
         const QString launcher = dir.filePath(QStringLiteral("bin/headroom"));
 #ifdef Q_OS_WIN
         const QString appName = QStringLiteral("headroom.exe");
+#elif defined(Q_OS_MACOS)
+        const QString appName = QStringLiteral("Headroom.app/Contents/MacOS/headroom");
 #else
         const QString appName = QStringLiteral("headroom");
 #endif
-        const QString current = QDir(root).filePath(QStringLiteral("versions/2.0.0.generation-0123456789abcdef-fedcba9876543210/bin/") + appName);
-        const QString previous = QDir(root).filePath(QStringLiteral("versions/1.8.0.generation-1111111111111111-2222222222222222/bin/") + appName);
+        const QString applicationPrefix =
+#ifdef Q_OS_MACOS
+            QString();
+#else
+            QStringLiteral("bin/");
+#endif
+        const QString current = QDir(root).filePath(QStringLiteral("versions/2.0.0.generation-0123456789abcdef-fedcba9876543210/") + applicationPrefix + appName);
+        const QString previous = QDir(root).filePath(QStringLiteral("versions/1.8.0.generation-1111111111111111-2222222222222222/") + applicationPrefix + appName);
         QVERIFY(writeFile(current, "current", true)); QVERIFY(writeFile(previous, "previous", true));
         QVERIFY(writeFile(launcher, "launcher", true));
         QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
@@ -123,6 +140,27 @@ private slots:
         QCOMPARE(registry.value(QStringLiteral("Headroom")).toString(), stableCommand);
         QVERIFY(!registry.contains(QStringLiteral("ClaudeUsageWidget")));
         registry.clear(); registry.sync();
+#elif defined(Q_OS_MACOS)
+        const QString config = dir.filePath(QStringLiteral("LaunchAgents"));
+        StartupService seed(config, previous, true, nullptr, StartupService::Platform::Mac);
+        seed.setPreferenceWriter([](bool) { return QString(); });
+        QVERIFY(seed.setEnabled(true));
+        const QByteArray oldEntry = readFile(seed.entryPath());
+        StartupService repaired(config, current, true, nullptr, StartupService::Platform::Mac);
+        QVERIFY(repaired.enabled());
+        const QByteArray repairedEntry = readFile(repaired.entryPath());
+        QVERIFY(repairedEntry.contains(launcher.toHtmlEscaped().toUtf8()));
+        QVERIFY(!repairedEntry.contains(previous.toUtf8()));
+
+        QVERIFY(writeFile(repaired.entryPath(), QByteArray(oldEntry).replace("--background", "--background-custom")));
+        QFile::setPermissions(repaired.entryPath(), QFile::ReadOwner | QFile::WriteOwner);
+        StartupService custom(config, current, true, nullptr, StartupService::Platform::Mac);
+        QCOMPARE(readFile(custom.entryPath()), QByteArray(oldEntry).replace("--background", "--background-custom"));
+
+        QVERIFY(writeFile(custom.entryPath(), oldEntry));
+        QFile::setPermissions(custom.entryPath(), QFile::ReadOwner | QFile::WriteOwner);
+        StartupService preview(config, current, false, nullptr, StartupService::Platform::Mac);
+        QCOMPARE(readFile(preview.entryPath()), oldEntry);
 #else
         const QString config = dir.filePath(QStringLiteral("config"));
         const QString entry = QDir(config).filePath(QStringLiteral("autostart/headroom.desktop"));
@@ -134,6 +172,22 @@ private slots:
         const QByteArray repairedEntry = readFile(entry);
         QVERIFY(repairedEntry.contains((QStringLiteral("Exec=\"") + launcher + QStringLiteral("\" --background")).toUtf8()));
         QVERIFY(!repairedEntry.contains(previous.toUtf8()));
+
+        const QString publicCLI = dir.filePath(QStringLiteral("public bin/headroom"));
+        QVERIFY(writeFile(publicCLI, "CLI router", true));
+        QVERIFY(writeFile(publicCLI + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
+        QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("install-state.json")),
+            QJsonDocument(QJsonObject{{"schema", 1}, {"product", "Headroom"}, {"cli_entry_path", publicCLI}}).toJson()));
+        const QByteArray oldPublicEntry = QByteArray(oldEntry).replace(previous.toUtf8(), publicCLI.toUtf8());
+        QVERIFY(writeFile(entry, oldPublicEntry));
+        StartupService migratedCLI(config, current, true);
+        QVERIFY(migratedCLI.enabled());
+        QVERIFY(readFile(entry).contains(launcher.toUtf8()));
+        QVERIFY(!readFile(entry).contains(publicCLI.toUtf8()));
+        QVERIFY(writeFile(entry, oldPublicEntry));
+        QVERIFY(writeFile(publicCLI + QStringLiteral(".root"), "/different-install\n"));
+        StartupService unrelatedCLI(config, current, true);
+        QCOMPARE(readFile(entry), oldPublicEntry);
 
         QVERIFY(writeFile(entry, QByteArray(oldEntry).replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false")));
         StartupService disabled(config, current, true);
@@ -176,6 +230,133 @@ private slots:
         QVERIFY(!service.setEnabled(true));
         QVERIFY(!QFileInfo::exists(service.entryPath()));
         QVERIFY(!service.error().isEmpty());
+    }
+
+    void macLaunchAgentIsRemovableAfterTheExecutableDisappears()
+    {
+        // An external reinstall can delete the generation an owned entry points
+        // at. Start at login must still be switchable off instead of leaving a
+        // stale plist that launches a missing binary at every login.
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+#ifdef Q_OS_WIN
+        const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom.exe"));
+        QVERIFY(QDir().mkpath(QFileInfo(executable).absolutePath()));
+        QVERIFY(QFile::copy(currentExecutable(), executable));
+#else
+        const QString executable = dir.filePath(QStringLiteral("versions/1.0.0/Headroom.app/Contents/MacOS/headroom"));
+        QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+#endif
+        StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
+                               StartupService::Platform::Mac);
+        bool stored = false;
+        service.setPreferenceWriter([&](bool enabled) { stored = enabled; return QString(); });
+        QVERIFY2(service.setEnabled(true), qPrintable(service.error()));
+        QVERIFY(QFileInfo::exists(service.entryPath()));
+
+        QVERIFY(QFile::remove(executable));
+        QVERIFY(service.setEnabled(false));
+        QVERIFY(!stored);
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+        QVERIFY(service.error().isEmpty());
+
+        // Enabling still requires a usable binary, and an unrecognized entry is
+        // never removed just because the executable is gone.
+        QVERIFY(!service.setEnabled(true));
+        QVERIFY(!QFileInfo::exists(service.entryPath()));
+        QVERIFY(writeFile(service.entryPath(), QByteArrayLiteral("<plist>foreign</plist>"), true));
+        QVERIFY(!service.setEnabled(false));
+        QCOMPARE(readFile(service.entryPath()), QByteArrayLiteral("<plist>foreign</plist>"));
+    }
+
+    void macLaunchAgentIsPrivateExactAndTransactional()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+#ifdef Q_OS_WIN
+        const QString executable = dir.filePath(QStringLiteral("Head room & test/headroom.exe"));
+        QVERIFY(QDir().mkpath(QFileInfo(executable).absolutePath()));
+        QVERIFY(QFile::copy(currentExecutable(), executable));
+#else
+        const QString executable = dir.filePath(QStringLiteral("Head room & <test>/headroom"));
+        QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+#endif
+        StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
+                               StartupService::Platform::Mac);
+        QCOMPARE(service.entryPath(), dir.filePath(QStringLiteral("LaunchAgents/io.headroom.Headroom.plist")));
+        service.setPreferenceWriter([](bool) { return QString(); });
+        QVERIFY(service.setEnabled(true));
+        QVERIFY(service.enabled());
+        const QByteArray original = readFile(service.entryPath());
+        QVERIFY(original.contains("<string>io.headroom.Headroom</string>"));
+        QVERIFY(original.contains("<string>--background</string>"));
+#ifdef Q_OS_WIN
+        QVERIFY(original.contains("Head room &amp; test/headroom.exe"));
+#else
+        QVERIFY(original.contains("Head room &amp; &lt;test&gt;/headroom"));
+        QVERIFY(!(QFile::permissions(service.entryPath()) &
+            (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ReadOther | QFileDevice::WriteOther)));
+#endif
+
+        StartupService reloaded(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
+                                StartupService::Platform::Mac);
+        QVERIFY(reloaded.enabled());
+        reloaded.setPreferenceWriter([](bool) { return QStringLiteral("Settings could not be saved."); });
+        QVERIFY(!reloaded.setEnabled(false));
+        QCOMPARE(readFile(reloaded.entryPath()), original);
+        QVERIFY(reloaded.enabled());
+        reloaded.setPreferenceWriter([](bool) { return QString(); });
+        QVERIFY(reloaded.setEnabled(false));
+        QVERIFY(!QFileInfo::exists(reloaded.entryPath()));
+    }
+
+    void macPriorGenerationEntryRepairsToStableLauncher()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString root = QFileInfo(dir.path()).canonicalFilePath();
+        const QString launcher = QDir(root).filePath(QStringLiteral("stable/Headroom.app/Contents/MacOS/headroom"));
+        const QString current = QDir(root).filePath(QStringLiteral(
+            "versions/2.0.0.generation-0123456789abcdef-fedcba9876543210/Headroom.app/Contents/MacOS/headroom"));
+        const QString previous = QDir(root).filePath(QStringLiteral(
+            "versions/1.8.0.generation-1111111111111111-2222222222222222/Headroom.app/Contents/MacOS/headroom"));
+        QVERIFY(writeFile(current, "current"));
+        QVERIFY(writeFile(previous, "previous"));
+        QVERIFY(writeFile(launcher, "launcher"));
+        QVERIFY(writeFile(launcher + QStringLiteral(".root"), QDir::toNativeSeparators(root).toUtf8() + '\n'));
+        const QString launchAgents = QDir(root).filePath(QStringLiteral("LaunchAgents"));
+        StartupService seed(launchAgents, currentExecutable(), true, nullptr, StartupService::Platform::Mac);
+        seed.setPreferenceWriter([](bool) { return QString(); });
+        QVERIFY(seed.setEnabled(true));
+        QByteArray oldEntry = readFile(seed.entryPath());
+        oldEntry.replace(currentExecutable().toHtmlEscaped().toUtf8(), previous.toHtmlEscaped().toUtf8());
+        QVERIFY(writeFile(seed.entryPath(), oldEntry));
+        QVERIFY(QFile::setPermissions(seed.entryPath(), QFile::ReadOwner | QFile::WriteOwner));
+
+        qputenv("HEADROOM_INSTALL_ROOT", root.toUtf8());
+        qputenv("HEADROOM_LAUNCHER_PATH", launcher.toUtf8());
+        qputenv("HEADROOM_PACKAGE_VERSION", "2.0.0");
+        StartupService repaired(launchAgents, current, true, nullptr, StartupService::Platform::Mac);
+        qunsetenv("HEADROOM_INSTALL_ROOT");
+        qunsetenv("HEADROOM_LAUNCHER_PATH");
+        qunsetenv("HEADROOM_PACKAGE_VERSION");
+        QVERIFY(repaired.enabled());
+        const QByteArray entry = readFile(repaired.entryPath());
+        QVERIFY(entry.contains(launcher.toHtmlEscaped().toUtf8()));
+        QVERIFY(!entry.contains(previous.toUtf8()));
+    }
+
+    void macLaunchAgentPreservesForeignEntries()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const QString executable = dir.filePath(QStringLiteral("headroom"));
+        QVERIFY(writeFile(executable, QByteArrayLiteral("fixture"), true));
+        StartupService service(dir.filePath(QStringLiteral("LaunchAgents")), executable, true, nullptr,
+                               StartupService::Platform::Mac);
+        const QByteArray foreign = QByteArrayLiteral("<?xml version=\"1.0\"?><plist><dict><key>Label</key><string>foreign</string></dict></plist>");
+        QVERIFY(writeFile(service.entryPath(), foreign));
+        QVERIFY(QFile::setPermissions(service.entryPath(), QFile::ReadOwner | QFile::WriteOwner));
+        QVERIFY(!service.setEnabled(true));
+        QCOMPARE(readFile(service.entryPath()), foreign);
+        QVERIFY(!service.setEnabled(false));
+        QCOMPARE(readFile(service.entryPath()), foreign);
     }
 #ifdef Q_OS_WIN
     void windowsRegistrationAndLegacyMigration()
@@ -223,7 +404,7 @@ private slots:
 #endif
     void optInPersistenceAndRemoval()
     {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
         QSKIP("XDG autostart entries are Linux-specific");
 #endif
         QTemporaryDir dir;
@@ -301,7 +482,7 @@ private slots:
 
     void disabledEntryAndWriteFailure()
     {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
         QSKIP("XDG autostart entries are Linux-specific");
 #endif
         QTemporaryDir dir;
@@ -321,7 +502,7 @@ private slots:
 
     void invalidExecutablePreservesExistingEntry()
     {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
         QSKIP("Desktop Entry executable validation is Linux-specific");
 #endif
         QTemporaryDir dir;
@@ -338,7 +519,7 @@ private slots:
 
     void respectsXdgConfigHome()
     {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
         QSKIP("XDG_CONFIG_HOME is Linux-specific");
 #endif
         QTemporaryDir dir;
@@ -356,7 +537,7 @@ private slots:
 
     void desktopLauncherPreservesSpecialCharacters()
     {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
         QSKIP("GIO desktop entry launching is Linux-specific");
 #endif
         const QString gio = QStandardPaths::findExecutable("gio");

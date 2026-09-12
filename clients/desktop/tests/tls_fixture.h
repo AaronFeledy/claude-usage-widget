@@ -4,9 +4,31 @@
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QSslServer>
+#include <QSslError>
+#include <QDebug>
 
 namespace TlsFixture {
+inline bool selectNativeTestBackend()
+{
+#ifdef Q_OS_MACOS
+    static const bool selected = [] {
+        qputenv("QT_SSL_USE_TEMPORARY_KEYCHAIN", "1");
+        const QString requested = QStringLiteral("securetransport");
+        const bool activated = QSslSocket::setActiveBackend(requested);
+        const QString active = QSslSocket::activeBackend();
+        qInfo().noquote() << "Headroom TLS fixture backend:" << active;
+        return activated && active == requested;
+    }();
+    return selected;
+#else
+    return true;
+#endif
+}
+
 // Synthetic public test identities only; production generates a fresh key in memory.
+#ifdef Q_OS_MACOS
+#include "headroom_macos_tls_fixture.h"
+#else
 inline constexpr char certificatePem[] = R"PEM(-----BEGIN CERTIFICATE-----
 MIIDdjCCAl6gAwIBAgIUepEJ6PKGRzL2DA/s7L+hPPw+FVQwDQYJKoZIhvcNAQEL
 BQAwIDEeMBwGA1UEAwwVSGVhZHJvb20gVGVzdCBTZXNzaW9uMB4XDTI2MDkwOTIz
@@ -113,6 +135,7 @@ q7V7Aa42tudKIJd7aYOfuEgCgx6L7Z+g4rC56featl/o5Jhkhw6owbXnPGQTvWeN
 P7n4ksEb18Eu1o9165o6pPA=
 -----END PRIVATE KEY-----
 )PEM";
+#endif
 
 inline QSslCertificate certificate()
 {
@@ -144,8 +167,40 @@ inline QSslConfiguration replacementServerConfiguration()
     return configuration;
 }
 
-inline void configure(QSslServer &server)
+inline void installDiagnostics(QSslServer &server)
 {
-    server.setSslConfiguration(serverConfiguration());
+    server.setHandshakeTimeout(3000);
+    QObject::connect(&server, &QSslServer::startedEncryptionHandshake, &server,
+                     [](QSslSocket *) { qInfo("Headroom TLS fixture handshake started"); });
+    QObject::connect(&server, &QSslServer::errorOccurred, &server,
+                     [](QSslSocket *socket, QAbstractSocket::SocketError error) {
+        qWarning().noquote() << "Headroom TLS fixture socket error" << int(error)
+                             << (socket ? socket->errorString() : QStringLiteral("missing socket"));
+    });
+    QObject::connect(&server, &QSslServer::sslErrors, &server,
+                     [](QSslSocket *, const QList<QSslError> &errors) {
+        QStringList codes;
+        for (const QSslError &error : errors) codes.append(QString::number(int(error.error())));
+        qWarning().noquote() << "Headroom TLS fixture SSL errors" << codes.join(QLatin1Char(','));
+    });
+    QObject::connect(&server, &QSslServer::handshakeInterruptedOnError, &server,
+                     [](QSslSocket *, const QSslError &error) {
+        qWarning() << "Headroom TLS fixture handshake error" << int(error.error());
+    });
+    QObject::connect(&server, &QSslServer::alertReceived, &server,
+                     [](QSslSocket *, QSsl::AlertLevel level, QSsl::AlertType type, const QString &) {
+        qWarning() << "Headroom TLS fixture received alert" << int(level) << int(type);
+    });
+    QObject::connect(&server, &QSslServer::alertSent, &server,
+                     [](QSslSocket *, QSsl::AlertLevel level, QSsl::AlertType type, const QString &) {
+        qWarning() << "Headroom TLS fixture sent alert" << int(level) << int(type);
+    });
+}
+
+inline void configure(QSslServer &server, bool replacement = false)
+{
+    installDiagnostics(server);
+    server.setSslConfiguration(replacement ? replacementServerConfiguration()
+                                           : serverConfiguration());
 }
 }

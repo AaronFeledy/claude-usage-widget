@@ -21,6 +21,7 @@ import (
 )
 
 type updateFixture struct {
+	kind              string
 	t                 *testing.T
 	server            *httptest.Server
 	version           string
@@ -88,9 +89,19 @@ func (f *updateFixture) serve(writer http.ResponseWriter, request *http.Request)
 		if packageURL == "" {
 			packageURL = f.server.URL + "/download/package"
 		}
+		manifestSuffix := "-release.json"
+		if platform, _, _ := NativeTarget(); platform == "macos" {
+			manifestSuffix = "-release-all.json"
+		}
+		manifestPrefix := "Headroom-v"
+		platform, architecture, _ := NativeTarget()
+		assetName, _ := AssetNameForKind(f.kind, f.version, platform, architecture)
+		if f.kind == PackageKindCLI {
+			manifestPrefix, manifestSuffix = "Headroom-CLI-v", "-release.json"
+		}
 		assets := []githubAsset{
-			{Name: "Headroom-v" + f.version + "-release.json", URL: f.server.URL + "/download/release", Size: int64(len(manifestBytes)) + f.manifestSizeDelta},
-			{Name: nativeAsset(f.version), URL: packageURL, Size: int64(len(archiveBytes))},
+			{Name: manifestPrefix + f.version + manifestSuffix, URL: f.server.URL + "/download/release", Size: int64(len(manifestBytes)) + f.manifestSizeDelta},
+			{Name: assetName, URL: packageURL, Size: int64(len(archiveBytes))},
 		}
 		if f.foreignOnly {
 			platform, architecture, _ := NativeTarget()
@@ -186,14 +197,18 @@ func (f *updateFixture) release() (ReleaseManifest, []byte) {
 	if f.manifestVersion != "" {
 		releaseVersion = f.manifestVersion
 	}
-	release := ReleaseManifest{Schema: 1, Product: "Headroom", Version: releaseVersion}
-	for _, target := range [][2]string{{"linux", "x86_64"}, {"windows", "arm64"}, {"windows", "x86_64"}} {
-		asset, _ := AssetName(releaseVersion, target[0], target[1])
-		root, _ := ArchiveRoot(releaseVersion, target[0], target[1])
-		components := fixtureComponents(releaseVersion, target[0])
+	release := ReleaseManifest{PackageKind: f.kind, Schema: 1, Product: "Headroom", Version: releaseVersion}
+	targets := [][2]string{{"linux", "x86_64"}, {"windows", "arm64"}, {"windows", "x86_64"}, {"macos", "x86_64"}, {"macos", "arm64"}}
+	if f.kind == PackageKindCLI {
+		targets = append(targets, [2]string{"linux", "arm64"})
+	}
+	for _, target := range targets {
+		asset, _ := AssetNameForKind(f.kind, releaseVersion, target[0], target[1])
+		root, _ := ArchiveRootForKind(f.kind, releaseVersion, target[0], target[1])
+		components := fixtureComponentsForKind(releaseVersion, target[0], f.kind)
 		size, sum := int64(1), strings.Repeat("1", 64)
 		if releaseVersion == f.version && target[0] == platform && target[1] == architecture {
-			size, sum, components = int64(len(archiveBytes)), hash, fixtureComponents(f.version, platform)
+			size, sum, components = int64(len(archiveBytes)), hash, fixtureComponentsForKind(f.version, platform, f.kind)
 		}
 		release.Packages = append(release.Packages, ReleasePackage{Platform: target[0], Architecture: target[1], AssetName: asset,
 			Size: size, SHA256: sum, PackageManifestPath: root + "/" + PackageManifestName, Components: components})
@@ -202,15 +217,24 @@ func (f *updateFixture) release() (ReleaseManifest, []byte) {
 }
 
 func fixtureComponents(version, platform string) Components {
+	return fixtureComponentsForKind(version, platform, "")
+}
+
+func fixtureComponentsForKind(version, platform, kind string) Components {
 	ext := ""
 	if platform == "windows" {
 		ext = ".exe"
 	}
-	components := Components{Application: Component{"bundle/bin/headroom" + ext, version}, Server: Component{"bundle/bin/usage-server" + ext, version},
+	components := Components{Application: Component{packageApplicationPath(platform), version}, Server: Component{packageServerPath(platform), version},
 		Launcher: Component{"bootstrap/headroom" + ext, version}, Manager: Component{"bootstrap/headroom-package" + ext, version}}
 	if platform == "windows" {
 		helper := Component{"bundle/bin/headroom-credential-helper.exe", version}
 		components.CredentialHelper = &helper
+	}
+	if kind == PackageKindCLI {
+		components.Application.Path = "bundle/bin/headroom" + ext
+		components.Server = components.Application
+		components.CredentialHelper = nil
 	}
 	return components
 }
@@ -282,7 +306,8 @@ func TestRepairPinsInstalledVersionAndRequiresIncompleteTrustedInstall(t *testin
 	if _, err := fixture.client().StageRepair(context.Background(), root); err == nil {
 		t.Fatal("complete install offered repair")
 	}
-	server := filepath.Join(root, filepath.FromSlash(InspectInstall(root).VersionPath), "bin", "usage-server"+nativeExtension())
+	inspection := InspectInstall(root)
+	server := installedTestComponent(t, root, inspection.VersionPath, true)
 	if err := os.Remove(server); err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +462,8 @@ func TestWrongTargetAndInvalidPackageAreRejectedBeforeActiveInstall(t *testing.T
 func TestRepairUsesExactTagAndPublicRequestsHaveNoAuthorization(t *testing.T) {
 	parent := t.TempDir()
 	root, archive := installFixture(t, parent, "8.4.2")
-	server := filepath.Join(root, filepath.FromSlash(InspectInstall(root).VersionPath), "bin", "usage-server"+nativeExtension())
+	inspection := InspectInstall(root)
+	server := installedTestComponent(t, root, inspection.VersionPath, true)
 	if err := os.Remove(server); err != nil {
 		t.Fatal(err)
 	}

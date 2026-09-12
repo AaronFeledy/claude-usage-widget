@@ -5,31 +5,53 @@ Official desktop packages use manifest schema 1 and exact versioned names:
 - `Headroom-v<VERSION>-windows-x64.zip`
 - `Headroom-v<VERSION>-windows-arm64.zip`
 - `Headroom-v<VERSION>-linux-x86_64.tar.gz`
-- `Headroom-v<VERSION>-release.json`
+- `Headroom-v<VERSION>-macos-x86_64.tar.gz`
+- `Headroom-v<VERSION>-macos-arm64.tar.gz`
+- `Headroom-v<VERSION>-release.json` (Windows/Linux compatibility)
+- `Headroom-v<VERSION>-release-all.json` (complete five-target matrix)
 
 Official release `VERSION` is stable SemVer without a leading `v`; build
 metadata such as `1.2.3+build.7` is preserved in the package, component and app
 versions. Its three numeric components must each be at most 65534 so the same
 derived `MAJOR.MINOR.PATCH.0` fits .NET assembly and Windows resource versions.
-The release manifest
-contains exactly the three desktop packages, their byte sizes and SHA-256
-digests. Standalone `usage-server-*` and legacy `ClaudeUsageWidget-*` assets are
+The full release manifest contains exactly the five desktop packages, their
+byte sizes and SHA-256 digests. The original `release.json` keeps its exact
+three-target Windows/Linux shape so previously installed managers can upgrade;
+macOS installers and managers select `release-all.json`. Standalone `usage-server-*` and legacy `ClaudeUsageWidget-*` assets are
 never desktop-package candidates.
+
+CLI-only packages use the same strict schema with `package_kind: "cli"` and
+`Headroom-CLI-v<VERSION>-<platform>-<architecture>` filenames. Their separate
+`Headroom-CLI-v<VERSION>-release.json` contains all six native targets: Windows
+x64/ARM64, Linux x86_64/ARM64, and macOS x86_64/ARM64. Desktop manifests omit the
+new field, preserving compatibility with existing strict schema-1 readers.
+The installed profile selects its catalog; a CLI update cannot acquire Qt or
+silently convert into a desktop installation.
 
 Every archive has one top-level directory matching its filename without the
 archive suffix. It contains `package-manifest.json`, `bootstrap/`, and `bundle/`.
-Links, devices, absolute paths, traversal, Windows device/ADS aliases,
-case-colliding names, unlisted files and unsafe modes are forbidden. The inner
+Devices, absolute paths, traversal, Windows device/ADS aliases, case-colliding
+names, unlisted files and unsafe modes are forbidden. Windows and Linux
+archives also forbid links. macOS permits only validated relative links inside
+an individual packaged `.framework`; these preserve Apple’s native signing
+structure. Link records, targets, resolution, extraction, and installed contents
+are checked by the same Go validator; links cannot escape their framework. The inner
 manifest lists the size and SHA-256 digest of every regular payload file.
 
-The bundle keeps `headroom`, `usage-server`, and the Windows-only
+Windows and Linux desktop bundles keep `headroom`, `headroom-cli`, `usage-server`, and the Windows-only
 `headroom-credential-helper.exe` adjacent under `bundle/bin`. Qt libraries,
 plugins and QML imports live under `bundle/lib`, `bundle/plugins`, and
 `bundle/qml`; `bundle/bin/qt.conf` records those relative roots consistently
 across Qt deployment-tool versions.
 `QtQuick.Controls.Basic` is an explicit deployed dependency. Notices and exact
 license texts are under `bundle/share` and are part of the hash inventory.
-Official packages also include
+macOS keeps the GUI and server in
+`bundle/Headroom.app/Contents/MacOS`, frameworks under `Contents/Frameworks`,
+plugins under `Contents/PlugIns`, and QML under `Contents/Resources/qml`. The
+runtime manager remains at `bundle/bin/headroom-package`; notices remain under
+`bundle/share`. Native app bundles are ad-hoc signed and checked with
+`codesign --verify --deep --strict`; Developer ID signing and Apple notarization
+are not configured. Official packages also include
 `bundle/share/licenses/qt/attributions/index.json`, generated from the five
 hash-pinned Qt 6.8.3 source archives in `qt-sources-6.8.3.json`. The index is a
 conservative module-source attribution inventory, records payload matches and
@@ -39,6 +61,12 @@ missing referenced notices fail package assembly.
 
 The bootstrap directory contains the shared Go package tool and the stable
 launcher. Windows builds compile the launcher as a GUI-subsystem executable.
+The additional `bootstrap/headroom-cli` is a console router compiled with
+`main.invocationRole=cli`; its verified retained copy at
+`bundle/bin/headroom-cli-launcher` supports entry migration. The public command
+dispatches to `bundle/bin/headroom-cli` (inside `Headroom.app/Contents/MacOS` on
+Mac). A CLI-only package instead uses `bundle/bin/headroom` as both its client
+and server runtime, plus the shared manager, with no Qt dependency.
 The bootstrap script verifies the release-manifest archive size and digest,
 extracts only the exact package-tool entry into a private path, and delegates
 all archive inspection, extraction and installation to that tool.
@@ -62,7 +90,7 @@ text.
   missing/corrupt paths.
 - `verify --archive <file> [--version ... --platform ... --arch ... --asset
   ...]` privately extracts the package, verifies every recorded size, digest
-  and mode, checks required runtime inventory and executable PE/ELF machines,
+  and mode, checks required runtime inventory and executable PE/ELF/Mach-O architectures,
   then removes the extraction. It can verify a foreign target for build and
   release tooling.
 - `stage` accepts the same archive expectations plus `--install-root`. It
@@ -71,7 +99,7 @@ text.
   result records that `package_root`, package identity and manifest SHA-256;
   `verified-stage.json` beside `contents` records the same result. Failed
   validation removes its private stage.
-- `install` adds `--entry-path`, stages first, copies the complete bundle to
+- `install` adds `--entry-path` and `--cli-entry-path`, stages first, copies the complete bundle to
   a new immutable `versions/<VERSION>.generation-<manifest-prefix>-<random>`
   directory, writes its manifest and atomic `install-state.json`, and replaces
   the stable launcher only after validation. A private durable journal restores
@@ -93,8 +121,11 @@ text.
   operation and removes its incomplete private download or stage.
 - `asset-name`, `create-package`, `create-release`, and `materialize-links`
   are build-recipe commands. `create-package` verifies its resulting archive;
-  `create-release` fully verifies all three input archives before writing the
-  release JSON.
+  `create-release` fully verifies all five input archives before writing `release-all.json`.
+  `create-release --legacy` verifies the three Windows/Linux archives and writes
+  the compatibility `release.json`. Both files ship in every new release.
+  `create-package --kind cli` and `create-release --kind cli` use the same archive
+  validator and require the complete six-target CLI matrix.
 - `prepare-apply` creates a private manager copy and a bounded request that pins
   the prior state digest, verified stage, current application process identity,
   and optional manager-owned server identity. The detached manager revalidates
@@ -129,7 +160,11 @@ adds a private restart flag so a tray-started application reopens its popup.
 Provider connectivity is not part of readiness. Qt reaches readiness after
 configuration, primary-instance IPC, and the QML root are initialized. Only a
 manager-owned bundled server is awaited during handoff; an attached local
-server and remote service are never stopped by the package manager.
+server outside the managed install and remote services are never stopped by the
+package manager. A standalone server registered by the same installed
+`headroom serve` participates through a private receipt with its executable,
+PID, kernel creation token, arguments, and recognized server configuration.
+The manager also accounts for a Windows console wrapper before replacing it.
 
 An external installer also verifies which immutable generation actually starts.
 It launches the stable entry with a private readiness nonce and accepts only a
@@ -141,7 +176,7 @@ user to quit the old window and relaunch the stable entry. `--no-launch` and
 
 ## Release JSON
 
-`Headroom-v<VERSION>-release.json` is strict schema 1 JSON:
+Both release manifests use strict schema 1 JSON:
 
 ```json
 {
@@ -166,23 +201,29 @@ user to quit the old window and relaunch the stable entry. `--no-launch` and
 }
 ```
 
-The array contains exactly `windows/x86_64`, `windows/arm64`, and
-`linux/x86_64`; Linux uses executable names without `.exe` and a JSON `null`
+New release arrays contain exactly `windows/x86_64`, `windows/arm64`,
+`linux/x86_64`, `macos/x86_64`, and `macos/arm64`. Readers also accept the
+previous complete three-target release format so existing releases remain
+usable. Linux and macOS use executable names without `.exe` and a JSON `null`
 credential helper. Archive size is an integer from 1 byte through 2 GiB. The
 inner package manifest adds the Qt version, runtime baseline and a sorted list
-of every payload path, size, SHA-256 and Linux mode. All component versions and
+of every payload path, size, SHA-256 and Unix mode, with an optional `link_target`
+for scoped macOS framework links. All component versions and
 the release tag must equal the top-level strict SemVer.
 
 Per-user installations use immutable version directories. Windows stores the
 stable launcher, package tool, atomic state and versions under
 `%LOCALAPPDATA%\Headroom`; shortcuts and startup target the stable
 `headroom.exe`. Linux stores state and versions under
-`${XDG_DATA_HOME:-$HOME/.local/share}/headroom`; the real launcher file at
-`$HOME/.local/bin/headroom` remains the stable entry. Settings stay in their
+`${XDG_DATA_HOME:-$HOME/.local/share}/headroom`; the desktop launcher remains
+inside that root and `$HOME/.local/bin/headroom` becomes the CLI entry. macOS
+keeps the Finder wrapper and adds the same CLI path. Windows uses
+`<install-root>\cli\headroom.exe` for the public command. Settings stay in their
 existing roaming/XDG locations and are never part of an application bundle.
 
-`install.sh` accepts `--install-root`, `--entry-path`, `--no-launch`, and
-`--dry-run`. `install.ps1` accepts `-InstallRoot`, `-EntryPath`, `-NoLaunch`, and
+`install.sh` accepts `--install-root`, `--entry-path`, `--cli-entry-path`, `--cli`,
+`--no-launch`, and `--dry-run`. `install.ps1` accepts `-InstallRoot`, `-EntryPath`,
+`-CLIEntryPath`, `-CLI`, `-NoLaunch`, and
 PowerShell `-WhatIf`. Offline and CI installation supplies both an exact local
 package and its exact release manifest with `--package` plus
 `--release-manifest`, or `-PackagePath` plus `-ReleaseManifestPath`; neither file
@@ -215,17 +256,44 @@ own update method. They do not create package state or redirect startup through
 the per-user launcher. Only a native, trusted per-user installation may use the
 public acquisition commands. The desktop performs one delayed startup check,
 automatically downloads and verifies a newer bundle, and advertises restart only
-after the package tool returns a matching `verified-stage.json`. Preview, demo,
-capture, and explicit-config sessions do not make public update requests.
+after the package tool returns a matching `verified-stage.json`. Capture and
+explicit-config sessions do not make public update requests.
+
+The public CLI calls the running desktop through its current-user private IPC
+endpoint. Read-only snapshots expose usage without credentials; update requests
+wait for the desktop's existing acknowledgement/commit transaction. Optional
+`prepared_stage` data comes only from the local verified stage, and the manager
+revalidates it before apply. A CLI update with no running desktop uses a CLI
+readiness candidate and leaves the desktop closed.
+
+Explicit Windows/WSL pairing uses a bounded native stdio protocol and reciprocal
+private records. Both profiles stage the exact same version through the normal
+release validator. The peer applies first; the initiator verifies its terminal
+apply result using the retained immutable manager, avoiding a Windows bootstrap
+file lock. Partial completion is persisted for exact-version recovery. Pairing
+does not expose an HTTP update route or transfer provider credentials. See the
+[CLI guide](../docs/cli.md) for setup and recovery.
+
+Managed standalone servers register private process receipts. Linux/WSL also
+supports the fixed per-user `headroom.service`: apply stops and restarts only that
+unit after matching its MainPID to the exact recorded process. A replacement
+acknowledges readiness after successful configuration and listener binding.
+System-wide or unrelated units remain outside updater ownership.
+
+`tests/cli_systemd_smoke.py` verifies a real Linux per-user service repair using
+a disposable CLI package install and disabled providers. It requires a working
+user bus and refuses an existing `headroom.service`. Its runtime-only unit is
+stopped and removed afterward. Linux CLI jobs run this fixture on isolated CI
+runner accounts; it does not enable a service on a user's machine.
 
 ## Reusable release recipe
 
 `.github/workflows/headroom-packages.yml` accepts one validated version and
-builds the same three desktop packages for pull requests, main-branch releases
+builds the same five desktop and six CLI packages for pull requests, main-branch releases
 and explicit `v*` tags. It runs the native desktop, package, installer and
 transaction gates before assembling a reviewable `headroom-release-assets`
-artifact. That artifact contains the three packages, release manifest,
-`install.sh`, `install.ps1`, four standalone server binaries and `SHA256SUMS`.
+artifact. That artifact contains the eleven packages, three release manifests,
+`install.sh`, `install.ps1`, six standalone server binaries and `SHA256SUMS`.
 The PR caller uses a version with build metadata so that path is exercised
 without publishing. The release caller resolves a main-branch version in
 dry-run mode, and the resolver and package jobs remain read-only. Only after the

@@ -9,6 +9,7 @@ const (
 	providerName       = "Codex"
 	defaultUsageURL    = "https://chatgpt.com/backend-api/wham/usage"
 	defaultTokenURL    = "https://auth.openai.com/oauth/token"
+	defaultResetURL    = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 	oauthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
 	oauthScope         = "openid profile email"
 	userAgent          = "ClaudeUsageWidget"

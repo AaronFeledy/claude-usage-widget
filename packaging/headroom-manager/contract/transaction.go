@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -16,30 +17,45 @@ import (
 const TransactionRequestName = "apply-request.json"
 const TransactionJournalName = "apply-journal.json"
 const InstallJournalName = "install-journal.json"
+const EntryMigrationJournalName = "entry-migration.json"
 
 var transactionTestHook func(string) error
 
 type ApplyRequest struct {
-	Schema               int      `json:"schema"`
-	Product              string   `json:"product"`
-	InstallRoot          string   `json:"install_root"`
-	EntryPath            string   `json:"entry_path"`
-	StageRecord          string   `json:"stage_record"`
-	CurrentPID           int      `json:"current_pid"`
-	CurrentExecutable    string   `json:"current_executable"`
-	CurrentProcessToken  string   `json:"current_process_token"`
-	OwnedChildPID        int      `json:"owned_child_pid,omitempty"`
-	OwnedChildExecutable string   `json:"owned_child_executable,omitempty"`
-	OwnedChildToken      string   `json:"owned_child_token,omitempty"`
-	PriorStateSHA256     string   `json:"prior_state_sha256"`
-	RelaunchArguments    []string `json:"relaunch_arguments"`
-	AcknowledgementPath  string   `json:"acknowledgement_path"`
-	CommitPath           string   `json:"commit_path"`
-	ReadyPath            string   `json:"ready_path"`
-	Nonce                string   `json:"nonce"`
-	WaitTimeoutMS        int      `json:"wait_timeout_ms"`
-	CommitTimeoutMS      int      `json:"commit_timeout_ms"`
-	ReadyTimeoutMS       int      `json:"ready_timeout_ms"`
+	Schema                         int            `json:"schema"`
+	Product                        string         `json:"product"`
+	InstallRoot                    string         `json:"install_root"`
+	EntryPath                      string         `json:"entry_path"`
+	StageRecord                    string         `json:"stage_record"`
+	CurrentPID                     int            `json:"current_pid"`
+	CurrentExecutable              string         `json:"current_executable"`
+	CurrentProcessToken            string         `json:"current_process_token"`
+	CurrentRole                    string         `json:"current_role,omitempty"`
+	CandidateRole                  string         `json:"candidate_role,omitempty"`
+	AdditionalProcesses            []ProcessClaim `json:"additional_processes,omitempty"`
+	ManagedServiceArguments        []string       `json:"managed_service_arguments,omitempty"`
+	ManagedServiceEnvironment      []string       `json:"managed_service_environment,omitempty"`
+	ManagedServiceWorkingDirectory string         `json:"managed_service_working_directory,omitempty"`
+	ManagedServiceSupervisor       string         `json:"managed_service_supervisor,omitempty"`
+	OwnedChildPID                  int            `json:"owned_child_pid,omitempty"`
+	OwnedChildExecutable           string         `json:"owned_child_executable,omitempty"`
+	OwnedChildToken                string         `json:"owned_child_token,omitempty"`
+	PriorStateSHA256               string         `json:"prior_state_sha256"`
+	RelaunchArguments              []string       `json:"relaunch_arguments"`
+	AcknowledgementPath            string         `json:"acknowledgement_path"`
+	CommitPath                     string         `json:"commit_path"`
+	ReadyPath                      string         `json:"ready_path"`
+	Nonce                          string         `json:"nonce"`
+	WaitTimeoutMS                  int            `json:"wait_timeout_ms"`
+	CommitTimeoutMS                int            `json:"commit_timeout_ms"`
+	ReadyTimeoutMS                 int            `json:"ready_timeout_ms"`
+}
+
+type ProcessClaim struct {
+	Role         string `json:"role"`
+	PID          int    `json:"pid"`
+	Executable   string `json:"executable"`
+	ProcessToken string `json:"process_token,omitempty"`
 }
 
 type ApplyJournal struct {
@@ -53,6 +69,9 @@ type ApplyJournal struct {
 	CandidatePID   int           `json:"candidate_pid,omitempty"`
 	CandidateExe   string        `json:"candidate_executable,omitempty"`
 	CandidateToken string        `json:"candidate_process_token,omitempty"`
+	ServicePID     int           `json:"managed_service_pid,omitempty"`
+	ServiceExe     string        `json:"managed_service_executable,omitempty"`
+	ServiceToken   string        `json:"managed_service_process_token,omitempty"`
 	Error          string        `json:"error,omitempty"`
 }
 
@@ -62,11 +81,23 @@ type InstallJournal struct {
 	Phase             string       `json:"phase"`
 	InstallRoot       string       `json:"install_root"`
 	EntryPath         string       `json:"entry_path"`
+	CLIEntryPath      string       `json:"cli_entry_path,omitempty"`
 	GenerationDir     string       `json:"generation_dir,omitempty"`
 	Candidate         InstallState `json:"candidate"`
 	PriorStateExisted bool         `json:"prior_state_existed"`
 	PriorStateSHA256  string       `json:"prior_state_sha256,omitempty"`
 	Supersedes        []string     `json:"supersedes,omitempty"`
+}
+
+type EntryMigrationJournal struct {
+	Schema       int          `json:"schema"`
+	Product      string       `json:"product"`
+	Phase        string       `json:"phase"`
+	InstallRoot  string       `json:"install_root"`
+	EntryPath    string       `json:"entry_path"`
+	CLIEntryPath string       `json:"cli_entry_path"`
+	Previous     InstallState `json:"previous"`
+	Candidate    InstallState `json:"candidate"`
 }
 
 type PreparedApply struct {
@@ -96,6 +127,11 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 		return PreparedApply{}, err
 	}
 	request.InstallRoot = root
+	request.CurrentRole = normalizedProcessRole(request.CurrentRole)
+	request.CandidateRole = normalizedProcessRole(request.CandidateRole)
+	if !validProcessRole(request.CurrentRole) || !validProcessRole(request.CandidateRole) {
+		return PreparedApply{}, errors.New("apply process role is invalid")
+	}
 	request.EntryPath, err = normalizeAbsolutePath(request.EntryPath, "entry path")
 	if err != nil {
 		return PreparedApply{}, err
@@ -123,12 +159,27 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	if err = rejectIncompleteTransactions(root); err != nil {
 		return PreparedApply{}, err
 	}
-	stage, _, err := LoadVerifiedStage(root, request.StageRecord)
+	stage, manifest, err := LoadVerifiedStage(root, request.StageRecord)
 	if err != nil {
 		return PreparedApply{}, err
 	}
 	inspection := InspectInstall(root)
-	executable, _, activeErr := ActiveExecutable(root)
+	comparison, compareErr := CompareVersions(manifest.Version, inspection.Version)
+	if compareErr != nil || comparison < 0 || stage.Version != manifest.Version || stage.Platform != inspection.Platform ||
+		stage.Architecture != inspection.Architecture || stage.PackageKind != inspection.PackageKind {
+		return PreparedApply{}, errors.New("staged package does not match the installed platform, profile, or version direction")
+	}
+	receipt, receiptErr := readStateUnchecked(root)
+	if receiptErr != nil {
+		return PreparedApply{}, errors.New("installed state is not readable")
+	}
+	if request.CurrentRole == RoleCLI && (inspection.CLIEntryPath == "" || !samePath(request.EntryPath, inspection.CLIEntryPath)) {
+		return PreparedApply{}, errors.New("CLI apply entry does not match the trusted install receipt")
+	}
+	if request.CurrentRole == RoleApplication && receipt.ApplicationEntryPath != "" && !samePath(request.EntryPath, receipt.ApplicationEntryPath) {
+		return PreparedApply{}, errors.New("application apply entry does not match the trusted install receipt")
+	}
+	executable, _, activeErr := ActiveExecutableForRole(root, request.CurrentRole)
 	if activeErr != nil || !inspection.TrustedIdentity || !samePath(executable, request.CurrentExecutable) {
 		return PreparedApply{}, errors.New("running Headroom installation is not a launchable rollback baseline")
 	}
@@ -136,16 +187,91 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	if err != nil {
 		return PreparedApply{}, err
 	}
+	if len(request.ManagedServiceArguments) != 0 || len(request.ManagedServiceEnvironment) != 0 || request.ManagedServiceWorkingDirectory != "" || request.ManagedServiceSupervisor != "" {
+		return PreparedApply{}, errors.New("managed service restart configuration is manager-owned")
+	}
+	managedRecord, managedErr := ReadManagedService(root)
+	if managedErr == nil {
+		found, launcherFound := false, false
+		for _, claim := range request.AdditionalProcesses {
+			if claim.Role == RoleManagedServer {
+				found = true
+			}
+			if claim.Role == RoleManagedLauncher {
+				launcherFound = true
+			}
+		}
+		if !found {
+			request.AdditionalProcesses = append(request.AdditionalProcesses, ProcessClaim{Role: RoleManagedServer, PID: managedRecord.PID, Executable: managedRecord.Executable})
+		}
+		if managedRecord.LauncherPID > 0 && !launcherFound {
+			request.AdditionalProcesses = append(request.AdditionalProcesses, ProcessClaim{Role: RoleManagedLauncher, PID: managedRecord.LauncherPID, Executable: managedRecord.LauncherExecutable})
+		}
+	} else if !errors.Is(managedErr, os.ErrNotExist) {
+		return PreparedApply{}, fmt.Errorf("managed service receipt is invalid: %w", managedErr)
+	}
+	if len(request.AdditionalProcesses) > 4 {
+		return PreparedApply{}, errors.New("too many additional update participants")
+	}
+	seenPID := map[int]bool{request.CurrentPID: true}
+	seenRole := map[string]bool{request.CurrentRole: true}
+	if request.OwnedChildPID > 0 {
+		seenPID[request.OwnedChildPID] = true
+		seenRole[RoleServer] = true
+	}
+	for index := range request.AdditionalProcesses {
+		claim := &request.AdditionalProcesses[index]
+		claim.Role = normalizedProcessRole(claim.Role)
+		if !validParticipantRole(claim.Role) || claim.PID <= 0 || claim.ProcessToken != "" || seenPID[claim.PID] || seenRole[claim.Role] {
+			return PreparedApply{}, errors.New("additional update participant is invalid")
+		}
+		claim.Executable, err = normalizeAbsolutePath(claim.Executable, "participant executable")
+		if err != nil {
+			return PreparedApply{}, err
+		}
+		expected, _, resolveErr := ActiveExecutableForRole(root, claim.Role)
+		if resolveErr != nil || !samePath(expected, claim.Executable) {
+			return PreparedApply{}, errors.New("additional update participant is not an active installed component")
+		}
+		claim.ProcessToken, err = captureProcessToken(claim.PID, claim.Executable)
+		if err != nil {
+			return PreparedApply{}, err
+		}
+		seenPID[claim.PID], seenRole[claim.Role] = true, true
+		if claim.Role == RoleManagedServer {
+			record, serviceErr := ReadManagedService(root)
+			if serviceErr != nil || record.PID != claim.PID || record.ProcessToken != claim.ProcessToken || !samePath(record.Executable, claim.Executable) {
+				return PreparedApply{}, errors.New("managed server participant does not match its trusted receipt")
+			}
+			request.ManagedServiceArguments = append([]string(nil), record.Arguments...)
+			request.ManagedServiceEnvironment = append([]string(nil), record.Environment...)
+			request.ManagedServiceWorkingDirectory = record.WorkingDirectory
+			request.ManagedServiceSupervisor = record.Supervisor
+		} else if claim.Role == RoleManagedLauncher {
+			record, serviceErr := ReadManagedService(root)
+			if serviceErr != nil || record.LauncherPID != claim.PID || record.LauncherToken != claim.ProcessToken || !samePath(record.LauncherExecutable, claim.Executable) {
+				return PreparedApply{}, errors.New("managed service launcher does not match its trusted receipt")
+			}
+		}
+	}
+	if len(request.ManagedServiceArguments) != 0 && !seenRole[RoleManagedServer] {
+		return PreparedApply{}, errors.New("managed service arguments have no participant")
+	}
 	if request.OwnedChildPID > 0 {
 		request.OwnedChildExecutable, err = normalizeAbsolutePath(request.OwnedChildExecutable, "owned child executable")
 		if err != nil {
 			return PreparedApply{}, err
 		}
-		serverName := "usage-server"
-		if inspection.Platform == "windows" {
-			serverName += ".exe"
+		manifestFile, openErr := os.Open(filepath.Join(root, filepath.FromSlash(inspection.VersionPath), PackageManifestName))
+		if openErr != nil {
+			return PreparedApply{}, openErr
 		}
-		expectedChild := filepath.Join(root, filepath.FromSlash(inspection.VersionPath), "bin", serverName)
+		manifest, decodeErr := DecodePackageManifest(manifestFile)
+		manifestFile.Close()
+		if decodeErr != nil {
+			return PreparedApply{}, decodeErr
+		}
+		expectedChild := installedComponentPath(root, inspection.VersionPath, manifest.Components.Server.Path)
 		if !samePath(request.OwnedChildExecutable, expectedChild) {
 			return PreparedApply{}, errors.New("owned child is not the active bundled usage server")
 		}
@@ -173,6 +299,10 @@ func PrepareApply(manager string, request ApplyRequest) (PreparedApply, error) {
 	}
 	directory := filepath.Join(transactions, "apply-"+token)
 	if err = os.Mkdir(directory, 0o700); err != nil {
+		return PreparedApply{}, err
+	}
+	if err = securePrivateDirectory(directory, true); err != nil {
+		_ = os.RemoveAll(directory)
 		return PreparedApply{}, err
 	}
 	failed := true
@@ -313,6 +443,21 @@ func WaitForApplyAcknowledgement(prepared PreparedApply, timeout time.Duration) 
 	return errors.New("transaction manager did not acknowledge the apply request")
 }
 
+func CommitPreparedApply(prepared PreparedApply) error {
+	if prepared.Schema != SchemaVersion || prepared.Product != "Headroom" || len(prepared.Nonce) != 48 || !isLowerHex(prepared.Nonce) {
+		return errors.New("prepared apply identity is invalid")
+	}
+	directory := filepath.Clean(prepared.TransactionDirectory)
+	if !samePath(prepared.CommitPath, filepath.Join(directory, "commit.json")) || !samePath(prepared.RequestPath, filepath.Join(directory, TransactionRequestName)) {
+		return errors.New("prepared apply paths are invalid")
+	}
+	request, _, err := readApplyRequest(prepared.RequestPath)
+	if err != nil || request.Nonce != prepared.Nonce || !samePath(request.CommitPath, prepared.CommitPath) || !samePath(request.AcknowledgementPath, prepared.AcknowledgementPath) {
+		return errors.New("prepared apply request is invalid")
+	}
+	return writeDurableJSON(prepared.CommitPath, map[string]any{"schema": SchemaVersion, "product": "Headroom", "commit": true, "nonce": prepared.Nonce})
+}
+
 func waitForApplyCommit(request ApplyRequest, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -376,7 +521,7 @@ func LoadVerifiedStage(installRoot, recordPath string) (StageResult, PackageMani
 	}
 	hash, err := digestFile(filepath.Join(packageRoot, PackageManifestName))
 	if err != nil || hash != stage.ManifestSHA256 || manifest.Version != stage.Version || manifest.Platform != stage.Platform ||
-		manifest.Architecture != stage.Architecture || manifest.AssetName != stage.PackageAsset {
+		manifest.Architecture != stage.Architecture || manifest.AssetName != stage.PackageAsset || manifest.PackageKind != stage.PackageKind {
 		return StageResult{}, PackageManifest{}, errors.New("verified stage identity changed")
 	}
 	if err = VerifyTree(packageRoot, manifest); err != nil {
@@ -390,6 +535,11 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	var previous *InstallState
 	var journal ApplyJournal
 	var childWatch processWatch
+	type participantWatch struct {
+		role  string
+		watch processWatch
+	}
+	var additionalWatches []participantWatch
 	appExited := false
 	childExited := false
 	complete := false
@@ -410,9 +560,28 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop candidate: %w", err))
 			}
 		}
+		if journal.ServicePID > 0 {
+			var err error
+			if journal.Request.ManagedServiceSupervisor != "" {
+				err = stopManagedServiceSupervisor(journal.Request.ManagedServiceSupervisor)
+			} else {
+				err = stopRecordedProcess(journal.ServicePID, journal.ServiceExe, journal.ServiceToken, 5*time.Second)
+			}
+			if err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop managed service candidate: %w", err))
+			}
+		}
 		if childWatch != nil && !childExited {
 			if err := childWatch.KillWait(5 * time.Second); err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop owned server: %w", err))
+			}
+		}
+		for _, participant := range additionalWatches {
+			if participant.role == RoleManagedServer && journal.Request.ManagedServiceSupervisor != "" {
+				continue
+			}
+			if err := participant.watch.KillWait(5 * time.Second); err != nil {
+				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("stop update participant: %w", err))
 			}
 		}
 		if cleanupErr == nil {
@@ -426,9 +595,9 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			current, stateErr := readStateUnchecked(journal.Request.InstallRoot)
 			if stateErr != nil || !statesEqual(current, *previous) {
 				cleanupErr = errors.New("rollback state could not be verified")
-			} else if _, _, activeErr := ActiveExecutable(journal.Request.InstallRoot); activeErr != nil {
+			} else if _, _, activeErr := ActiveExecutableForRole(journal.Request.InstallRoot, journal.Request.CandidateRole); activeErr != nil {
 				cleanupErr = fmt.Errorf("rollback application could not be verified: %w", activeErr)
-			} else if verifyErr := verifyBootstrapRestore(journal.Request.InstallRoot, journal.Request.EntryPath, directory); verifyErr != nil {
+			} else if verifyErr := verifyBootstrapRestoreWithCLI(journal.Request.InstallRoot, journal.Request.EntryPath, previous.CLIEntryPath, directory); verifyErr != nil {
 				cleanupErr = verifyErr
 			}
 		}
@@ -440,6 +609,10 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 			relaunch.Nonce, _ = randomHex(24)
 			if relaunchErr := launchAndAwaitReady(relaunch, *previous, nil); relaunchErr != nil {
 				cleanupErr = fmt.Errorf("previous app relaunch failed: %w", relaunchErr)
+			} else if hasManagedService(relaunch) {
+				if serviceErr := launchManagedService(relaunch, *previous, nil); serviceErr != nil {
+					cleanupErr = fmt.Errorf("previous managed service relaunch failed: %w", serviceErr)
+				}
 			}
 		}
 		if cleanupErr != nil {
@@ -470,7 +643,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	if currentHash, hashErr := digestFile(filepath.Join(request.InstallRoot, StateName)); hashErr != nil || currentHash != request.PriorStateSHA256 {
 		return result, errors.New("installed state changed before apply acknowledgement")
 	}
-	if active, activeInspection, activeErr := ActiveExecutable(request.InstallRoot); activeErr != nil || !activeInspection.TrustedIdentity || !samePath(active, request.CurrentExecutable) {
+	if active, activeInspection, activeErr := ActiveExecutableForRole(request.InstallRoot, request.CurrentRole); activeErr != nil || !activeInspection.TrustedIdentity || !samePath(active, request.CurrentExecutable) {
 		return result, errors.New("installed app/runtime changed before apply acknowledgement")
 	}
 	if _, _, stageErr := LoadVerifiedStage(request.InstallRoot, request.StageRecord); stageErr != nil {
@@ -492,6 +665,18 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		}
 		defer childWatch.Close()
 	}
+	for _, claim := range request.AdditionalProcesses {
+		expected, _, expectedErr := ActiveExecutableForRole(request.InstallRoot, claim.Role)
+		if expectedErr != nil || !samePath(expected, claim.Executable) {
+			return result, errors.New("installed update participant changed before apply acknowledgement")
+		}
+		participant, watchErr := watchProcess(claim.PID, claim.Executable, claim.ProcessToken)
+		if watchErr != nil {
+			return result, watchErr
+		}
+		additionalWatches = append(additionalWatches, participantWatch{role: claim.Role, watch: participant})
+		defer participant.Close()
+	}
 	defer recoverFailure()
 	journal = ApplyJournal{Schema: SchemaVersion, Product: "Headroom", Phase: "waiting-for-exit", Request: request, Previous: previous}
 	if err = writeDurableJSON(journalPath, journal); err != nil {
@@ -507,11 +692,47 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		return result, err
 	}
 	appExited = true
+	journal.Phase = "current-exited"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return result, err
+	}
 	if childWatch != nil {
 		if err = childWatch.Wait(time.Duration(request.WaitTimeoutMS) * time.Millisecond); err != nil {
 			return result, err
 		}
 		childExited = true
+	}
+	journal.Phase = "stopping-participants"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return result, err
+	}
+	for _, participant := range additionalWatches {
+		if participant.role != RoleManagedServer {
+			continue
+		}
+		if request.ManagedServiceSupervisor != "" {
+			if err = stopManagedServiceSupervisor(request.ManagedServiceSupervisor); err == nil {
+				err = participant.watch.Wait(time.Duration(request.WaitTimeoutMS) * time.Millisecond)
+			}
+		} else {
+			err = participant.watch.KillWait(time.Duration(request.WaitTimeoutMS) * time.Millisecond)
+		}
+		if err != nil {
+			return result, err
+		}
+	}
+	for _, participant := range additionalWatches {
+		if participant.role == RoleManagedServer {
+			continue
+		}
+		err = participant.watch.Wait(time.Duration(request.WaitTimeoutMS) * time.Millisecond)
+		if err != nil {
+			return result, err
+		}
+	}
+	journal.Phase = "participants-stopped"
+	if err = writeDurableJSON(journalPath, journal); err != nil {
+		return result, err
 	}
 	stage, manifest, err := LoadVerifiedStage(request.InstallRoot, request.StageRecord)
 	if err != nil {
@@ -525,12 +746,15 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	if err != nil {
 		return result, err
 	}
+	candidate.ApplicationEntryPath = previous.ApplicationEntryPath
+	candidate.CLIEntryPath = previous.CLIEntryPath
+	candidate.ServerEntryPath = previous.ServerEntryPath
 	journal.Candidate, journal.GenerationDir = &candidate, generationDir
 	journal.Phase = "generation-ready"
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return result, err
 	}
-	if err = prepareBootstrapBackup(request.InstallRoot, request.EntryPath, filepath.Dir(journalPath)); err != nil {
+	if err = prepareBootstrapBackupWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath)); err != nil {
 		_ = os.RemoveAll(generationDir)
 		return result, err
 	}
@@ -539,14 +763,14 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		_ = os.RemoveAll(generationDir)
 		return result, err
 	}
-	if err = applyBootstrap(stage.PackageRoot, request.InstallRoot, request.EntryPath, manifest); err != nil {
-		_ = restoreBootstrap(request.InstallRoot, request.EntryPath, filepath.Dir(journalPath))
+	if err = applyBootstrapWithCLI(stage.PackageRoot, request.InstallRoot, request.EntryPath, previous.CLIEntryPath, manifest); err != nil {
+		_ = restoreBootstrapWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath))
 		_ = os.RemoveAll(generationDir)
 		return result, err
 	}
 	journal.Phase = "bootstrap-ready"
 	if err = writeDurableJSON(journalPath, journal); err != nil {
-		_ = restoreBootstrap(request.InstallRoot, request.EntryPath, filepath.Dir(journalPath))
+		_ = restoreBootstrapWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath))
 		return result, err
 	}
 	journal.Phase = "state-intent"
@@ -554,7 +778,7 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 		return result, err
 	}
 	if err = writeDurableJSON(filepath.Join(request.InstallRoot, StateName), candidate); err != nil {
-		_ = restoreBootstrap(request.InstallRoot, request.EntryPath, filepath.Dir(journalPath))
+		_ = restoreBootstrapWithCLI(request.InstallRoot, request.EntryPath, previous.CLIEntryPath, filepath.Dir(journalPath))
 		return result, err
 	}
 	journal.Phase = "activated"
@@ -574,6 +798,14 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 	}); err != nil {
 		return result, err
 	}
+	if hasManagedService(request) {
+		if err = launchManagedService(request, candidate, func(pid int, executable, token string) error {
+			journal.ServicePID, journal.ServiceExe, journal.ServiceToken = pid, executable, token
+			return writeDurableJSON(journalPath, journal)
+		}); err != nil {
+			return result, err
+		}
+	}
 	journal.Phase = "complete"
 	if err = writeDurableJSON(journalPath, journal); err != nil {
 		return result, err
@@ -586,7 +818,11 @@ func ApplyPrepared(requestPath string) (result ApplyResult, returned error) {
 }
 
 func verifyBootstrapRestore(root, entry, directory string) error {
-	targets := stableBootstrapTargets(root, entry)
+	return verifyBootstrapRestoreWithCLI(root, entry, "", directory)
+}
+
+func verifyBootstrapRestoreWithCLI(root, entry, cliEntry, directory string) error {
+	targets := stableBootstrapTargetsWithCLI(root, entry, cliEntry)
 	data, err := readBoundedFile(filepath.Join(directory, "bootstrap-backup.json"), maxManifestBytes)
 	if err != nil {
 		return err
@@ -658,6 +894,35 @@ func RecoverInstall(installRoot string) error {
 			continue
 		}
 		directory := filepath.Join(transactions, entry.Name())
+		if strings.HasPrefix(entry.Name(), "migrate-entries-") {
+			data, readErr := readBoundedFile(filepath.Join(directory, EntryMigrationJournalName), maxManifestBytes)
+			var journal EntryMigrationJournal
+			if readErr != nil || json.Unmarshal(data, &journal) != nil || journal.Schema != SchemaVersion || journal.Product != "Headroom" || journal.InstallRoot != root {
+				continue
+			}
+			entryPath, entryErr := normalizeAbsolutePath(journal.EntryPath, "migration entry")
+			cliPath, cliErr := normalizeAbsolutePath(journal.CLIEntryPath, "migration CLI entry")
+			if entryErr != nil || cliErr != nil || entryPath != journal.EntryPath || cliPath != journal.CLIEntryPath || !validVersionPath(journal.Previous) || !validVersionPath(journal.Candidate) {
+				continue
+			}
+			current, stateErr := readStateUnchecked(root)
+			if stateErr == nil && statesEqual(current, journal.Candidate) {
+				inspection := InspectInstall(root)
+				if !inspection.TrustedIdentity || !inspection.Complete {
+					return errors.New("interrupted entry migration candidate is incomplete")
+				}
+				_ = os.RemoveAll(directory)
+				continue
+			}
+			if stateErr == nil && statesEqual(current, journal.Previous) {
+				if err = restoreBootstrapWithCLI(root, journal.EntryPath, journal.CLIEntryPath, directory); err != nil {
+					return err
+				}
+				_ = os.RemoveAll(directory)
+				continue
+			}
+			return errors.New("entry migration state requires manual recovery")
+		}
 		if strings.HasPrefix(entry.Name(), "install-") {
 			journal, readErr := readInstallJournal(filepath.Join(directory, InstallJournalName), root, directory)
 			if readErr != nil {
@@ -696,8 +961,26 @@ func RecoverInstall(installRoot string) error {
 			_ = os.RemoveAll(directory)
 			continue
 		}
-		if journal.CandidatePID > 0 && (journal.Phase == "candidate-launched" || journal.Phase == "activated" || journal.Phase == "rolling-back") {
+		if journal.CandidatePID > 0 && (journal.Phase == "candidate-launched" || journal.Phase == "activated" || journal.Phase == "rolling-back" || journal.Phase == "rollback-relaunch") {
 			if err = stopRecordedProcess(journal.CandidatePID, journal.CandidateExe, journal.CandidateToken, 5*time.Second); err != nil {
+				return err
+			}
+		}
+		if journal.Request.ManagedServiceSupervisor != "" && hasManagedService(journal.Request) &&
+			(journal.Phase == "candidate-launched" || journal.Phase == "activated" || journal.Phase == "rolling-back" || journal.Phase == "rollback-relaunch") {
+			if err = stopManagedServiceSupervisor(journal.Request.ManagedServiceSupervisor); err != nil {
+				return err
+			}
+			if err = clearSupervisedManagedServiceRestart(root); err != nil {
+				return err
+			}
+		} else if journal.ServicePID > 0 && (journal.Phase == "candidate-launched" || journal.Phase == "activated" || journal.Phase == "rolling-back" || journal.Phase == "rollback-relaunch") {
+			if journal.Request.ManagedServiceSupervisor != "" {
+				err = stopManagedServiceSupervisor(journal.Request.ManagedServiceSupervisor)
+			} else {
+				err = stopRecordedProcess(journal.ServicePID, journal.ServiceExe, journal.ServiceToken, 5*time.Second)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -705,6 +988,29 @@ func RecoverInstall(installRoot string) error {
 		isPrior := stateErr == nil && journal.Previous != nil && statesEqual(current, *journal.Previous)
 		isCandidate := stateErr == nil && journal.Candidate != nil && statesEqual(current, *journal.Candidate)
 		if journal.Phase == "waiting-for-exit" && isPrior {
+			_ = os.RemoveAll(directory)
+			continue
+		}
+		if (journal.Phase == "current-exited" || journal.Phase == "stopping-participants" || journal.Phase == "participants-stopped" || journal.Phase == "copying") && isPrior {
+			postStopIntent := journal.Phase != "current-exited"
+			if postStopIntent && hasManagedService(journal.Request) {
+				if err = finishManagedServiceStopForRecovery(root, journal.Request); err != nil {
+					return err
+				}
+			}
+			relaunch := journal.Request
+			relaunch.ReadyPath = filepath.Join(directory, "recovery-ready.json")
+			relaunch.Nonce, _ = randomHex(24)
+			if relaunchErr := launchAndAwaitReady(relaunch, *journal.Previous, nil); relaunchErr != nil {
+				return relaunchErr
+			}
+			if hasManagedService(journal.Request) {
+				if _, serviceErr := ReadManagedService(root); postStopIntent || serviceErr != nil {
+					if serviceErr = launchManagedService(journal.Request, *journal.Previous, nil); serviceErr != nil {
+						return serviceErr
+					}
+				}
+			}
 			_ = os.RemoveAll(directory)
 			continue
 		}
@@ -719,16 +1025,33 @@ func RecoverInstall(installRoot string) error {
 				return err
 			}
 			acted = true
+		} else if isPrior && (journal.Phase == "rolling-back" || journal.Phase == "rollback-relaunch") {
+			acted = true
 		} else if !isPrior && !isCandidate {
 			journal.Phase = "obsolete"
 			_ = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal)
 			continue
 		}
-		journal.Phase = "rolled-back"
+		journal.Phase = "rollback-relaunch"
 		if err = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal); err != nil {
 			return err
 		}
 		if acted && journal.Previous != nil {
+			relaunch := journal.Request
+			relaunch.ReadyPath = filepath.Join(directory, "recovery-ready.json")
+			relaunch.Nonce, _ = randomHex(24)
+			if relaunchErr := launchAndAwaitReady(relaunch, *journal.Previous, nil); relaunchErr != nil {
+				return relaunchErr
+			}
+			if hasManagedService(journal.Request) {
+				if serviceErr := launchManagedService(journal.Request, *journal.Previous, nil); serviceErr != nil {
+					return serviceErr
+				}
+			}
+			journal.Phase = "rolled-back"
+			if err = writeDurableJSON(filepath.Join(directory, TransactionJournalName), journal); err != nil {
+				return err
+			}
 			_ = writeDurableJSON(filepath.Join(root, "last-apply-result.json"), ApplyResult{Schema: SchemaVersion, Product: "Headroom",
 				Status: "rolled_back", Version: journal.Previous.ActiveVersion, VersionPath: journal.Previous.VersionPath,
 				RolledBack: true, FailureReason: "An interrupted update was rolled back."})
@@ -770,7 +1093,7 @@ func recoverInstallJournal(journal InstallJournal, directory string) error {
 			journal.Phase = "obsolete"
 			return writeDurableJSON(filepath.Join(directory, InstallJournalName), journal)
 		}
-		if err := restoreBootstrap(journal.InstallRoot, journal.EntryPath, directory); err != nil {
+		if err := restoreBootstrapWithCLI(journal.InstallRoot, journal.EntryPath, journal.CLIEntryPath, directory); err != nil {
 			return err
 		}
 		if journal.PriorStateExisted {
@@ -810,7 +1133,7 @@ func createGeneration(root string, stage StageResult, manifest PackageManifest) 
 		_ = os.RemoveAll(destination)
 		return InstallState{}, "", err
 	}
-	state := InstallState{Schema: SchemaVersion, Product: "Headroom", Platform: manifest.Platform, Architecture: manifest.Architecture,
+	state := InstallState{PackageKind: manifest.PackageKind, Schema: SchemaVersion, Product: "Headroom", Platform: manifest.Platform, Architecture: manifest.Architecture,
 		ActiveVersion: manifest.Version, VersionPath: versionPath, ManifestSHA256: stage.ManifestSHA256, PackageAsset: manifest.AssetName}
 	if _, err = inspectState(root, state); err != nil {
 		_ = os.RemoveAll(destination)
@@ -907,6 +1230,11 @@ func readInstallJournal(path, root, directory string) (InstallJournal, error) {
 			return InstallJournal{}, errors.New("install journal entry is invalid")
 		}
 	}
+	if journal.CLIEntryPath != "" {
+		if normalized, pathErr := normalizeAbsolutePath(journal.CLIEntryPath, "CLI entry path"); pathErr != nil || normalized != journal.CLIEntryPath {
+			return InstallJournal{}, errors.New("install journal CLI entry is invalid")
+		}
+	}
 	if journal.GenerationDir != filepath.Join(root, filepath.FromSlash(journal.Candidate.VersionPath)) || !validVersionPath(journal.Candidate) {
 		return InstallJournal{}, errors.New("install journal generation is invalid")
 	}
@@ -942,9 +1270,9 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 	if !validVersionPath(*journal.Previous) {
 		return errors.New("apply rollback state is invalid")
 	}
-	validPhases := map[string]bool{"waiting-for-exit": true, "copying": true, "generation-ready": true, "bootstrap-intent": true,
+	validPhases := map[string]bool{"waiting-for-exit": true, "current-exited": true, "stopping-participants": true, "participants-stopped": true, "copying": true, "generation-ready": true, "bootstrap-intent": true,
 		"bootstrap-ready": true, "state-intent": true, "activated": true, "candidate-launched": true, "rolling-back": true,
-		"complete": true, "rolled-back": true, "obsolete": true}
+		"rollback-relaunch": true, "complete": true, "rolled-back": true, "obsolete": true}
 	if !validPhases[journal.Phase] {
 		return errors.New("apply journal phase is invalid")
 	}
@@ -955,20 +1283,29 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 	if previousErr != nil || !previousInspection.TrustedIdentity {
 		return errors.New("apply rollback identity is invalid")
 	}
-	previousApp := "headroom"
-	if journal.Previous.Platform == "windows" {
-		previousApp += ".exe"
+	previousManifest, manifestErr := installedManifest(root, *journal.Previous)
+	if manifestErr != nil {
+		return errors.New("apply prior manifest is invalid")
 	}
-	if !samePath(journal.Request.CurrentExecutable, filepath.Join(root, filepath.FromSlash(journal.Previous.VersionPath), "bin", previousApp)) {
+	previousPath := previousManifest.Components.Application.Path
+	if journal.Request.CurrentRole == RoleCLI {
+		previousPath = PackageCLIPath(previousManifest.Platform, previousManifest.PackageKind)
+	}
+	if journal.Request.CurrentRole == RoleServer {
+		previousPath = previousManifest.Components.Server.Path
+	}
+	if !samePath(journal.Request.CurrentExecutable, installedComponentPath(root, journal.Previous.VersionPath, previousPath)) {
 		return errors.New("apply prior executable is invalid")
 	}
 	if journal.Request.OwnedChildPID > 0 {
-		server := "usage-server"
-		if journal.Previous.Platform == "windows" {
-			server += ".exe"
-		}
-		if !samePath(journal.Request.OwnedChildExecutable, filepath.Join(root, filepath.FromSlash(journal.Previous.VersionPath), "bin", server)) {
+		if !samePath(journal.Request.OwnedChildExecutable, installedComponentPath(root, journal.Previous.VersionPath, previousManifest.Components.Server.Path)) {
 			return errors.New("apply owned child executable is invalid")
+		}
+	}
+	for _, claim := range journal.Request.AdditionalProcesses {
+		expected, expectedErr := executableForStateRole(root, *journal.Previous, previousManifest, claim.Role)
+		if expectedErr != nil || !samePath(claim.Executable, expected) {
+			return errors.New("apply participant executable is invalid")
 		}
 	}
 	if journal.Candidate != nil {
@@ -983,12 +1320,26 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 	if journal.CandidatePID > 0 && (journal.CandidateExe == "" || journal.CandidateToken == "") {
 		return errors.New("apply candidate process identity is invalid")
 	}
-	if journal.CandidatePID > 0 && journal.Candidate != nil {
-		name := "headroom"
-		if journal.Candidate.Platform == "windows" {
-			name += ".exe"
+	if journal.ServicePID > 0 && (journal.ServiceExe == "" || journal.ServiceToken == "" || journal.Candidate == nil) {
+		return errors.New("managed service candidate identity is invalid")
+	}
+	if journal.ServicePID > 0 && journal.Candidate != nil {
+		candidateManifest, candidateErr := installedManifest(root, *journal.Candidate)
+		expected := installedComponentPath(root, journal.Candidate.VersionPath, PackageCLIPath(candidateManifest.Platform, candidateManifest.PackageKind))
+		if candidateErr != nil || !samePath(journal.ServiceExe, expected) {
+			return errors.New("managed service candidate executable is invalid")
 		}
-		if !samePath(journal.CandidateExe, filepath.Join(root, filepath.FromSlash(journal.Candidate.VersionPath), "bin", name)) {
+	}
+	if journal.CandidatePID > 0 && journal.Candidate != nil {
+		candidateManifest, candidateErr := installedManifest(root, *journal.Candidate)
+		candidatePath := candidateManifest.Components.Application.Path
+		if journal.Request.CandidateRole == RoleCLI {
+			candidatePath = PackageCLIPath(candidateManifest.Platform, candidateManifest.PackageKind)
+		}
+		if journal.Request.CandidateRole == RoleServer {
+			candidatePath = candidateManifest.Components.Server.Path
+		}
+		if candidateErr != nil || !samePath(journal.CandidateExe, installedComponentPath(root, journal.Candidate.VersionPath, candidatePath)) {
 			return errors.New("apply candidate executable is invalid")
 		}
 	}
@@ -997,6 +1348,11 @@ func validateApplyJournal(journal ApplyJournal, root, directory string) error {
 
 func validateApplyRequestFields(request *ApplyRequest, root, directory string) error {
 	var err error
+	request.CurrentRole = normalizedProcessRole(request.CurrentRole)
+	request.CandidateRole = normalizedProcessRole(request.CandidateRole)
+	if !validProcessRole(request.CurrentRole) || !validProcessRole(request.CandidateRole) {
+		return errors.New("apply process role is invalid")
+	}
 	request.EntryPath, err = normalizeAbsolutePath(request.EntryPath, "entry path")
 	if err != nil {
 		return err
@@ -1019,6 +1375,44 @@ func validateApplyRequestFields(request *ApplyRequest, root, directory string) e
 	} else if request.OwnedChildExecutable != "" || request.OwnedChildToken != "" {
 		return errors.New("owned child identity is incomplete")
 	}
+	if len(request.AdditionalProcesses) > 4 {
+		return errors.New("too many additional update participants")
+	}
+	seenPID := map[int]bool{request.CurrentPID: true}
+	seenRole := map[string]bool{request.CurrentRole: true}
+	if request.OwnedChildPID > 0 {
+		seenPID[request.OwnedChildPID] = true
+		seenRole[RoleServer] = true
+	}
+	for index := range request.AdditionalProcesses {
+		claim := &request.AdditionalProcesses[index]
+		claim.Role = normalizedProcessRole(claim.Role)
+		claim.Executable, err = normalizeAbsolutePath(claim.Executable, "participant executable")
+		if err != nil || !validParticipantRole(claim.Role) || claim.PID <= 0 || claim.ProcessToken == "" || seenPID[claim.PID] || seenRole[claim.Role] {
+			return errors.New("additional update participant identity is invalid")
+		}
+		seenPID[claim.PID], seenRole[claim.Role] = true, true
+	}
+	if err := validateServiceArguments(request.ManagedServiceArguments); err != nil {
+		return err
+	}
+	if err := validateServiceEnvironment(request.ManagedServiceEnvironment); err != nil {
+		return err
+	}
+	if request.ManagedServiceSupervisor != "" && request.ManagedServiceSupervisor != managedSystemdUser {
+		return errors.New("managed service supervisor is invalid")
+	}
+	if len(request.ManagedServiceArguments) != 0 && !seenRole[RoleManagedServer] {
+		return errors.New("managed service arguments have no participant")
+	}
+	if seenRole[RoleManagedServer] {
+		working, workingErr := normalizeAbsolutePath(request.ManagedServiceWorkingDirectory, "managed service working directory")
+		if workingErr != nil || working != request.ManagedServiceWorkingDirectory {
+			return errors.New("managed service working directory is invalid")
+		}
+	} else if len(request.ManagedServiceEnvironment) != 0 || request.ManagedServiceWorkingDirectory != "" || request.ManagedServiceSupervisor != "" {
+		return errors.New("managed service restart configuration has no participant")
+	}
 	for _, argument := range request.RelaunchArguments {
 		if len(argument) > 4096 || strings.ContainsRune(argument, 0) {
 			return errors.New("apply relaunch argument is invalid")
@@ -1031,6 +1425,38 @@ func validateApplyRequestFields(request *ApplyRequest, root, directory string) e
 		return errors.New("apply request bounds or private paths are invalid")
 	}
 	return nil
+}
+
+func normalizedProcessRole(role string) string {
+	if role == "" {
+		return RoleApplication
+	}
+	return role
+}
+
+func validProcessRole(role string) bool {
+	return role == RoleApplication || role == RoleCLI || role == RoleServer
+}
+
+func validParticipantRole(role string) bool {
+	return validProcessRole(role) || role == RolePublicLauncher || role == RoleManagedServer || role == RoleManagedLauncher
+}
+
+func executableForStateRole(root string, state InstallState, manifest PackageManifest, role string) (string, error) {
+	if role == RolePublicLauncher || role == RoleManagedLauncher {
+		if state.CLIEntryPath == "" {
+			return "", errors.New("trusted public CLI entry is not recorded")
+		}
+		return state.CLIEntryPath, nil
+	}
+	path := manifest.Components.Application.Path
+	if role == RoleCLI || role == RoleManagedServer {
+		path = PackageCLIPath(manifest.Platform, manifest.PackageKind)
+	}
+	if role == RoleServer {
+		path = manifest.Components.Server.Path
+	}
+	return installedComponentPath(root, state.VersionPath, path), nil
 }
 
 func isLowerHex(value string) bool {
@@ -1107,8 +1533,38 @@ func stableBootstrapTargets(root, entry string) []string {
 	return values
 }
 
+func stableBootstrapTargetsWithCLI(root, entry, cliEntry string) []string {
+	values := stableBootstrapTargets(root, entry)
+	if cliEntry == "" {
+		return values
+	}
+	// A CLI-only install shares one path between the application entry and the
+	// CLI entry. The server compatibility entry is still replaced on apply, so
+	// it must stay in this list or a rollback would leave it on the new version.
+	add := func(candidate string) {
+		for _, existing := range values {
+			if samePath(existing, candidate) {
+				return
+			}
+		}
+		values = append(values, candidate)
+	}
+	add(cliEntry)
+	add(cliEntry + ".root")
+	if !runtimeWindows() {
+		serverEntry := filepath.Join(filepath.Dir(cliEntry), "usage-server")
+		add(serverEntry)
+		add(serverEntry + ".root")
+	}
+	return values
+}
+
 func prepareBootstrapBackup(root, entry, backupDir string) error {
-	targets := stableBootstrapTargets(root, entry)
+	return prepareBootstrapBackupWithCLI(root, entry, "", backupDir)
+}
+
+func prepareBootstrapBackupWithCLI(root, entry, cliEntry, backupDir string) error {
+	targets := stableBootstrapTargetsWithCLI(root, entry, cliEntry)
 	records := make([]bootstrapBackupRecord, len(targets))
 	for index, target := range targets {
 		info, err := os.Lstat(target)
@@ -1130,6 +1586,10 @@ func prepareBootstrapBackup(root, entry, backupDir string) error {
 }
 
 func applyBootstrap(packageRoot, root, entry string, manifest PackageManifest) error {
+	return applyBootstrapWithCLI(packageRoot, root, entry, "", manifest)
+}
+
+func applyBootstrapWithCLI(packageRoot, root, entry, cliEntry string, manifest PackageManifest) error {
 	targets := stableBootstrapTargets(root, entry)
 	ext := ""
 	launcherName := "headroom"
@@ -1151,7 +1611,46 @@ func applyBootstrap(packageRoot, root, entry string, manifest PackageManifest) e
 			return err
 		}
 	}
-	return verifyInstalledBootstrap(root, entry, manifest)
+	if err := verifyInstalledBootstrap(root, entry, manifest); err != nil {
+		return err
+	}
+	if cliEntry != "" && !samePath(cliEntry, entry) {
+		recordPath := "bootstrap/headroom-cli" + ext
+		if manifest.PackageKind == PackageKindCLI {
+			recordPath = "bootstrap/headroom" + ext
+		}
+		record, ok := fileRecord(manifest.Files, recordPath)
+		if !ok || record.LinkTarget != "" {
+			return errors.New("verified package CLI bootstrap inventory is incomplete")
+		}
+		source := filepath.Join(packageRoot, filepath.FromSlash(recordPath))
+		if err := replaceFile(source, cliEntry, 0o755); err != nil {
+			return err
+		}
+		if err := replaceBytes([]byte(root+"\n"), cliEntry+".root", 0o600); err != nil {
+			return err
+		}
+		if err := verifyStableEntry(root, cliEntry, manifest, recordPath); err != nil {
+			return err
+		}
+	}
+	if cliEntry != "" && !runtimeWindows() {
+		serverEntry := filepath.Join(filepath.Dir(cliEntry), "usage-server")
+		recordPath := "bootstrap/headroom-cli"
+		if manifest.PackageKind == PackageKindCLI {
+			recordPath = "bootstrap/headroom"
+		}
+		if err := replaceFile(filepath.Join(packageRoot, filepath.FromSlash(recordPath)), serverEntry, 0o755); err != nil {
+			return err
+		}
+		if err := replaceBytes([]byte(root+"\n"), serverEntry+".root", 0o600); err != nil {
+			return err
+		}
+		if err := verifyStableEntry(root, serverEntry, manifest, recordPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func installBootstrap(packageRoot, root, entry, backupDir string) error {
@@ -1229,7 +1728,11 @@ func verifyInstalledBootstrap(root, entry string, manifest PackageManifest) erro
 }
 
 func restoreBootstrap(root, entry, backupDir string) error {
-	targets := stableBootstrapTargets(root, entry)
+	return restoreBootstrapWithCLI(root, entry, "", backupDir)
+}
+
+func restoreBootstrapWithCLI(root, entry, cliEntry, backupDir string) error {
+	targets := stableBootstrapTargetsWithCLI(root, entry, cliEntry)
 	data, err := readBoundedFile(filepath.Join(backupDir, "bootstrap-backup.json"), maxManifestBytes)
 	if err != nil {
 		return err
@@ -1258,7 +1761,11 @@ func rollbackJournal(journal ApplyJournal, directory string) error {
 	if journal.Previous == nil || journal.Candidate == nil {
 		return errors.New("apply journal has no rollback state")
 	}
-	if err := restoreBootstrap(journal.Request.InstallRoot, journal.Request.EntryPath, directory); err != nil {
+	cliEntry := ""
+	if journal.Previous != nil {
+		cliEntry = journal.Previous.CLIEntryPath
+	}
+	if err := restoreBootstrapWithCLI(journal.Request.InstallRoot, journal.Request.EntryPath, cliEntry, directory); err != nil {
 		return err
 	}
 	if err := writeDurableJSON(filepath.Join(journal.Request.InstallRoot, StateName), journal.Previous); err != nil {
@@ -1287,13 +1794,20 @@ func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func
 	if err != nil {
 		return err
 	}
-	name := "headroom"
-	if state.Platform == "windows" {
-		name += ".exe"
+	manifest, err := installedManifest(request.InstallRoot, state)
+	if err != nil {
+		return err
 	}
-	executable := filepath.Join(request.InstallRoot, filepath.FromSlash(state.VersionPath), "bin", name)
+	packagePath := manifest.Components.Application.Path
+	if request.CandidateRole == RoleCLI {
+		packagePath = PackageCLIPath(manifest.Platform, manifest.PackageKind)
+	}
+	if request.CandidateRole == RoleServer {
+		packagePath = manifest.Components.Server.Path
+	}
+	executable := installedComponentPath(request.InstallRoot, state.VersionPath, packagePath)
 	for _, missing := range inspection.Missing {
-		if !isAuxiliaryPath(missing) {
+		if !isAuxiliaryPath(missing) || missing == strings.TrimPrefix(packagePath, "bundle/") {
 			return errors.New("target app/runtime is incomplete")
 		}
 	}
@@ -1354,8 +1868,148 @@ func launchAndAwaitReady(request ApplyRequest, state InstallState, onLaunch func
 	return errors.New("replacement app readiness timed out")
 }
 
+func hasManagedService(request ApplyRequest) bool {
+	for _, claim := range request.AdditionalProcesses {
+		if claim.Role == RoleManagedServer {
+			return true
+		}
+	}
+	return false
+}
+
+func finishManagedServiceStopForRecovery(root string, request ApplyRequest) error {
+	if request.ManagedServiceSupervisor != "" {
+		if err := stopManagedServiceSupervisor(request.ManagedServiceSupervisor); err != nil {
+			return err
+		}
+	} else {
+		for _, claim := range request.AdditionalProcesses {
+			if claim.Role == RoleManagedServer {
+				if err := stopRecordedProcess(claim.PID, claim.Executable, claim.ProcessToken, 5*time.Second); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return clearManagedServiceReceipt(root)
+}
+
+func launchManagedService(request ApplyRequest, state InstallState, onLaunch func(int, string, string) error) error {
+	manifest, err := installedManifest(request.InstallRoot, state)
+	if err != nil {
+		return err
+	}
+	executable := installedComponentPath(request.InstallRoot, state.VersionPath, PackageCLIPath(manifest.Platform, manifest.PackageKind))
+	launchToken, err := randomHex(24)
+	if err != nil {
+		return err
+	}
+	if request.ManagedServiceSupervisor != "" {
+		_ = clearSupervisedManagedServiceRestart(request.InstallRoot)
+		if err = clearManagedServiceReceipt(request.InstallRoot); err != nil {
+			return err
+		}
+		if err = authorizeSupervisedManagedServiceRestart(request.InstallRoot, executable, request.ManagedServiceArguments,
+			request.ManagedServiceEnvironment, request.ManagedServiceWorkingDirectory); err != nil {
+			return err
+		}
+		failed := func(cause error) error {
+			return errors.Join(cause, stopManagedServiceSupervisor(request.ManagedServiceSupervisor), clearSupervisedManagedServiceRestart(request.InstallRoot))
+		}
+		if err := startManagedServiceSupervisor(request.ManagedServiceSupervisor); err != nil {
+			return failed(err)
+		}
+		deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
+		journaled := false
+		for time.Now().Before(deadline) {
+			record, readErr := readManagedService(request.InstallRoot)
+			if readErr == nil && record.Supervisor == request.ManagedServiceSupervisor && samePath(record.Executable, executable) &&
+				slices.Equal(record.Arguments, request.ManagedServiceArguments) && slices.Equal(record.Environment, request.ManagedServiceEnvironment) &&
+				record.WorkingDirectory == request.ManagedServiceWorkingDirectory {
+				if !journaled && onLaunch != nil {
+					if err = onLaunch(record.PID, record.Executable, record.ProcessToken); err != nil {
+						return failed(err)
+					}
+					journaled = true
+				}
+				if record.Ready {
+					return nil
+				}
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		return failed(errors.New("managed per-user headroom.service did not report the active generation"))
+	}
+	baseEnvironment := authoritativeServiceEnvironment(os.Environ(), request.ManagedServiceEnvironment)
+	environment := authoritativeApplyEnvironment(baseEnvironment, map[string]string{
+		"HEADROOM_INSTALL_ROOT": request.InstallRoot, "HEADROOM_LAUNCHER_PATH": state.CLIEntryPath,
+		"HEADROOM_PACKAGE_VERSION": state.ActiveVersion, "HEADROOM_MANAGED_SERVICE_RESTART": launchToken,
+	})
+	arguments := append([]string{executable, "serve"}, request.ManagedServiceArguments...)
+	process, err := os.StartProcess(executable, arguments, &os.ProcAttr{Dir: request.ManagedServiceWorkingDirectory, Env: environment, Files: []*os.File{nil, nil, nil}})
+	if err != nil {
+		return err
+	}
+	token, err := captureProcessToken(process.Pid, executable)
+	if err != nil {
+		_ = process.Kill()
+		_, _ = process.Wait()
+		return err
+	}
+	if onLaunch != nil {
+		if err = onLaunch(process.Pid, executable, token); err != nil {
+			_ = process.Kill()
+			_, _ = process.Wait()
+			return err
+		}
+	}
+	owner, ownerErr := currentOwnerIdentity()
+	if ownerErr != nil {
+		_ = process.Kill()
+		_, _ = process.Wait()
+		return ownerErr
+	}
+	record := ManagedServiceRecord{Schema: SchemaVersion, Product: "Headroom", InstallRoot: request.InstallRoot, PID: process.Pid, Executable: executable, ProcessToken: token,
+		Arguments: append([]string(nil), request.ManagedServiceArguments...), LaunchToken: launchToken, Owner: owner,
+		Environment: append([]string(nil), request.ManagedServiceEnvironment...), WorkingDirectory: request.ManagedServiceWorkingDirectory}
+	if err = writeManagedService(request.InstallRoot, record); err != nil {
+		_ = process.Kill()
+		_, _ = process.Wait()
+		return err
+	}
+	done := make(chan error, 1)
+	go func() { _, waitErr := process.Wait(); done <- waitErr }()
+	deadline := time.Now().Add(time.Duration(request.ReadyTimeoutMS) * time.Millisecond)
+	for time.Now().Before(deadline) {
+		select {
+		case waitErr := <-done:
+			return fmt.Errorf("managed service exited during startup: %v", waitErr)
+		default:
+		}
+		ready, readyErr := ReadManagedService(request.InstallRoot)
+		if readyErr == nil && ready.Ready && ready.LaunchToken == "" && ready.PID == process.Pid && ready.ProcessToken == token && samePath(ready.Executable, executable) {
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	_ = process.Kill()
+	<-done
+	return errors.New("managed service readiness timed out")
+}
+
+func authoritativeServiceEnvironment(base, saved []string) []string {
+	result := make([]string, 0, len(base)+len(saved))
+	for _, item := range base {
+		if len(managedServiceEnvironment([]string{item})) == 0 {
+			result = append(result, item)
+		}
+	}
+	return append(result, saved...)
+}
+
 func authoritativeApplyEnvironment(base []string, values map[string]string) []string {
-	managed := map[string]bool{"HEADROOM_INSTALL_ROOT": true, "HEADROOM_LAUNCHER_PATH": true, "HEADROOM_PACKAGE_VERSION": true, "HEADROOM_READY_NONCE": true}
+	managed := map[string]bool{"HEADROOM_INSTALL_ROOT": true, "HEADROOM_LAUNCHER_PATH": true, "HEADROOM_PACKAGE_VERSION": true, "HEADROOM_READY_NONCE": true, "HEADROOM_MANAGED_SERVICE_RESTART": true, "HEADROOM_PUBLIC_LAUNCHER_PID": true, "HEADROOM_PUBLIC_LAUNCHER_PATH": true, "HEADROOM_PUBLIC_LAUNCHER_TOKEN": true}
 	result := make([]string, 0, len(base)+len(values))
 	for _, item := range base {
 		key, _, ok := strings.Cut(item, "=")
@@ -1367,8 +2021,10 @@ func authoritativeApplyEnvironment(base []string, values map[string]string) []st
 			result = append(result, item)
 		}
 	}
-	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION", "HEADROOM_READY_NONCE"} {
-		result = append(result, key+"="+values[key])
+	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION", "HEADROOM_READY_NONCE", "HEADROOM_MANAGED_SERVICE_RESTART"} {
+		if value, ok := values[key]; ok {
+			result = append(result, key+"="+value)
+		}
 	}
 	return result
 }

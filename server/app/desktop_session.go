@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -50,6 +50,8 @@ type desktopSessionOptions struct {
 	timeout time.Duration
 	listen  func(string, string) (net.Listener, error)
 	homeDir string
+	version string
+	ready   func() error
 }
 
 type preparedDesktopSession struct {
@@ -71,6 +73,9 @@ func (options desktopSessionOptions) withDefaults() desktopSessionOptions {
 	}
 	if options.listen == nil {
 		options.listen = net.Listen
+	}
+	if options.version == "" {
+		options.version = "dev"
 	}
 	return options
 }
@@ -233,10 +238,11 @@ func generateDesktopCertificate(random io.Reader, now time.Time, boundIP net.IP)
 	publicKey := x509.MarshalPKCS1PublicKey(&privateKey.PublicKey)
 	keyID := sha256.Sum256(publicKey)
 	template := &x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "Headroom Desktop Session"},
-		NotBefore:             now.Add(-5 * time.Minute),
-		NotAfter:              now.AddDate(10, 0, 0),
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "Headroom Desktop Session"},
+		NotBefore:    now.Add(-5 * time.Minute),
+		// Apple limits app-anchored TLS leaf certificates to 825 days.
+		NotAfter:              now.AddDate(0, 0, 365),
 		DNSNames:              []string{"localhost"},
 		IPAddresses:           desktopCertificateIPs(boundIP),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,

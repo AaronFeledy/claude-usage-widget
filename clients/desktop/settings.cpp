@@ -89,7 +89,7 @@ SettingsService::SettingsService(QString path, bool allowAutomaticMigration,
 bool SettingsService::isWindows() const
 {
     if (m_platform == Platform::Windows) return true;
-    if (m_platform == Platform::Linux) return false;
+    if (m_platform == Platform::Linux || m_platform == Platform::Mac) return false;
 #ifdef Q_OS_WIN
     return true;
 #else
@@ -99,12 +99,17 @@ bool SettingsService::isWindows() const
 
 QString SettingsService::defaultPath(Platform platform)
 {
+    bool mac = platform == Platform::Mac;
     bool windows = platform == Platform::Windows;
     if (platform == Platform::Current) {
 #ifdef Q_OS_WIN
         windows = true;
+#elif defined(Q_OS_MACOS)
+        mac = true;
 #endif
     }
+    if (mac)
+        return QDir(QDir::homePath()).filePath(QStringLiteral("Library/Application Support/Headroom/Headroom/settings.json"));
     // AppConfigLocation preserves the existing XDG path on Linux. AppDataLocation
     // is the current user's roaming application-data directory on Windows.
     const auto location = QStandardPaths::writableLocation(

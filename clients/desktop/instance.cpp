@@ -10,6 +10,7 @@
 #include <QLockFile>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QPointer>
 
 #ifndef Q_OS_WIN
 #include <cerrno>
@@ -50,7 +51,7 @@ bool privateDirectory(const struct stat &status)
            (status.st_mode & 0777) == 0700;
 }
 
-bool openPrivateRuntime(const QString &path, ScopedFd &result)
+bool openSafeDirectory(const QString &path, bool requirePrivateFinal, ScopedFd &result)
 {
     if (path.isEmpty() || !QDir::isAbsolutePath(path)) return false;
 
@@ -68,8 +69,8 @@ bool openPrivateRuntime(const QString &path, ScopedFd &result)
         current.reset(next);
         struct stat status {};
         if (::fstat(current.get(), &status) != 0 ||
-            (index + 1 == components.size() ? !privateDirectory(status)
-                                             : !safeAncestor(status, systemUid))) {
+            (index + 1 == components.size() && requirePrivateFinal
+                 ? !privateDirectory(status) : !safeAncestor(status, systemUid))) {
             return false;
         }
     }
@@ -128,17 +129,48 @@ InstanceService::InstanceService(QString configPath, QObject *parent) : QObject(
     m_scopeName = "headroom-" + digest;
     m_pathsReady = true;
 #else
-    const QString runtimePath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    QString runtimePath = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
     ScopedFd runtime;
     ScopedFd headroom;
     ScopedFd scope;
-    if (!openPrivateRuntime(runtimePath, runtime) ||
-        !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom) ||
-        !openOrCreatePrivateDirectory(headroom.get(), digest.toLatin1(), scope)) {
+    QString runtimeRoot;
+#ifdef Q_OS_MACOS
+    const QString configuredRuntime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (configuredRuntime.isEmpty()) {
+        // Darwin's sockaddr_un path is only 104 bytes. Use the short canonical
+        // form of the system /tmp alias, then establish a private per-user root.
+        runtimePath = QFileInfo(QStringLiteral("/tmp")).canonicalFilePath();
+        if (runtimePath != QStringLiteral("/private/tmp")
+            || !openSafeDirectory(runtimePath, false, runtime)
+            || !openOrCreatePrivateDirectory(runtime.get(),
+                QByteArrayLiteral("Headroom-") + QByteArray::number(geteuid()), headroom)) {
+            m_error = "Headroom could not establish a private per-user runtime directory.";
+            return;
+        }
+        runtimeRoot = QDir(runtimePath).filePath(QStringLiteral("Headroom-")
+                                                + QString::number(geteuid()));
+    } else {
+        runtimePath = QDir::cleanPath(configuredRuntime);
+        if (!openSafeDirectory(runtimePath, true, runtime)
+            || !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom)) {
+            m_error = "Headroom could not establish a private per-user runtime directory.";
+            return;
+        }
+        runtimeRoot = QDir(runtimePath).filePath(QStringLiteral("Headroom"));
+    }
+#else
+    if (!openSafeDirectory(runtimePath, true, runtime)
+        || !openOrCreatePrivateDirectory(runtime.get(), "Headroom", headroom)) {
         m_error = "Headroom could not establish a private per-user runtime directory.";
         return;
     }
-    const QString lockDirectory = QDir(runtimePath).filePath("Headroom/" + digest);
+    runtimeRoot = QDir(runtimePath).filePath(QStringLiteral("Headroom"));
+#endif
+    if (!openOrCreatePrivateDirectory(headroom.get(), digest.toLatin1(), scope)) {
+        m_error = "Headroom could not establish a private per-user runtime directory.";
+        return;
+    }
+    const QString lockDirectory = QDir(runtimeRoot).filePath(digest);
     m_lockPath = QDir(lockDirectory).filePath("lock");
     m_scopeName = QDir(lockDirectory).filePath("activate");
     if (QFile::encodeName(m_scopeName).size() >= qsizetype(sizeof(sockaddr_un::sun_path))) {
@@ -155,6 +187,36 @@ InstanceService::~InstanceService()
 {
     if (m_server) { m_server->close(); delete m_server; }
     if (m_lock) { m_lock->unlock(); delete m_lock; }
+}
+
+QByteArray InstanceService::request(const QByteArray &message, int timeoutMilliseconds)
+{
+    constexpr qsizetype maximumReply = 1024 * 1024;
+    m_primaryUnavailable = false;
+    if (!m_pathsReady || message.isEmpty() || message.size() > 4095 || message.contains('\n') || message.contains('\0')) return {};
+#ifndef Q_OS_WIN
+    if (!safeEndpoint(m_scopeName, S_IFSOCK)) { m_error = "Unsafe local desktop endpoint."; return {}; }
+#endif
+    QLocalSocket socket;
+    socket.setReadBufferSize(maximumReply + 1);
+    socket.connectToServer(m_scopeName, QIODevice::ReadWrite);
+    if (!socket.waitForConnected(timeoutMilliseconds)) {
+        m_primaryUnavailable = socket.error() == QLocalSocket::ServerNotFoundError;
+        m_error = "The local desktop is unavailable.";
+        return {};
+    }
+    const QByteArray wire = message + '\n';
+    if (socket.write(wire) != wire.size() || (socket.bytesToWrite() && !socket.waitForBytesWritten(timeoutMilliseconds))) return {};
+    QElapsedTimer timer; timer.start();
+    QByteArray response;
+    while (timer.elapsed() < timeoutMilliseconds) {
+        response += socket.read(maximumReply + 1 - response.size());
+        if (response.size() > maximumReply || socket.bytesAvailable() > 0) return {};
+        if (response.contains('\n')) return response.endsWith('\n') && response.count('\n') == 1 ? response : QByteArray();
+        if (!socket.waitForReadyRead(qMax(1, timeoutMilliseconds - int(timer.elapsed()))) && socket.bytesAvailable() == 0) break;
+    }
+    m_error = "The local desktop did not acknowledge the request.";
+    return {};
 }
 
 InstanceService::Result InstanceService::start(int timeoutMilliseconds)
@@ -217,12 +279,12 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
     }
     connect(m_server, &QLocalServer::newConnection, this, [this] {
         while (auto socket = m_server->nextPendingConnection()) {
-            socket->setReadBufferSize(33);
+            socket->setReadBufferSize(4097);
             const auto readActivation = [this, socket] {
                 if (socket->property("headroomActivationComplete").toBool()) return;
                 QByteArray buffered = socket->property("headroomActivation").toByteArray();
-                buffered += socket->read(qMax<qint64>(0, 33 - buffered.size()));
-                if (buffered.size() > 32) {
+                buffered += socket->read(qMax<qint64>(0, 4097 - buffered.size()));
+                if (buffered.size() > 4096) {
                     socket->setProperty("headroomActivationComplete", true);
                     socket->disconnectFromServer(); return;
                 }
@@ -233,9 +295,29 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
                         emit activationRequested();
                         socket->write("ok\n");
                         socket->flush();
+                    } else if (buffered.endsWith('\n') && buffered.count('\n') == 1 && m_requestHandler) {
+                        const auto response = m_requestHandler(buffered.chopped(1));
+                        if (!response.isEmpty() && response.size() <= 1024 * 1024 && !response.contains('\n')) {
+                            socket->write(response + '\n');
+                            socket->flush();
+                        } else if (m_asyncRequestHandler) {
+                            const QPointer<QLocalSocket> guarded(socket);
+                            auto reply = [guarded](const QByteArray &value) {
+                                if (!guarded || guarded->state() != QLocalSocket::ConnectedState) return;
+                                if (!value.isEmpty() && value.size() <= 1024 * 1024 && !value.contains('\n')) {
+                                    guarded->write(value + '\n'); guarded->flush();
+                                }
+                                guarded->disconnectFromServer();
+                            };
+                            if (m_asyncRequestHandler(buffered.chopped(1), std::move(reply))) {
+                                socket->setProperty("headroomAsyncRequest", true);
+                                QTimer::singleShot(8 * 60 * 1000, socket, [socket] { socket->disconnectFromServer(); });
+                                return;
+                            }
+                        }
                     }
                     socket->disconnectFromServer();
-                } else if (buffered.size() >= 32 || socket->bytesAvailable() > 0) {
+                } else if (buffered.size() >= 4096 || socket->bytesAvailable() > 0) {
                     socket->setProperty("headroomActivationComplete", true);
                     socket->disconnectFromServer();
                 }
@@ -243,7 +325,9 @@ InstanceService::Result InstanceService::start(int timeoutMilliseconds)
             connect(socket, &QLocalSocket::readyRead, this, readActivation);
             connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
             QMetaObject::invokeMethod(socket, readActivation, Qt::QueuedConnection);
-            QTimer::singleShot(1000, socket, [socket] { socket->disconnectFromServer(); });
+            QTimer::singleShot(1000, socket, [socket] {
+                if (!socket->property("headroomAsyncRequest").toBool()) socket->disconnectFromServer();
+            });
         }
     });
     return Result::Primary;

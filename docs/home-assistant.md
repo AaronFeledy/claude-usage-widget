@@ -162,10 +162,21 @@ Each provider entry has this shape:
   ],
   "error": null,
   "needs_reauth": false,
-  "is_success": true
+  "is_success": true,
+  "rate_limit_reset_credits": null
 }
 ```
 
 Optional strings and reset timestamps are explicit `null`. `is_success` is true only when `error` is `null`.
+
+ChatGPT (`Codex`) responses may also include
+`"rate_limit_reset_credits": {"available_count": 3, "account_fingerprint":
+"<64 lowercase hex characters>"}`. This metadata reports how many usage resets
+are currently banked and, when available, an account fingerprint used to keep a
+manual action bound to the account whose usage was checked. The fingerprint is
+otherwise `null`. The complete metadata object is `null` when the count is
+unknown or the provider returned an error; zero is a known count. The GET usage
+endpoints and Home Assistant sensors only read this metadata and never redeem a
+reset. Headroom's desktop has a separate, explicitly confirmed reset action.
 
 `buckets` is always present, is `[]` on error, and lists every usage window a provider reports (typically `session` and `weekly`; model-scoped rows like `weekly_fable`; Cursor `auto` / `api`; and credit meters like `extra` / `on_demand` when the account has them enabled or has non-zero spend). Optional `status_text` overrides the reset line (e.g. credit totals). `current` and `weekly` remain frozen compatibility fields so existing sensors keep working unchanged; Cursor preserves its legacy aggregate values there while exposing separate `auto` and `api` entries in `buckets`.

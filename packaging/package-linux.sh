@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 9 ]]; then
-  echo "usage: package-linux.sh VERSION BUILD_DIR WORK_DIR OUTPUT_DIR SERVER LAUNCHER MANAGER QT_ROOT QT_SOURCE_CACHE" >&2
+if [[ $# -ne 11 ]]; then
+  echo "usage: package-linux.sh VERSION BUILD_DIR WORK_DIR OUTPUT_DIR SERVER LAUNCHER MANAGER QT_ROOT QT_SOURCE_CACHE CLI CLI_LAUNCHER" >&2
   exit 2
 fi
 
@@ -15,6 +15,8 @@ launcher=$6
 manager=$7
 qt_root=$8
 qt_source_cache=$9
+cli=${10}
+cli_launcher=${11}
 "$manager" asset-name --version "$version" --platform linux --arch x86_64 >/dev/null
 asset="Headroom-v${version}-linux-x86_64.tar.gz"
 package_root="${work_dir}/Headroom-v${version}-linux-x86_64"
@@ -67,6 +69,9 @@ install -m 0755 "$server" "$package_root/bundle/bin/usage-server"
 install -m 0755 "$launcher" "$package_root/bootstrap/headroom"
 install -m 0755 "$manager" "$package_root/bootstrap/headroom-package"
 install -m 0755 "$manager" "$package_root/bundle/bin/headroom-package"
+install -m 0755 "$cli" "$package_root/bundle/bin/headroom-cli"
+install -m 0755 "$cli_launcher" "$package_root/bootstrap/headroom-cli"
+install -m 0755 "$cli_launcher" "$package_root/bundle/bin/headroom-cli-launcher"
 install -m 0644 packaging/THIRD_PARTY_NOTICES.txt "$package_root/bundle/share/headroom/THIRD_PARTY_NOTICES.txt"
 install -Dm0644 LICENSE "$package_root/bundle/share/licenses/headroom/LICENSE"
 mkdir -p "$package_root/bundle/share/licenses/qt" "$package_root/bundle/share/licenses/go/runtime" "$package_root/bundle/share/licenses/go/protobuf" "$package_root/bundle/share/licenses/go/yaml" "$package_root/bundle/share/licenses/openssl"
@@ -87,6 +92,10 @@ module_cache=$(go env GOMODCACHE)
 install -m 0644 "$module_cache/google.golang.org/protobuf@v1.36.11/LICENSE" "$package_root/bundle/share/licenses/go/protobuf/LICENSE"
 install -m 0644 "$module_cache/gopkg.in/yaml.v3@v3.0.1/LICENSE" "$package_root/bundle/share/licenses/go/yaml/LICENSE"
 install -m 0644 "$module_cache/gopkg.in/yaml.v3@v3.0.1/NOTICE" "$package_root/bundle/share/licenses/go/yaml/NOTICE"
+for module in sys term; do
+  module_dir=$(cd packaging/headroom-manager && go list -m -f '{{.Dir}}' "golang.org/x/$module")
+  install -Dm0644 "$module_dir/LICENSE" "$package_root/bundle/share/licenses/go/x-$module/LICENSE"
+done
 openssl_license=
 for candidate in /usr/share/doc/libssl3/copyright /usr/share/licenses/openssl/LICENSE.txt /usr/share/licenses/openssl/LICENSE; do
   if [[ -f "$candidate" ]]; then openssl_license=$candidate; break; fi

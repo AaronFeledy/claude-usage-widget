@@ -2,31 +2,33 @@
 
 ## Project overview
 
-Headroom is a shared Qt Quick tray app for Windows and Linux plus a Go usage API
+Headroom is a shared Qt Quick tray app for Windows, macOS, and Linux plus a Go usage API
 server. It monitors Claude, ChatGPT, Cursor, and Grok usage. The compatible API
 and configuration name for ChatGPT remains `Codex`.
 
 ## Layout
 
-- `clients/desktop/` — primary Qt 6.6+ Windows/Linux UI, local-server manager,
+- `clients/desktop/` — primary Qt 6.6+ Windows/macOS/Linux UI, local-server manager,
   Windows credential-helper client, startup, diagnostics, and package updater.
 - `packaging/headroom-manager/` — Go archive validator, stable launcher,
-  installer, staged acquisition, transactional apply, rollback, and recovery.
+  installer, unified CLI, terminal dashboard, native Windows/WSL pairing,
+  staged acquisition, transactional apply, rollback, and recovery.
 - `packaging/` — per-platform assembly, public installers, pinned attribution
   sources, package contract, and fixtures.
 - `clients/windows/` — retained .NET 8 WinForms reference/rollback client and the
   Windows credential-helper sources used by Headroom packages.
 - `server/` — Go 1.25 usage API, provider integrations, configuration, and
-  Dockerfile.
+  Dockerfile. `server/app` is the shared runtime used by `headroom serve` and
+  the retained `usage-server` shim.
 - `tests/windows/` — Linux-runnable C# lifecycle and browser fixtures.
-- `.github/workflows/headroom-packages.yml` — reusable three-target package and
+- `.github/workflows/headroom-packages.yml` — reusable five-desktop/six-CLI package and
   release gate used by PR and release entry workflows.
 - `docs/` — migration plan, desktop parity audit, and Home Assistant REST sensor
   guidance.
 
 ## Architecture and compatibility
 
-Both platforms default to Local mode. Headroom probes `127.0.0.1:7823`, attaches
+All desktop platforms default to Local mode. Headroom probes `127.0.0.1:7823`, attaches
 to a compatible server, or starts the adjacent `usage-server` executable. A saved
 remote address overrides this default. Local discovery and attached HTTP requests
 never send saved bearer tokens or browser credentials. The bundled child uses
@@ -36,6 +38,21 @@ Do not replace certificate verification with PID checks or ignored TLS errors.
 Headroom owns, stops, or hands off only a server process it started. Remote mode
 accepts a normalized HTTP(S) base URL; nonempty bearer tokens are sent as
 `Authorization: Bearer <token>`.
+
+The public `headroom` command displays usage, `headroom serve` runs the server,
+and `headroom update` updates the managed installation. Bare CLI output refreshes
+in a terminal and prints once when piped; it does not start a server or invent
+data. With no explicit transport it can read the active desktop's private
+snapshot, then fall back to localhost only when no desktop is running.
+Desktop and CLI native updates share the same transaction manager. Explicit
+Windows/WSL pairing stages both targets before either applies; never infer it
+from hostnames, URLs, or a server's claim to be local. Cross-kernel partial
+completion must remain visible and recoverable, never reported as atomic.
+Managed `serve` receipts bind the executable, kernel process identity, owner,
+arguments, and approved server environment. Readiness is acknowledged only after
+server configuration and listener binding succeed. Linux/WSL supervision supports
+only the current user's `headroom.service`; never infer an arbitrary unit name,
+control system-wide units, or invoke sudo during an update.
 
 Local remains the fresh-install default; SSH is the recommended remote option
 in the UI, with direct HTTP(S) available separately. Preserve saved choices and
@@ -47,7 +64,7 @@ or expose cookies in arguments. Linux/WSL standalone servers opt in with
 `usage-server --ssh-stdio` receiver connects to the existing server through an
 owner-only per-account Unix socket and validates the peer UID. It never creates
 another provider poller or falls back to TCP. Native Windows receivers are not
-supported; Windows and Linux desktop clients can use Linux/WSL receivers.
+supported; Windows, macOS, and Linux desktop clients can use Linux/WSL receivers.
 Keep usage, version, and credential requests on the same selected transport.
 
 The server defaults to `127.0.0.1:7823`. Off-loopback binds require `auth_token`,
@@ -70,11 +87,18 @@ is `weekly_grok_bot`. Credit meters appear only when enabled or nonzero.
 
 Official packages use strict schema 1 manifests and immutable generations under
 the current-user Headroom root. Public acquisition is available only to a
-trusted native per-user install. Demo, preview, capture, explicit-config,
-source, and system-managed sessions make no public update requests. Restart
+trusted native per-user install. Capture, explicit-config, source, and
+system-managed sessions make no public update requests. Restart
 apply uses a two-way acknowledgement/commit, exact process identity, readiness,
 rollback, and durable recovery. Do not add a second archive validator outside
-the Go manager.
+the Go manager. macOS framework links are the only archive symlinks allowed:
+they must be manifest-listed and resolve within the same packaged framework.
+Mac payloads use Headroom.app/Contents/MacOS; the stable Finder launcher is
+~/Applications/Headroom.app and managed generations live under
+~/Library/Application Support/Headroom. Login startup writes only the owned
+LaunchAgent plist for the next login; do not bootstrap or bootout the current
+app when changing that preference. Preserve Apple framework structure for code
+signing. Ad-hoc signatures are not Developer ID signing or notarization.
 
 ## Release and version rules
 
@@ -83,10 +107,10 @@ manager, server, helper, package filenames, manifests, and release tag. Build
 metadata is preserved. Numeric components are separately derived for PE and
 .NET assembly versions and may not exceed 65534.
 
-The reusable package workflow builds Windows x64, Windows ARM64, and Linux
-x86_64 with Qt 6.8.3. It verifies the exact packages on native runners, runs the
-legacy harness and server Go/race/vet/build/Docker gates, and assembles three
-desktop packages, one release manifest, four standalone servers, both installers,
+The reusable package workflow builds Windows x64, Windows ARM64, Linux x86_64,
+and macOS x86_64/ARM64 (deployment target 12.0) with Qt 6.8.3. It verifies the exact packages on native runners, runs the
+legacy harness and server Go/race/vet/build/Docker gates, and assembles five
+desktop packages, six CLI packages, legacy/full/CLI release manifests, six standalone servers, both installers,
 and `SHA256SUMS`. PR workflows have read-only contents permission and never
 publish. The release resolver is read-only; only the final gated job may create
 or verify the tag at the initiating commit and publish. Never publish a tag or
@@ -104,22 +128,22 @@ From the repository root:
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build clients/desktop/build --parallel
-ctest --test-dir clients/desktop/build --output-on-failure
+ctest --test-dir clients/desktop/build --output-on-failure -E headroom-reset-prohibited-tests
 
 python3 -m unittest discover -s packaging/tests -p 'test_*.py'
 bash packaging/tests/test-install-download.sh
 
 cd packaging/headroom-manager
-go test ./...
+go test -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
 go vet ./...
 go build ./...
-go test -race -shuffle=on -count=1 ./...
+go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ConsumeResetCredit|Reset' ./...
 
 cd ../../server
-go test ./...
+go test -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
-go test -race -shuffle=on -count=1 ./...
+go test -race -shuffle=on -count=1 -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
 
 cd ..
 dotnet build clients/windows/ClaudeUsageWidget.csproj -c Release -r win-x64
@@ -152,3 +176,10 @@ The optional `packaging/tests/ssh_server_smoke.py` requires Linux/OpenSSH and
 uses disposable test keys and a provider-disabled backend. It reserves the
 current account's fixed SSH socket and refuses to run if that socket exists.
 Never run it against an account already serving SSH access or reuse live keys.
+
+The optional `packaging/tests/cli_systemd_smoke.py` requires Linux with a working
+current-user systemd bus and refuses any existing `headroom.service` unit. It
+uses a disposable provider-disabled installation and a temporary runtime unit
+link, runs a real repair/restart, then stops the unit and removes that link. Never
+run it against an account already using the fixed unit. Linux CLI CI runs it on
+an isolated runner account.

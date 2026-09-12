@@ -1,27 +1,39 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/poller"
 	"github.com/AaronFeledy/claude-usage-widget/server/internal/usage"
 )
 
 const maxCredentialBodyBytes = 1 << 20
+const maxResetBodyBytes = 1024
+const resetOperationTimeout = 60 * time.Second
+const resetWriteTimeout = 65 * time.Second
+
+var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var accountFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type handler struct {
 	cache         Cache
 	cursor        CursorCredentials
 	grok          GrokCredentials
+	codex         CodexResetter
 	poller        ProviderPoller
 	version       string
 	providerNames []string
 	credentialMu  sync.Mutex
+	resetMu       sync.Mutex
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +58,143 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.route(w, r, http.MethodPut, h.grokCredentials)
 		return
 	}
+	if path == "/api/v1/providers/codex/reset" {
+		h.route(w, r, http.MethodPost, h.codexReset)
+		return
+	}
 	writeError(w, http.StatusNotFound, "not found")
+}
+
+type codexResetRequest struct {
+	RequestID          string `json:"request_id"`
+	Confirmed          bool   `json:"confirmed"`
+	AccountFingerprint string `json:"account_fingerprint"`
+}
+
+type codexResetResponse struct {
+	Outcome string `json:"outcome"`
+}
+
+// This handler can spend a very valuable banked reset. Do not test the reset
+// button, this endpoint, or any code that may trigger a reset. The skipped
+// safety tests are intentional and must not be converted into executable tests.
+func (h *handler) codexReset(w http.ResponseWriter, r *http.Request) {
+	if h.codex == nil || h.poller == nil || !h.hasProvider("codex") {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+	started := time.Now()
+	resetCtx, cancel := context.WithDeadline(r.Context(), started.Add(resetOperationTimeout))
+	defer cancel()
+	if err := http.NewResponseController(w).SetWriteDeadline(started.Add(resetWriteTimeout)); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "reset request unavailable")
+		return
+	}
+	if len(r.Header.Values("Origin")) > 0 || len(r.Header.Values("Sec-Fetch-Site")) > 0 {
+		writeError(w, http.StatusForbidden, "browser requests are not allowed")
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || !strings.EqualFold(mediaType, "application/json") {
+		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxResetBodyBytes)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	request, err := decodeCodexResetRequest(decoder)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if !request.Confirmed || !uuidPattern.MatchString(request.RequestID) || !accountFingerprintPattern.MatchString(request.AccountFingerprint) {
+		writeError(w, http.StatusBadRequest, "request_id must be a UUID, confirmed must be true, and account_fingerprint must be lowercase SHA-256")
+		return
+	}
+	if resetCtx.Err() != nil {
+		writeError(w, http.StatusRequestTimeout, "reset request timed out")
+		return
+	}
+
+	if !h.resetMu.TryLock() {
+		writeError(w, http.StatusConflict, "another reset request is in progress")
+		return
+	}
+	defer h.resetMu.Unlock()
+	retry, blocked := h.codex.ResetAttemptStatus(request.RequestID)
+	if blocked {
+		writeError(w, http.StatusConflict, "retry the previous request_id")
+		return
+	}
+	expectedAccountID := ""
+	if !retry {
+		entry, ok, err := h.poller.PollProvider(resetCtx, "codex")
+		if err != nil || !ok || !eligibleForCodexReset(entry) || entry.Data.RateLimitResetCredits.AccountFingerprint == nil || *entry.Data.RateLimitResetCredits.AccountFingerprint != request.AccountFingerprint {
+			writeError(w, http.StatusConflict, "fresh eligible ChatGPT usage is required")
+			return
+		}
+		expectedAccountID = entry.Data.ProviderAccountID
+	}
+	outcome, ambiguous, err := h.codex.ConsumeResetCredit(resetCtx, request.RequestID, expectedAccountID, request.AccountFingerprint)
+	if err != nil {
+		if ambiguous {
+			writeError(w, http.StatusBadGateway, "reset outcome unknown; retry with the same request_id")
+		} else {
+			writeError(w, http.StatusBadGateway, "reset request unavailable")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, codexResetResponse{Outcome: outcome})
+}
+
+func decodeCodexResetRequest(decoder *json.Decoder) (codexResetRequest, error) {
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return codexResetRequest{}, fmt.Errorf("invalid JSON")
+	}
+	var request codexResetRequest
+	seen := map[string]bool{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return codexResetRequest{}, fmt.Errorf("invalid JSON")
+		}
+		seen[key] = true
+		switch key {
+		case "request_id":
+			err = decoder.Decode(&request.RequestID)
+		case "confirmed":
+			err = decoder.Decode(&request.Confirmed)
+		case "account_fingerprint":
+			err = decoder.Decode(&request.AccountFingerprint)
+		default:
+			return codexResetRequest{}, fmt.Errorf("invalid JSON")
+		}
+		if err != nil {
+			return codexResetRequest{}, fmt.Errorf("invalid JSON")
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') || len(seen) != 3 {
+		return codexResetRequest{}, fmt.Errorf("invalid JSON")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return codexResetRequest{}, fmt.Errorf("invalid JSON")
+	}
+	return request, nil
+}
+
+func eligibleForCodexReset(entry poller.Entry) bool {
+	if entry.Data.Error != nil || strings.TrimSpace(entry.Data.ProviderAccountID) == "" || entry.Data.RateLimitResetCredits == nil || entry.Data.RateLimitResetCredits.AvailableCount <= 0 {
+		return false
+	}
+	for _, bucket := range entry.Data.Buckets {
+		if bucket.ID == usage.BucketWeekly {
+			return bucket.Utilization >= 95
+		}
+	}
+	return false
 }
 
 func (h *handler) route(w http.ResponseWriter, r *http.Request, method string, next http.HandlerFunc) {

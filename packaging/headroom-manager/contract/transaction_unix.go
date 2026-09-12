@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux
 
 package contract
 
@@ -19,8 +19,11 @@ type unixWatch struct {
 
 func captureProcessToken(pid int, expected string) (string, error) {
 	actual, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-	if err != nil || !samePath(actual, expected) {
-		return "", errors.New("process executable identity does not match")
+	if err != nil {
+		return "", err
+	}
+	if !samePath(actual, expected) {
+		return "", errProcessExecutableMismatch
 	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
@@ -53,6 +56,11 @@ func (w *unixWatch) Wait(timeout time.Duration) error {
 		}
 		got, err := captureProcessToken(w.pid, w.executable)
 		if err != nil {
+			// The process may exit between the liveness check and reading its
+			// executable/start identity. A live replacement still fails closed.
+			if processGone(w.pid) {
+				return nil
+			}
 			return fmt.Errorf("cannot verify watched process: %w", err)
 		}
 		if got != w.token {

@@ -1,6 +1,6 @@
 # Headroom desktop client
 
-A shared Windows and Linux Qt Quick client for the Headroom usage API. It has a
+A shared Windows, macOS, and Linux Qt Quick client for the Headroom usage API. It has a
 frameless tray popup, system-tray meter, official provider icons, reset
 countdowns, pacing warnings, notifications, local-server lifecycle management,
 diagnostics, and verified package updates. Windows packages can read supported
@@ -8,7 +8,7 @@ Cursor and Grok browser cookies through a separate current-user helper.
 
 ## Build and run
 
-Requires CMake 3.21+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,
+Requires CMake 3.21.1+, a C++17 compiler, and Qt 6.6+ with Quick, Quick Controls 2,
 Widgets, Network, SVG image support, and Test. On Arch / EndeavourOS these come
 from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
 `qt6-wayland` for a Wayland session). KDE tray anchoring uses the optional
@@ -16,6 +16,9 @@ from `base-devel cmake ninja qt6-base qt6-declarative qt6-svg` (plus
 Building with those optional packages enables KDE tray attachment. Without
 them, the client uses Qt tray activation and the positioning available from the
 desktop.
+
+macOS builds require macOS 12 or newer and Qt 6.8.3 or newer. CMake creates a
+menu-bar-only application bundle with the `io.headroom.Headroom` identifier.
 
 ```bash
 cmake -S clients/desktop -B clients/desktop/build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -39,6 +42,24 @@ already discoverable in the shell, and add the kit's `bin` directory to `PATH`
 when running the source-built app and tests. The exact Qt 6.8.3 native package recipe is in
 [headroom-packages.yml](../../.github/workflows/headroom-packages.yml).
 
+On macOS 12 or newer, configure with the Qt 6.8.3 kit for the host architecture.
+Release packages build separate Apple silicon and Intel bundles:
+
+```bash
+cmake -S clients/desktop -B clients/desktop/build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$HOME/Qt/6.8.3/macos"
+cmake --build clients/desktop/build --parallel
+ctest --test-dir clients/desktop/build --output-on-failure
+open clients/desktop/build/headroom.app
+```
+
+Mac test builds generate fresh synthetic TLS certificates with the system
+`/usr/bin/openssl`. On macOS 15, local TLS fixture runs need a Qt kit built with
+the macOS 15 SDK or newer. Native CI tests the official Qt 6.8.3 kit in a
+disposable keychain because that kit's older SDK cannot request memory-only
+private-key import on macOS 15. The application uses the Go server's in-memory
+TLS identity and Apple's native client verification.
+
 On Linux, install the executable, application-menu entry, and icon for your
 user:
 
@@ -56,7 +77,7 @@ verified per-user installer and stable launcher described in the repository
 
 ## Connect
 
-Windows and Linux start in **Local** mode at `http://127.0.0.1:7823`, attaching to
+Windows, macOS, and Linux start in **Local** mode at `http://127.0.0.1:7823`, attaching to
 an existing server or starting an adjacent packaged server. Saved connection
 settings take precedence. To connect directly, choose **HTTP(S)**, enter the
 server's base HTTP(S) address and bearer token, then choose **Save & connect**.
@@ -90,8 +111,8 @@ if longer), with normal polling restored after success. Manual Refresh bypasses
 the wait.
 
 Configuration is saved atomically at `~/.config/Headroom/Headroom/settings.json`
-on Linux, honoring `XDG_CONFIG_HOME`, and `%APPDATA%\Headroom\Headroom\settings.json`
-on Windows. Linux settings and migration backups use owner-only (`0600`)
+on Linux, honoring `XDG_CONFIG_HOME`, `~/Library/Application Support/Headroom/Headroom/settings.json`
+on macOS, and `%APPDATA%\Headroom\Headroom\settings.json` on Windows. Linux and macOS settings and migration backups use owner-only (`0600`)
 permissions. Windows uses the current user's roaming application-data directory;
 POSIX mode bits are not used as a claim about Windows ACLs. These files contain
 the bearer token in plaintext. Tokens never appear in the exposed UI state or error messages. Leave the token
@@ -120,10 +141,23 @@ directly to the top. Orders are local to each client. A provider without usable
 data produces an unknown tray meter instead of silently switching providers.
 
 The tray shows the first provider's first usage bucket as a ring around a
-centered provider logo, without a numeric label. A cyan tick marks expected pace;
+centered provider logo, without a numeric label. A white tick marks expected pace;
 a secondary dot shows the highest warning among that provider's other meters.
 The tooltip has two lines: provider/primary usage, then reset time and warning
 level when needed. Connection errors replace those details with a short status.
+When the server cannot be reached, a red X replaces the tray's provider logo.
+Offline dashboard cards, the empty connection panel, and the footer divider turn
+red while retaining the last readings. Their normal appearance returns on recovery.
+
+When the ring or secondary dot enters Critical, the tray briefly catches fire
+for four seconds, then flashes slowly for three minutes. Opening or focusing
+Headroom, clicking or scrolling the tray, or opening its menu acknowledges the
+warning and stops the animation. Hovering also stops it when the desktop exposes
+tray hover or icon geometry (Windows and supported X11 trays). KDE/Wayland trays
+use the other engagement actions because their protocol does not report hover.
+The static warning color remains until usage recovers. Polls and reconnects do
+not restart an acknowledged warning; a new transition into Critical can alert
+again. A focused dashboard suppresses the animation.
 
 Click the tray icon to open or hide the frameless dashboard beside it. The popup
 stays above ordinary windows and dismisses when focus moves outside the app;
@@ -147,12 +181,15 @@ without an invented percentage.
 
 Keyboard shortcuts: **Ctrl+R** refreshes, **Ctrl+,** opens settings, **Ctrl+Q** quits,
 and **Escape** closes settings or hides the window to the tray.
+On macOS, Qt maps those Control shortcuts to the standard Command key.
 
 ## Desktop settings and diagnostics
 
 **Start Headroom when I sign in** enables an XDG autostart entry on Linux or the
 current user's `Headroom` Run entry on Windows, launching the quoted executable
-with `--background`. This toggle applies immediately and is disabled in preview
+with `--background`. On macOS it atomically manages the owner-only
+`~/Library/LaunchAgents/io.headroom.Headroom.plist` entry for the next login.
+This toggle is disabled in capture
 and isolated-config modes. On the first normal Windows launch, Headroom imports
 schemas 0–3 from `%APPDATA%\ClaudeUsageWidget\settings.json` only when the new
 settings file is absent. The legacy file remains untouched and a create-once
@@ -171,9 +208,8 @@ the stage, switches to a new immutable generation, accepts readiness only from
 the expected process, and rolls back if startup fails. An interrupted switch is
 recovered on the next launch. Source builds use the installed source update
 guide, while system-managed builds defer to their package manager and never
-write into a per-user package installation. Entering preview cancels a pending
-public operation; demo, capture, preview, and explicit-config sessions cannot
-check or download public releases.
+write into a per-user package installation. Capture and explicit-config sessions
+cannot check or download public releases.
 
 The legacy WinForms updater cannot install a Headroom package. Existing users
 run the Headroom installer once, then the settings import and startup migration
@@ -190,17 +226,17 @@ categories, Copy log, and Clear. It records controlled connection/settings/tier
 summaries, never raw requests, response bodies, tokens, URLs, or account details.
 Nothing is written to a log file by this console.
 
-## Preview and verification
+## Verification
 
-`--demo` displays explicitly labeled sample data and makes no API requests.
-Reordering sample data changes only the preview session. Saving connection
-settings exits preview mode and connects to the real API. `--config PATH`
-selects an alternate settings file.
+`--config PATH` selects an alternate settings file. Screenshot capture does not
+start or poll a backend, so an empty isolated configuration renders the
+disconnected setup interface without exposing live readings.
 
 ```bash
 ctest --test-dir clients/desktop/build --output-on-failure
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-  clients/desktop/build/headroom --demo --screenshot /tmp/headroom.png
+  clients/desktop/build/headroom --config /tmp/headroom-settings.json \
+  --screenshot /tmp/headroom.png
 ```
 
 Tests cover API parsing, legacy bucket fallback, URL handling, authenticated
@@ -236,17 +272,28 @@ percentage or pacing marker. The existing Windows pacing indicators are retained
 ## Windows feature comparison
 
 Headroom uses the server's provider names, subtitles, bucket labels, variable
-meter counts, status text, and authentication errors. Preview data uses synthetic
-values with representative three/two/four/one-meter layouts; live accounts may
-return different buckets. Both clients retain pacing and provider ordering.
+meter counts, status text, and authentication errors. Live accounts may return
+different bucket layouts. Both clients retain pacing and provider ordering.
+When ChatGPT reports one or more banked usage resets, Headroom shows the available
+count by the provider name. The label turns red only while ChatGPT's weekly meter
+is in the shared Critical warning state. The count is read-only, is not a usage
+meter, and stays hidden at zero, when unknown, or when that provider is unavailable.
+Activate the label to open ChatGPT's usage and reset controls in a browser.
+At 95% weekly usage or higher, a **Use reset…** button appears when a banked reset
+is available. It requires explicit confirmation and uses the selected backend
+transport. Requests are never retried automatically; an uncertain manual retry
+reuses the saved request ID for the same opaque account fingerprint, including
+after switching between equivalent HTTP and SSH connections. Completed requests
+are released when a fresh snapshot shows a later weekly window. Both the desktop
+and server must support resets.
 
 Headroom supports both remote connections and an owned local usage server on
-Windows and Linux. Windows can forward supported Cursor and Grok browser cookies
+Windows, macOS, and Linux. Windows can forward supported Cursor and Grok browser cookies
 from Chrome, Edge, Brave, and Firefox through the bundled helper, but only to
 the verified bundled server session, a configured HTTPS server, or the SSH
 receiver. The helper
 uses the current Windows user's browser encryption context; it cannot read other
-users' profiles or bypass unsupported newer encrypted values, and Linux has no
+users' profiles or bypass unsupported newer encrypted values, and macOS and Linux have no
 browser helper. Official per-user packages
 share the verified update flow described above. The WSL service remains a
 separately managed deployment documented in
@@ -255,7 +302,7 @@ separately managed deployment documented in
 ## Appearance and provider names
 
 The interface uses the [Dracula palette](https://draculatheme.com/contribute),
-with purple usage bars shared by every provider, cyan under-pace indicators,
+with purple usage bars shared by every provider, white pacing markers, cyan under-pace text,
 yellow, orange, and red concern levels based on the remaining allowance and time. Backgrounds, controls, settings, app icon, and tray
 use the same palette. Muted text and surface shades are adapted for readability.
 
@@ -331,8 +378,8 @@ Escalation can jump directly to any tier; recovery can skip tiers as well.
 
 Initial connection and each new reset window establish a baseline without
 notification bursts. Later upward transitions into Warning or Critical notify
-when enabled. Unchanged polls, downward transitions, preview mode, and toggling
-notifications back on do not notify. A genuine recovery followed by escalation
+when enabled. Unchanged polls, downward transitions, and toggling notifications
+back on do not notify. A genuine recovery followed by escalation
 can alert again. Provider order changes do not reset state or re-arm alerts.
 
 Connection failures freeze state. Expired known windows retain their state until

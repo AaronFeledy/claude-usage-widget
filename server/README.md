@@ -5,12 +5,25 @@ Assistant REST sensors, and compatible API clients. The `usage-server` binary,
 configuration keys, environment variables, default paths, and API wire names
 remain compatible with Claude Usage Widget deployments.
 
+## Managed installation
+
+The managed distribution provides `headroom serve` for this server and
+`headroom update` for verified self-updates. Install the CLI-only package with
+`install.sh --cli` or `install.ps1 -CLI`; it contains no Qt dependencies. A
+shared native desktop installation updates its desktop, CLI, and bundled server
+together. Windows desktops can explicitly pair with a WSL CLI installation for
+coordinated updates. See the [CLI and service guide](../docs/cli.md).
+
+Existing standalone `usage-server` deployments remain supported. Their YAML,
+service configuration paths, flags, and API do not change. Unmanaged binaries
+and source checkouts use their original deployment method to update.
+
 ## Build
 
 From `server/`:
 
 ```bash
-go test ./...
+go test -skip 'CodexResetEndpoint|ConsumeResetCredit' ./...
 go vet ./...
 go build ./...
 go build -trimpath -ldflags='-s -w -buildid=' -o usage-server ./cmd/usage-server
@@ -57,6 +70,32 @@ preserving its HTTP configuration. See the [SSH setup guide](../docs/ssh.md).
 - `GET /api/v1/health` - server status, version, and provider health.
 - `PUT /api/v1/providers/cursor/credentials` - memory-only Cursor credential push with exactly one JSON field: `cookie` or `access_token`.
 - `PUT /api/v1/providers/grok/credentials` - memory-only Grok browser credential push with exactly one JSON field: `cookie`.
+- `POST /api/v1/providers/codex/reset` - explicitly confirmed banked reset for ChatGPT. Requires JSON fields `request_id` (UUID), `confirmed` (`true`), and the 64-character lowercase `account_fingerprint` from the latest successful usage response. New requests require fresh weekly usage of at least 95% and an available banked reset. Browser-origin requests are rejected.
+
+ChatGPT (`Codex`) meters follow the windows returned by OpenAI. A weekly-only
+allowance produces one `weekly` bucket; an absent five-hour window does not
+produce a `session` bucket. A reported window with zero usage remains visible.
+
+Successful ChatGPT (`Codex`) usage entries include read-only
+`rate_limit_reset_credits` metadata when the upstream response reports a valid
+banked-reset count. It contains `available_count` and a nullable, opaque
+`account_fingerprint` that binds a confirmed action to the observed account
+without exposing the provider account ID. The field is `null` when the count is
+unknown or on provider errors.
+
+The reset response contains `outcome`: `reset`, `already_redeemed`,
+`nothing_to_reset`, or `no_credit`. The server never automatically retries a
+redemption. An uncertain manual retry must reuse the same request ID. The desktop
+saves that ID before sending and uses its selected local, HTTP(S), or SSH transport.
+
+Reset requests reject browser-origin headers and require JSON, the configured
+bearer authentication (or the trusted SSH peer), a fresh weekly reading of at
+least 95%, a positive credit count, and the same account fingerprint for
+eligibility and consumption. The fingerprint is checked against current
+credentials immediately before every provider request. An ambiguous attempt must
+be retried with its original UUID;
+the server remembers that guard for its process lifetime, while the upstream UUID
+remains the idempotency key across restarts.
 
 When `auth_token` or `USAGE_AUTH_TOKEN` is set, every public HTTP endpoint requires
 `Authorization: Bearer <token>`. The protected SSH socket authenticates the local

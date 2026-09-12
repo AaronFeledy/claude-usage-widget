@@ -32,7 +32,14 @@ private slots:
     {
         QTest::addColumn<int>("platform");
         QTest::newRow("linux") << int(SettingsService::Platform::Linux);
+        QTest::newRow("mac") << int(SettingsService::Platform::Mac);
         QTest::newRow("windows") << int(SettingsService::Platform::Windows);
+    }
+
+    void macDefaultPathIsStable()
+    {
+        QCOMPARE(SettingsService::defaultPath(SettingsService::Platform::Mac),
+                 QDir(QDir::homePath()).filePath(QStringLiteral("Library/Application Support/Headroom/Headroom/settings.json")));
     }
     void defaultsToLocalAndPreservesOverrides()
     {
@@ -186,7 +193,7 @@ private slots:
         QVERIFY(!QFileInfo::exists(defaultPath + ".legacy.bak"));
     }
 
-    void automaticMigrationCanBeDisabledForDemoAndScreenshot()
+    void automaticMigrationCanBeDisabledForCapture()
     {
         QTemporaryDir dir;
         const QString target = dir.filePath("default/settings.json"), legacy = dir.filePath("old.json");

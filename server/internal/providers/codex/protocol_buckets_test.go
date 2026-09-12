@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,3 +32,107 @@ func Test_parseUsage_emits_buckets_matching_legacy_header(t *testing.T) {
 		t.Fatalf("session ResetsAt = %v", session.ResetsAt)
 	}
 }
+
+func Test_parseUsage_omits_absent_windows_but_keeps_zero_usage(t *testing.T) {
+	tests := []struct {
+		name, rateLimit string
+		ids, labels     []string
+	}{
+		{"weekly only primary", `{"primary_window":{"used_percent":42,"limit_window_seconds":604800},"secondary_window":null}`, []string{"weekly"}, []string{"Weekly"}},
+		{"weekly only secondary", `{"primary_window":null,"secondary_window":{"used_percent":42,"limit_window_seconds":604800}}`, []string{"weekly"}, []string{"Weekly"}},
+		{"real zero session", `{"primary_window":{"used_percent":0,"limit_window_seconds":18000},"secondary_window":{"used_percent":42,"limit_window_seconds":604800}}`, []string{"session", "weekly"}, []string{"5-Hour", "Weekly"}},
+		{"session only", `{"primary_window":{"used_percent":0,"limit_window_seconds":18000}}`, []string{"session"}, []string{"5-Hour"}},
+		{"no windows", `{"primary_window":null,"secondary_window":null}`, nil, nil},
+		// A secondary window without a duration must keep its reported position
+		// so the weekly meter the reset action depends on is never mislabelled.
+		{"undated secondary only", `{"primary_window":null,"secondary_window":{"used_percent":42}}`, []string{"weekly"}, []string{"Weekly"}},
+		{"undated primary only", `{"primary_window":{"used_percent":42},"secondary_window":null}`, []string{"session"}, []string{"5-Hour"}},
+		{"session duration reported as secondary", `{"primary_window":null,"secondary_window":{"used_percent":42,"limit_window_seconds":18000}}`, []string{"session"}, []string{"5-Hour"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := parseUsage([]byte(`{"rate_limit":`+tt.rateLimit+`}`), baseUsage())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(data.Buckets) != len(tt.ids) {
+				t.Fatalf("buckets = %+v, want %v", data.Buckets, tt.ids)
+			}
+			for i, bucket := range data.Buckets {
+				if bucket.ID != tt.ids[i] || bucket.Label != tt.labels[i] {
+					t.Fatalf("bucket %d = %+v, want %s / %s", i, bucket, tt.ids[i], tt.labels[i])
+				}
+			}
+			if data.ShowSecondary != (len(tt.ids) > 1) {
+				t.Fatal("legacy secondary visibility does not match returned windows")
+			}
+			if len(tt.ids) == 1 && tt.ids[0] == "weekly" && (data.PrimaryLabel != "Weekly" || data.Current.Utilization != 42 || data.Weekly.Utilization != 42) {
+				t.Fatal("weekly-only legacy header must show the actual weekly window")
+			}
+		})
+	}
+}
+
+func Test_parseUsage_normalizes_rate_limit_reset_credits(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+		want     *int64
+	}{
+		{name: "positive", metadata: `{"available_count":3}`, want: int64Pointer(3)},
+		{name: "known zero", metadata: `{"available_count":0}`, want: int64Pointer(0)},
+		{name: "largest desktop safe integer", metadata: `{"available_count":9007199254740991}`, want: int64Pointer(9007199254740991)},
+		{name: "missing", metadata: ""},
+		{name: "null", metadata: `null`},
+		{name: "missing count", metadata: `{}`},
+		{name: "null count", metadata: `{"available_count":null}`},
+		{name: "wrong shape", metadata: `[]`},
+		{name: "negative", metadata: `{"available_count":-1}`},
+		{name: "fractional", metadata: `{"available_count":1.5}`},
+		{name: "numeric string", metadata: `{"available_count":"2"}`},
+		{name: "beyond desktop safe integer", metadata: `{"available_count":9007199254740992}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := map[string]json.RawMessage{
+				"rate_limit": json.RawMessage(`{"primary_window":{"used_percent":12.5}}`),
+			}
+			if tt.metadata != "" {
+				root["rate_limit_reset_credits"] = json.RawMessage(tt.metadata)
+			}
+			body, err := json.Marshal(root)
+			if err != nil {
+				t.Fatalf("marshal fixture: %v", err)
+			}
+			data, err := parseUsage(body, baseUsage())
+			if err != nil {
+				t.Fatalf("parseUsage returned error: %v", err)
+			}
+			if tt.want == nil {
+				if data.RateLimitResetCredits != nil {
+					t.Fatalf("RateLimitResetCredits = %+v, want nil", data.RateLimitResetCredits)
+				}
+				return
+			}
+			if data.RateLimitResetCredits == nil || data.RateLimitResetCredits.AvailableCount != *tt.want {
+				t.Fatalf("RateLimitResetCredits = %+v, want available_count %d", data.RateLimitResetCredits, *tt.want)
+			}
+		})
+	}
+}
+
+func Test_accountFingerprint_is_stable_trimmed_and_opaque(t *testing.T) {
+	first := accountFingerprint(" account-123 ")
+	second := accountFingerprint("account-123")
+	if first == nil || second == nil || *first != *second || len(*first) != 64 || strings.Contains(*first, "account-123") {
+		t.Fatalf("accountFingerprint() = %v and %v, want matching opaque SHA-256 values", first, second)
+	}
+	if accountFingerprint("  ") != nil {
+		t.Fatal("accountFingerprint(blank) must be nil")
+	}
+	if !matchesAccountFingerprint(" account-123 ", *first) || matchesAccountFingerprint("other-account", *first) {
+		t.Fatal("matchesAccountFingerprint must accept only the normalized source account")
+	}
+}
+
+func int64Pointer(value int64) *int64 { return &value }

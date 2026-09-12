@@ -77,7 +77,7 @@ ColumnLayout {
             visible: meter.pace.available
             x: Math.max(0, Math.min(parent.width - width, parent.width * (meter.pace.expected || 0) / 100 - width / 2))
             width: 4; height: 12; radius: 1
-            color: Theme.cyan; border.width: 1; border.color: Theme.background
+            color: Theme.foreground; border.width: 1; border.color: Theme.background
         }
         HoverHandler { id: graphHover }
         ToolTip.visible: graphHover.hovered

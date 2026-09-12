@@ -1,3 +1,4 @@
+#include "usagefixture.h"
 #include "controller.h"
 #include "usage.h"
 #include "startup.h"
@@ -8,9 +9,11 @@
 #include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQmlProperty>
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QQuickItem>
+#include <QDesktopServices>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -24,6 +27,13 @@ QQuickItem *findItem(QQuickItem *root, const QString &name) {
     for (auto child : root->childItems()) if (auto found = findItem(child, name)) return found;
     return nullptr;
 }
+class UrlCapture : public QObject {
+    Q_OBJECT
+public:
+    QList<QUrl> urls;
+public slots:
+    void capture(const QUrl &url) { urls.append(url); }
+};
 class UiTest : public QObject {
     Q_OBJECT
 private slots:
@@ -35,7 +45,7 @@ private slots:
             return dir.filePath(name);
         };
         CredentialServiceOptions credentialOptions; credentialOptions.enabled = false;
-        Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentialOptions);
+        ControllerFixture controller(dir.filePath("settings.json"));
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo;
         UpdateService updateService(false);
@@ -61,7 +71,7 @@ private slots:
         auto marker = findItem(window->contentItem(), "paceMarker_Claude_session");
         auto label = findItem(window->contentItem(), "paceLabel_Claude_session");
         QVERIFY(marker); QVERIFY(marker->isVisible()); QVERIFY(label);
-        QCOMPARE(marker->property("color").value<QColor>(), QColor("#8be9fd"));
+        QCOMPARE(marker->property("color").value<QColor>(), QColor("#f8f8f2"));
         QVERIFY(label->property("text").toString().contains("under pace"));
         const double markerFraction = (marker->x() + marker->width() / 2) / marker->parentItem()->width();
         QVERIFY(std::abs(markerFraction - (1.0 - 8400.0 / 18000)) < 0.01);
@@ -238,6 +248,122 @@ private slots:
             }
             QVERIFY(window->grabWindow().save(capture(width == 460 ? "headroom-compact.png" : "headroom-medium.png")));
         }
+        const auto connectedState = controller.state();
+        const auto retainedProviders = controller.providers();
+        auto disconnectedState = connectedState;
+        disconnectedState["status"] = "offline"; disconnectedState["errorKind"] = "network";
+        disconnectedState["message"] = "Cannot reach your backend.";
+        QVERIFY(window->setProperty("state", disconnectedState));
+        auto footerBorder = findItem(window->contentItem(), "footerBorder"); QVERIFY(footerBorder);
+        auto placeholder = findItem(window->contentItem(), "connectionPlaceholder"); QVERIFY(placeholder);
+        for (const auto &value : retainedProviders) {
+            auto card = findItem(window->contentItem(), "providerCard_" + value.toMap()["provider_name"].toString()); QVERIFY(card);
+            QTRY_COMPARE(QQmlProperty(card, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        }
+        QTRY_COMPARE(footerBorder->property("color").value<QColor>(), QColor("#ff5555"));
+        QCOMPARE(controller.providers(), retainedProviders);
+        auto firstCard = findItem(window->contentItem(), "providerCard_Codex"); QVERIFY(firstCard);
+        QTest::mouseMove(window, firstCard->mapToScene(QPointF(12, 12)).toPoint());
+        QTest::qWait(50);
+        QCOMPARE(QQmlProperty(firstCard, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        QVERIFY(window->grabWindow().save(capture("headroom-offline.png")));
+        disconnectedState["loading"] = true;
+        QVERIFY(window->setProperty("state", disconnectedState));
+        QCOMPARE(QQmlProperty(firstCard, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        QVERIFY(window->setProperty("state", connectedState));
+        QTRY_VERIFY(QQmlProperty(firstCard, "border.color").read().value<QColor>() != QColor("#ff5555"));
+        QTRY_COMPARE(footerBorder->property("color").value<QColor>(), QColor("#44475a"));
+        // A first connection failure has no cached cards, but its panel must still warn.
+        QVERIFY(window->setProperty("providers", QVariantList{}));
+        disconnectedState["lastGood"] = 0; disconnectedState["loading"] = false;
+        QVERIFY(window->setProperty("state", disconnectedState));
+        QTRY_VERIFY(placeholder->isVisible());
+        QCOMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#ff5555"));
+        QVERIFY(window->grabWindow().save(capture("headroom-offline-empty.png")));
+        QVERIFY(window->setProperty("state", connectedState));
+        QTRY_COMPARE(QQmlProperty(placeholder, "border.color").read().value<QColor>(), QColor("#44475a"));
+    }
+    void bankedResetsFollowWeeklyCriticalState() {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const auto capture = [&](const QString &name) {
+            const QString requested = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+            if (!requested.isEmpty()) { QDir().mkpath(requested); return QDir(requested).filePath(name); }
+            return dir.filePath(name);
+        };
+        ControllerFixture controller(dir.filePath("settings.json"));
+        StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
+        AppInfo appInfo; UpdateService updateService(false);
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("backend", &controller);
+        engine.rootContext()->setContextProperty("startupService", &startup);
+        engine.rootContext()->setContextProperty("appInfo", &appInfo);
+        engine.rootContext()->setContextProperty("updateService", &updateService);
+        engine.rootContext()->setContextProperty("trayAvailable", false);
+        engine.rootContext()->setContextProperty("startHidden", false);
+        engine.rootContext()->setContextProperty("captureMode", true);
+        engine.load(QUrl::fromLocalFile(QString(SOURCE_DIR) + "/qml/Main.qml"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto window = qobject_cast<QQuickWindow *>(engine.rootObjects().first()); QVERIFY(window);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        QTRY_COMPARE(controller.providers().size(), 4);
+
+        auto resetLabel = [&] {
+            return findItem(window->contentItem(), "bankedResets_Codex");
+        };
+        auto label = resetLabel(); QVERIFY(label);
+        QTRY_VERIFY(label->isVisible());
+        QCOMPARE(label->property("text").toString(), QString("3 banked resets"));
+        const QColor muted = label->property("color").value<QColor>();
+        QVERIFY(muted != QColor("#ff5555"));
+        QVERIFY(window->grabWindow().save(capture("headroom-banked-resets.png")));
+
+        const QString halfWeekReset = QDateTime::currentDateTimeUtc().addSecs(7 * 86400 / 2).toString(Qt::ISODate);
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 0, halfWeekReset));
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+
+        auto missing = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
+        auto missingCodex = missing[1].toObject(); missingCodex.remove("rate_limit_reset_credits"); missing[1] = missingCodex;
+        controller.replaceSnapshot(QJsonDocument(missing).toJson());
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+
+        auto failed = QJsonDocument::fromJson(TestUsage::snapshotWithCodex(0, 41, 3, halfWeekReset)).array();
+        auto failedCodex = failed[1].toObject(); failedCodex["error"] = "Unavailable"; failedCodex["is_success"] = false; failed[1] = failedCodex;
+        controller.replaceSnapshot(QJsonDocument(failed).toJson());
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(!label->isVisible());
+
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, 41, 1, halfWeekReset));
+        label = resetLabel(); QVERIFY(label); QTRY_VERIFY(label->isVisible());
+        QCOMPARE(label->property("text").toString(), QString("1 banked reset"));
+        QCOMPARE(label->property("color").value<QColor>(), muted);
+
+        for (const auto &[weekly, severity] : QList<QPair<int, int>>{{56, 1}, {68, 2}, {80, 3}, {73, 3}, {68, 2}}) {
+            controller.replaceSnapshot(TestUsage::snapshotWithCodex(0, weekly, 3, halfWeekReset));
+            label = resetLabel(); QVERIFY(label);
+            QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "weekly"}})["severity"].toInt(), severity);
+            const QColor expected = severity == 3 ? QColor("#ff5555") : muted;
+            QTRY_COMPARE(label->property("color").value<QColor>(), expected);
+            QCOMPARE(label->property("text").toString(), QString("3 banked resets"));
+            if (severity == 3 && weekly == 80)
+                QVERIFY(window->grabWindow().save(capture("headroom-banked-resets-critical.png")));
+        }
+
+        controller.replaceSnapshot(TestUsage::snapshotWithCodex(90, 41, 3, halfWeekReset));
+        label = resetLabel(); QVERIFY(label);
+        QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "session"}})["severity"].toInt(), 3);
+        QTRY_COMPARE(controller.concern("Codex", QVariantMap{{"id", "weekly"}})["severity"].toInt(), 0);
+        QTRY_COMPARE(label->property("color").value<QColor>(), muted);
+
+        UrlCapture opened;
+        QDesktopServices::setUrlHandler("https", &opened, "capture");
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                          label->mapToScene(QPointF(label->width() / 2, label->height() / 2)).toPoint());
+        QVERIFY(label->property("activeFocusOnTab").toBool());
+        label->forceActiveFocus(); QTRY_VERIFY(label->hasActiveFocus());
+        QTest::keyClick(window, Qt::Key_Return);
+        QTest::keyClick(window, Qt::Key_Space);
+        QDesktopServices::unsetUrlHandler("https");
+        QCOMPARE(opened.urls, QList<QUrl>({QUrl("https://chatgpt.com/codex/settings/usage"),
+            QUrl("https://chatgpt.com/codex/settings/usage"), QUrl("https://chatgpt.com/codex/settings/usage")}));
     }
     void preservesAndDisplaysCustomInterval() {
         QTemporaryDir dir; QVERIFY(dir.isValid());
@@ -246,7 +372,7 @@ private slots:
         QVERIFY(settings.write(savedSettings) > 0);
         settings.close();
         CredentialServiceOptions credentials; credentials.enabled = false;
-        Controller controller(true, settings.fileName(), nullptr, true, {}, credentials);
+        ControllerFixture controller(settings.fileName());
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);
         QQmlApplicationEngine engine;
@@ -290,7 +416,7 @@ private slots:
                 {"needs_reauth", false}, {"reauth_command", QJsonValue::Null}, {"buckets", buckets}});
         }
         CredentialServiceOptions credentials; credentials.enabled = false;
-        Controller controller(true, dir.filePath("settings.json"), nullptr, true, {}, credentials,
+        ControllerFixture controller(dir.filePath("settings.json"),
                               QJsonDocument(providers).toJson(QJsonDocument::Compact));
         StartupService startup(dir.path(), QCoreApplication::applicationFilePath(), false);
         AppInfo appInfo; UpdateService updateService(false);

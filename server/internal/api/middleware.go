@@ -13,6 +13,8 @@ type statusWriter struct {
 	wrote  bool
 }
 
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *statusWriter) WriteHeader(status int) {
 	if w.wrote {
 		return

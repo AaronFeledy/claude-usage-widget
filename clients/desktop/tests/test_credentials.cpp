@@ -20,8 +20,7 @@ public:
     QPointer<QTcpSocket> heldSocket;
 
     explicit CredentialHttpFixture(bool replacement = false) {
-        setSslConfiguration(replacement ? TlsFixture::replacementServerConfiguration()
-                                        : TlsFixture::serverConfiguration());
+        TlsFixture::configure(*this, replacement);
         connect(this, &QTcpServer::pendingConnectionAvailable, this, [this] {
             while (hasPendingConnections()) {
                 auto socket = nextPendingConnection();
@@ -88,6 +87,9 @@ private:
             {"buckets", QVariantList{QVariantMap{{"id", "credits"}, {"label", "Credits"}, {"utilization", 5}}}}};
     }
 private slots:
+    void initTestCase() {
+        QVERIFY2(TlsFixture::selectNativeTestBackend(), "SecureTransport is unavailable");
+    }
     void init() {
         m_record = m_dir.filePath(QStringLiteral("record"));
         QFile::remove(m_record);

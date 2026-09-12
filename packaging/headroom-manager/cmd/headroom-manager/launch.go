@@ -11,15 +11,21 @@ import (
 	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
 )
 
-func launch(arguments []string) error {
+// exitStatusError reports that the public CLI ran and chose its own exit code.
+// The launcher mirrors that status instead of inventing one, and it stays off
+// stdout so piped usage output keeps the documented single-snapshot contract.
+type exitStatusError struct{ code int }
+
+func (e exitStatusError) Error() string {
+	return fmt.Sprintf("Headroom CLI exited with status %d", e.code)
+}
+
+func (e exitStatusError) ExitCode() int { return e.code }
+
+func launch(arguments []string) error { return launchRole(contract.RoleApplication, arguments) }
+
+func launchRole(role string, arguments []string) error {
 	root, err := associatedInstallRoot()
-	if err != nil {
-		return err
-	}
-	if err = contract.RecoverInstall(root); err != nil {
-		return err
-	}
-	executable, inspection, err := contract.ActiveExecutable(root)
 	if err != nil {
 		return err
 	}
@@ -27,16 +33,38 @@ func launch(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	supervisedHandoff := role == contract.RoleCLI && contract.AuthorizeSupervisedLauncherHandoff(root, launcher, os.Getpid(), arguments) == nil
+	if !supervisedHandoff {
+		if err = contract.RecoverInstall(root); err != nil {
+			return err
+		}
+	}
+	executable, inspection, err := contract.ActiveExecutableForRole(root, role)
+	if err != nil {
+		return err
+	}
 	launcher, err = filepath.Abs(launcher)
 	if err != nil {
 		return err
 	}
-	environment := authoritativeEnvironment(os.Environ(), map[string]string{
+	values := map[string]string{
 		"HEADROOM_INSTALL_ROOT":    root,
 		"HEADROOM_LAUNCHER_PATH":   launcher,
 		"HEADROOM_PACKAGE_VERSION": inspection.Version,
-	})
-	return startApplication(executable, arguments, environment)
+	}
+	if role == contract.RoleCLI {
+		values["HEADROOM_PUBLIC_LAUNCHER_PID"] = fmt.Sprintf("%d", os.Getpid())
+		values["HEADROOM_PUBLIC_LAUNCHER_PATH"] = launcher
+		if runtime.GOOS == "windows" {
+			token, err := contract.CurrentProcessToken()
+			if err != nil {
+				return err
+			}
+			values["HEADROOM_PUBLIC_LAUNCHER_TOKEN"] = token
+		}
+	}
+	environment := authoritativeEnvironment(os.Environ(), values)
+	return startApplication(executable, arguments, environment, role == contract.RoleApplication)
 }
 
 func associatedInstallRoot() (string, error) {
@@ -114,8 +142,10 @@ func authoritativeEnvironment(base []string, values map[string]string) []string 
 			result = append(result, item)
 		}
 	}
-	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION"} {
-		result = append(result, key+"="+values[key])
+	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION", "HEADROOM_PUBLIC_LAUNCHER_PID", "HEADROOM_PUBLIC_LAUNCHER_PATH", "HEADROOM_PUBLIC_LAUNCHER_TOKEN"} {
+		if value, ok := values[key]; ok {
+			result = append(result, key+"="+value)
+		}
 	}
 	return result
 }

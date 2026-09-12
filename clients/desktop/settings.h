@@ -19,7 +19,7 @@ struct DesktopSettings {
 
 class SettingsService {
 public:
-    enum class Platform { Current, Linux, Windows };
+    enum class Platform { Current, Linux, Mac, Windows };
 
     explicit SettingsService(QString path = {}, bool allowAutomaticMigration = true,
                              Platform platform = Platform::Current, QString legacyPath = {},

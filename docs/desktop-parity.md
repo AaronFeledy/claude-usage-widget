@@ -37,7 +37,7 @@ provider. Headroom's tray uses the selected provider's first measurable API
 bucket; status-only buckets remain visible in the popup but do not drive the
 tray. The legacy tray used the compatibility `current` field.
 
-The centered provider badge is surrounded by the primary usage ring. A cyan tick
+The centered provider badge is surrounded by the primary usage ring. A white tick
 marks expected spend and a secondary dot carries the highest warning among the
 provider's other meters. The compact tooltip shows primary usage, reset timing,
 and a warning or connection state. Full detail remains in the popup.

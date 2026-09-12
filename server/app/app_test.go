@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -52,7 +52,8 @@ func Test_Run_rejects_off_loopback_empty_auth_before_provider_construction(t *te
 	env := []string{"USAGE_PROVIDER_UNKNOWN_ENABLED=true"}
 
 	// When
-	err := run(args, env, discardLogger())
+	err := Run(context.Background(), args, env, discardLogger(), "test-version",
+		bytes.NewReader(nil), io.Discard)
 
 	// Then
 	if !errors.Is(err, api.ErrUnsafeBind) {
@@ -66,7 +67,7 @@ func Test_Run_allows_loopback_empty_auth_until_later_startup_error(t *testing.T)
 	env := []string{"USAGE_PROVIDER_UNKNOWN_ENABLED=true"}
 
 	// When
-	err := run(args, env, discardLogger())
+	err := runContext(context.Background(), args, env, discardLogger(), desktopSessionOptions{})
 
 	// Then
 	if !errors.Is(err, config.ErrInvalidConfig) {
@@ -80,7 +81,7 @@ func Test_Run_allows_authenticated_off_loopback_until_later_startup_error(t *tes
 	env := []string{"USAGE_PROVIDER_UNKNOWN_ENABLED=true"}
 
 	// When
-	err := run(args, env, discardLogger())
+	err := runContext(context.Background(), args, env, discardLogger(), desktopSessionOptions{})
 
 	// Then
 	if !errors.Is(err, config.ErrInvalidConfig) {
@@ -113,7 +114,7 @@ func Test_BuildPoller_allows_cursor_local_discovery_only_for_loopback_listen_add
 			}
 
 			// When
-			_, cursorClient, _, _, err := buildPoller(cfg)
+			_, _, cursorClient, _, _, err := buildPoller(cfg)
 			if err != nil {
 				t.Fatalf("buildPoller error = %v", err)
 			}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestTransactionalApplyAndReadinessUseActualGeneration(t *testing.T) {
 	}
 	current := startInstalledFixture(t, installRoot)
 	inspection := InspectInstall(installRoot)
-	ownedPath := filepath.Join(installRoot, filepath.FromSlash(inspection.VersionPath), "bin", "usage-server"+nativeExtension())
+	ownedPath := installedTestComponent(t, installRoot, inspection.VersionPath, true)
 	owned := startFixturePath(t, ownedPath)
 	unrelatedPath := filepath.Join(root, "unrelated", "bin", "usage-server"+nativeExtension())
 	if err := os.MkdirAll(filepath.Dir(unrelatedPath), 0755); err != nil {
@@ -86,6 +87,208 @@ func TestTransactionalApplyAndReadinessUseActualGeneration(t *testing.T) {
 	}
 }
 
+func TestPrepareApplyCapturesRoleBasedAdditionalProcessIdentity(t *testing.T) {
+	t.Setenv("HEADROOM_FIXTURE_SLEEP_MS", "60000")
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "install")
+	entry := filepath.Join(root, "entry", "headroom"+nativeExtension())
+	first := makePackage(t, root, "10.2.0", false)
+	if _, err := InstallArchive(first, installRoot, entry, Expectations{}); err != nil {
+		t.Fatal(err)
+	}
+	inspection := InspectInstall(installRoot)
+	serverPath := installedTestComponent(t, installRoot, inspection.VersionPath, true)
+	applicationPath := installedTestComponent(t, installRoot, inspection.VersionPath, false)
+	server := startFixturePath(t, serverPath)
+	application := startFixturePath(t, applicationPath)
+	defer func() {
+		_ = server.Process.Kill()
+		_, _ = server.Process.Wait()
+		_ = application.Process.Kill()
+		_, _ = application.Process.Wait()
+	}()
+	second := makePackage(t, root, "10.3.0", false)
+	stage, err := StageArchive(second, installRoot, Expectations{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareApply(fixtureExecutable, ApplyRequest{
+		InstallRoot: installRoot, EntryPath: entry, StageRecord: stageRecord(stage),
+		CurrentPID: server.Process.Pid, CurrentExecutable: serverPath, CurrentRole: RoleServer, CandidateRole: RoleServer,
+		AdditionalProcesses: []ProcessClaim{{Role: RoleApplication, PID: application.Process.Pid, Executable: applicationPath}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _, err := readApplyRequest(prepared.RequestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.CurrentRole != RoleServer || request.CandidateRole != RoleServer || request.CurrentProcessToken == "" || len(request.AdditionalProcesses) != 1 || request.AdditionalProcesses[0].ProcessToken == "" {
+		t.Fatalf("captured request = %+v", request)
+	}
+}
+
+func TestPrepareApplyRejectsDowngradeStage(t *testing.T) {
+	t.Setenv("HEADROOM_FIXTURE_SLEEP_MS", "60000")
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "install")
+	entry := filepath.Join(root, "entry", "headroom"+nativeExtension())
+	currentArchive := makePackage(t, root, "10.4.0", false)
+	if _, err := InstallArchive(currentArchive, installRoot, entry, Expectations{}); err != nil {
+		t.Fatal(err)
+	}
+	current := startInstalledFixture(t, installRoot)
+	defer func() { _ = current.Process.Kill(); _, _ = current.Process.Wait() }()
+	downgrade := makePackage(t, root, "10.3.0", false)
+	stage, err := StageArchive(downgrade, installRoot, Expectations{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = PrepareApply(fixtureExecutable, ApplyRequest{InstallRoot: installRoot, EntryPath: entry, StageRecord: stageRecord(stage),
+		CurrentPID: current.Process.Pid, CurrentExecutable: current.Path})
+	if err == nil || !strings.Contains(err.Error(), "version direction") {
+		t.Fatalf("downgrade prepare result = %v", err)
+	}
+}
+
+func TestMigrateManagedEntriesReplacesOnlyTrustedLegacyEntry(t *testing.T) {
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "install")
+	applicationEntry := filepath.Join(root, "internal", "headroom-gui"+nativeExtension())
+	publicCLI := filepath.Join(root, "public", "headroom"+nativeExtension())
+	archive := makePackage(t, root, "10.4.0", false)
+	if _, err := InstallArchive(archive, installRoot, applicationEntry, Expectations{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(applicationEntry, publicCLI, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceBytes([]byte(installRoot+"\n"), publicCLI+".root", 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := MigrateManagedEntries(installRoot, applicationEntry, publicCLI, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ApplicationEntryPath != applicationEntry || state.CLIEntryPath != publicCLI {
+		t.Fatalf("migration state = %+v", state)
+	}
+	if runtimeWindows() {
+		if state.ServerEntryPath != "" {
+			t.Fatalf("Windows server compatibility entry = %q", state.ServerEntryPath)
+		}
+	} else if state.ServerEntryPath != filepath.Join(filepath.Dir(publicCLI), "usage-server") {
+		t.Fatalf("server compatibility entry = %q", state.ServerEntryPath)
+	}
+	if active, _, activeErr := ActiveExecutableForRole(installRoot, RolePublicLauncher); activeErr != nil || !samePath(active, publicCLI) {
+		t.Fatalf("public launcher = %q, %v", active, activeErr)
+	}
+	if inspection := InspectInstall(installRoot); !inspection.Complete || !inspection.TrustedIdentity {
+		t.Fatalf("migration inspection = %+v", inspection)
+	}
+}
+
+func TestApplyStopsAndRestartsExactManagedService(t *testing.T) {
+	t.Setenv("HEADROOM_FIXTURE_SLEEP_MS", "60000")
+	root := t.TempDir()
+	installRoot := filepath.Join(root, "install")
+	entry := filepath.Join(root, "entry", "headroom-gui"+nativeExtension())
+	cliEntry := filepath.Join(root, "entry", "headroom"+nativeExtension())
+	first := makePackage(t, root, "10.5.0", false)
+	if _, err := InstallArchiveWithCLIEntry(first, installRoot, entry, cliEntry, Expectations{}); err != nil {
+		t.Fatal(err)
+	}
+	current := startInstalledFixture(t, installRoot)
+	cliPath, _, err := ActiveExecutableForRole(installRoot, RoleCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := startFixturePath(t, cliPath)
+	serviceToken, err := captureProcessToken(service.Process.Pid, cliPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := currentOwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(root, "managed-service-evidence")
+	if err = writeManagedService(installRoot, ManagedServiceRecord{Schema: SchemaVersion, Product: "Headroom", InstallRoot: installRoot,
+		PID: service.Process.Pid, Executable: cliPath, ProcessToken: serviceToken, Arguments: []string{"--config", "fixture.yaml"}, Owner: owner,
+		Environment: []string{"USAGE_CONFIG=" + evidence, "USAGE_LISTEN_ADDR=127.0.0.1:17823", "USAGE_PROVIDER_CODEX_ENABLED=false"}, WorkingDirectory: root, Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	second := makePackage(t, root, "10.6.0", false)
+	stage, err := StageArchive(second, installRoot, Expectations{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareApply(fixtureExecutable, ApplyRequest{InstallRoot: installRoot, EntryPath: entry, StageRecord: stageRecord(stage),
+		CurrentPID: current.Process.Pid, CurrentExecutable: current.Path, WaitTimeoutMS: 3000, ReadyTimeoutMS: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _, err := readApplyRequest(prepared.RequestPath)
+	if err != nil || len(request.AdditionalProcesses) != 1 || request.AdditionalProcesses[0].Role != RoleManagedServer {
+		t.Fatalf("managed request = %+v, %v", request, err)
+	}
+	done := make(chan error, 1)
+	go func() { _, applyErr := ApplyPrepared(prepared.RequestPath); done <- applyErr }()
+	if err = WaitForApplyAcknowledgement(prepared, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	authorizePreparedApply(t, prepared)
+	_ = current.Process.Kill()
+	_, _ = current.Process.Wait()
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, waitErr := service.Process.Wait(); waitErr != nil {
+		t.Fatalf("managed service was not reaped: %v", waitErr)
+	}
+	restarted, err := ReadManagedService(installRoot)
+	if err != nil || !strings.Contains(restarted.Executable, "10.6.0.generation-") || !reflect.DeepEqual(restarted.Arguments, []string{"--config", "fixture.yaml"}) ||
+		!reflect.DeepEqual(restarted.Environment, []string{"USAGE_CONFIG=" + evidence, "USAGE_LISTEN_ADDR=127.0.0.1:17823", "USAGE_PROVIDER_CODEX_ENABLED=false"}) || restarted.WorkingDirectory != root {
+		t.Fatalf("restarted service = %+v, %v", restarted, err)
+	}
+	if data, readErr := os.ReadFile(evidence); readErr != nil || string(data) != root+"\n127.0.0.1:17823\n" {
+		t.Fatalf("managed service environment/cwd evidence = %q, %v", data, readErr)
+	}
+	journal, _ := readJournal(filepath.Join(prepared.TransactionDirectory, TransactionJournalName))
+	_ = stopRecordedProcess(journal.CandidatePID, journal.CandidateExe, journal.CandidateToken, time.Second)
+	_ = stopRecordedProcess(restarted.PID, restarted.Executable, restarted.ProcessToken, time.Second)
+}
+
+func TestRecoveryFinishesInFlightManagedServiceStop(t *testing.T) {
+	t.Setenv("HEADROOM_FIXTURE_SLEEP_MS", "60000")
+	root := t.TempDir()
+	service := startFixturePath(t, fixtureExecutable)
+	token, err := captureProcessToken(service.Process.Pid, fixtureExecutable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := currentOwnerIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = writeManagedService(root, ManagedServiceRecord{Schema: SchemaVersion, Product: "Headroom", InstallRoot: root,
+		PID: service.Process.Pid, Executable: fixtureExecutable, ProcessToken: token, Owner: owner, WorkingDirectory: root, Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+	request := ApplyRequest{AdditionalProcesses: []ProcessClaim{{Role: RoleManagedServer, PID: service.Process.Pid, Executable: fixtureExecutable, ProcessToken: token}}}
+	if err = finishManagedServiceStopForRecovery(root, request); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = service.Process.Wait()
+	if !processGone(service.Process.Pid) {
+		t.Fatal("managed service remained alive after stop-intent recovery")
+	}
+	if _, err = os.Stat(filepath.Join(root, "runtime", ManagedServiceRecordName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale managed service receipt remains: %v", err)
+	}
+}
+
 func TestTransactionalApplyRollsBackAndReopensOnReadinessFailure(t *testing.T) {
 	t.Setenv("HEADROOM_FIXTURE_SLEEP_MS", "60000")
 	t.Setenv("HEADROOM_FIXTURE_NO_READY_VERSION", "11.1.0")
@@ -117,7 +320,10 @@ func TestTransactionalApplyRollsBackAndReopensOnReadinessFailure(t *testing.T) {
 	_ = current.Process.Kill()
 	_, _ = current.Process.Wait()
 	rollbackReady := filepath.Join(prepared.TransactionDirectory, "rollback-ready.json")
-	deadline := time.Now().Add(2 * time.Second)
+	// This observer covers package verification, file replacement, and rollback
+	// as well as the deliberate readiness timeout. Loaded Windows runners can
+	// take more than two seconds before the rollback process is even launched.
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if _, statErr := os.Stat(rollbackReady); statErr == nil {
 			break
@@ -455,15 +661,14 @@ func TestRecoveryStopsExactOrphanCandidateBeforeRollback(t *testing.T) {
 	if err = writeDurableJSON(filepath.Join(installRoot, StateName), candidate); err != nil {
 		t.Fatal(err)
 	}
-	appName := "headroom" + nativeExtension()
-	candidateExecutable := filepath.Join(installRoot, filepath.FromSlash(candidate.VersionPath), "bin", appName)
+	candidateExecutable := installedTestComponent(t, installRoot, candidate.VersionPath, false)
 	process := startFixturePath(t, candidateExecutable)
 	token, err := captureProcessToken(process.Process.Pid, candidateExecutable)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request := ApplyRequest{Schema: SchemaVersion, Product: "Headroom", InstallRoot: installRoot, EntryPath: entry,
-		StageRecord: stageRecord(stage), CurrentPID: 1, CurrentExecutable: filepath.Join(installRoot, filepath.FromSlash(previous.VersionPath), "bin", appName),
+		StageRecord: stageRecord(stage), CurrentPID: 1, CurrentExecutable: installedTestComponent(t, installRoot, previous.VersionPath, false),
 		CurrentProcessToken: "recorded-prior-token", PriorStateSHA256: priorStateHash, AcknowledgementPath: filepath.Join(directory, "accepted.json"),
 		CommitPath: filepath.Join(directory, "commit.json"), ReadyPath: filepath.Join(directory, "ready.json"), Nonce: strings.Repeat("a", 48),
 		WaitTimeoutMS: 1000, CommitTimeoutMS: 1000, ReadyTimeoutMS: 1000}
@@ -476,6 +681,26 @@ func TestRecoveryStopsExactOrphanCandidateBeforeRollback(t *testing.T) {
 	if err = RecoverInstall(installRoot); err != nil {
 		t.Fatal(err)
 	}
+	recoveryReady, err := readBoundedFile(filepath.Join(directory, "recovery-ready.json"), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relaunched struct {
+		PID        int    `json:"pid"`
+		Executable string `json:"executable"`
+	}
+	if json.Unmarshal(recoveryReady, &relaunched) != nil || relaunched.PID <= 0 {
+		t.Fatalf("recovery readiness = %s", recoveryReady)
+	}
+	relaunchedToken, err := captureProcessToken(relaunched.PID, relaunched.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if stopErr := stopRecordedProcess(relaunched.PID, relaunched.Executable, relaunchedToken, time.Second); stopErr != nil {
+			t.Errorf("stop recovered prior application: %v", stopErr)
+		}
+	})
 	_, _ = process.Process.Wait()
 	if !processGone(process.Process.Pid) {
 		t.Fatal("orphan candidate survived recovery")
@@ -748,4 +973,38 @@ func startFixturePath(t *testing.T, executable string) *exec.Cmd {
 		t.Fatal(err)
 	}
 	return command
+}
+
+// A CLI-only install passes the same path as the application entry and the CLI
+// entry. applyBootstrapWithCLI still replaces the usage-server compatibility
+// entry in that shape, so the rollback target list has to cover it too.
+func TestBootstrapRollbackCoversSharedCLIEntryServerCompatibilityPath(t *testing.T) {
+	if runtimeWindows() {
+		t.Skip("the usage-server compatibility entry exists only on Linux and macOS")
+	}
+	root := t.TempDir()
+	entry := filepath.Join(root, "bin", "headroom")
+	targets := stableBootstrapTargetsWithCLI(root, entry, entry)
+	server := filepath.Join(filepath.Dir(entry), "usage-server")
+	for _, wanted := range []string{entry, entry + ".root", server, server + ".root"} {
+		found := false
+		for _, target := range targets {
+			if samePath(target, wanted) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("rollback targets omitted %q, which apply replaces: %v", wanted, targets)
+		}
+	}
+	counts := map[string]int{}
+	for _, target := range targets {
+		counts[filepath.Clean(target)]++
+	}
+	for target, count := range counts {
+		if count != 1 {
+			t.Fatalf("rollback target %q appears %d times, want 1", target, count)
+		}
+	}
 }

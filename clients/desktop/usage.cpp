@@ -41,11 +41,29 @@ bool Usage::parse(const QByteArray &json, QVariantList &providers) {
             || !p["is_success"].isBool() || p["is_success"].toBool() != p["error"].isNull()
             || !p["needs_reauth"].isBool()) return false;
         names.insert(name.toLower());
+        QJsonValue resetCredits(QJsonValue::Null);
+        if (p["error"].isNull() && p["rate_limit_reset_credits"].isObject()) {
+            const auto credits = p["rate_limit_reset_credits"].toObject();
+            const auto countValue = credits["available_count"];
+            const double count = countValue.toDouble(-1);
+            constexpr double maxSafeInteger = 9007199254740991.0;
+            if (countValue.isDouble() && std::isfinite(count) && count >= 0
+                && count <= maxSafeInteger && std::floor(count) == count) {
+                const QString fingerprint = credits["account_fingerprint"].toString();
+                static const QRegularExpression fingerprintPattern(QStringLiteral("^[0-9a-f]{64}$"));
+                resetCredits = QJsonObject{{"available_count", count},
+                    {"account_fingerprint", fingerprint.size() == 64 && fingerprintPattern.match(fingerprint).hasMatch()
+                        ? QJsonValue(fingerprint) : QJsonValue(QJsonValue::Null)}};
+            }
+        }
+        p["rate_limit_reset_credits"] = resetCredits;
         QJsonArray buckets;
         if (p["error"].isNull()) {
             if (p.contains("buckets") && !p["buckets"].isArray()) return false;
-            buckets = p["buckets"].toArray();
-            if (buckets.isEmpty()) {
+            buckets = p.value("buckets").toArray();
+            // An explicit empty list means no meters; only older servers
+            // that omit the bucket contract need the legacy header fallback.
+            if (!p.contains("buckets")) {
                 if (!p["current"].isObject() || !p["show_secondary"].isBool()) return false;
                 auto primary = p["current"].toObject();
                 primary["id"] = "session"; primary["label"] = p["primary_label"];
@@ -199,28 +217,4 @@ QVariantMap Usage::concern(const QString &provider, const QVariantMap &bucket, c
     const auto level = warningLevel(used, available, pressure);
     return {{"severity", int(level)}, {"color", warningColor(level)}, {"level", warningName(level)}, {"pressure", pressure}, {"available", available},
         {"remaining", remaining}, {"detail", pace["detail"].toString() + "\n\n" + explanation}};
-}
-
-QByteArray Usage::demo() {
-    // Synthetic readings, using the real API's labels and variable bucket shapes.
-    // Actual accounts may expose other model-specific or billable buckets.
-    const auto now = QDateTime::currentDateTimeUtc();
-    auto bucket = [&](const QString &id, const QString &label, double used, int seconds, const QString &status = {}) {
-        return QJsonObject{{"id", id}, {"label", label}, {"utilization", used},
-            {"resets_at", seconds ? QJsonValue(now.addSecs(seconds).toString(Qt::ISODate)) : QJsonValue(QJsonValue::Null)},
-            {"status_text", status.isEmpty() ? QJsonValue(QJsonValue::Null) : QJsonValue(status)}};
-    };
-    const QList<QJsonArray> meters {
-        {bucket("session", "Current Session", 34, 8400), bucket("weekly", "Weekly", 62, 225000), bucket("weekly_fable", "Fable", 27, 225000)},
-        {bucket("session", "5-Hour", 0, 0), bucket("weekly", "Weekly", 41, 228000)},
-        {bucket("auto", "Cursor Models", 38, 12 * 86400), bucket("api", "Other Models", 76, 12 * 86400, "$38 / $50 this cycle"),
-            bucket("weekly_grok_bot", "Grok Bot", 28, 231000), bucket("on_demand", "On-Demand", 0, 12 * 86400, "On-demand enabled")},
-        {bucket("weekly", "Weekly", 8, 234000)}
-    };
-    const QStringList names {"Claude", "Codex", "Cursor", "Grok"};
-    QJsonArray providers;
-    for (int i = 0; i < names.size(); ++i)
-        providers.append(QJsonObject{{"provider_name", names[i]}, {"subtitle", "Sample account"}, {"error", QJsonValue::Null},
-            {"is_success", true}, {"needs_reauth", false}, {"buckets", meters[i]}});
-    return QJsonDocument(providers).toJson();
 }

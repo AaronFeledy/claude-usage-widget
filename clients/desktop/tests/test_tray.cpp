@@ -19,6 +19,16 @@ class TrayTest : public QObject {
         // Deliberately disagree with numeric usage: this must use the state machine's cached tier.
         return QVariantMap{{"severity", bucket["id"] == "session" ? 1 : 3}};
     };
+    static int flamePixels(const QImage &image) {
+        int count = 0;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor color = image.pixelColor(x, y);
+                if (color.alpha() > 180 && color.red() > 210 && color.green() > 80
+                    && color.green() < 225 && color.blue() < 70) ++count;
+            }
+        return count;
+    }
 private slots:
     void usesSharedLevelsForBothIndicators() {
         const auto model = TrayVisual::build(ready(), {provider("Codex", {meter("session", 12), meter("weekly", 8, 86400)})}, "Codex", assess, now);
@@ -34,7 +44,7 @@ private slots:
         const auto image = TrayVisual::icon(model).pixmap(64, 64).toImage();
         QVERIFY(!image.isNull());
         QCOMPARE(image.pixelColor(53, 52), QColor("#ff5555"));
-        QCOMPARE(image.pixelColor(32, 59), QColor("#8be9fd"));
+        QCOMPARE(image.pixelColor(32, 59), QColor("#f8f8f2"));
         const QString captureDirectory = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
         if (!captureDirectory.isEmpty()) {
             QVERIFY(QDir().mkpath(captureDirectory));
@@ -87,6 +97,24 @@ private slots:
         QCOMPARE(int(model.kind), kind);
         QVERIFY(!TrayVisual::icon(model).isNull());
         QCOMPARE(model.tooltip.count('\n'), 1);
+        if (model.kind == TrayVisual::Kind::Offline) {
+            const auto disconnected = TrayVisual::icon(model).pixmap(64, 64).toImage();
+            QCOMPARE(disconnected.pixelColor(32, 32), QColor("#ff5555"));
+            for (const QString &name : {QStringLiteral("Claude"), QStringLiteral("Codex"), QStringLiteral("Cursor"), QStringLiteral("Grok"), QString()}) {
+                auto other = model; other.provider = name;
+                QCOMPARE(TrayVisual::icon(other).pixmap(64, 64).toImage(), disconnected);
+            }
+            auto retry = state; retry["loading"] = true; retry["lastGood"] = 0;
+            QCOMPARE(TrayVisual::build(retry, {}, "Claude", assess, now).kind, TrayVisual::Kind::Offline);
+            const auto recovered = TrayVisual::build(ready(), {provider("Claude", {meter("session", 40)})}, "Claude", assess, now);
+            QCOMPARE(recovered.kind, TrayVisual::Kind::Usage);
+            QVERIFY(TrayVisual::icon(recovered).pixmap(64, 64).toImage() != disconnected);
+            const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+            if (!capture.isEmpty()) {
+                QVERIFY(QDir().mkpath(capture));
+                QVERIFY(disconnected.save(QDir(capture).filePath(QStringLiteral("tray-offline.png"))));
+            }
+        }
     }
     void loadingWithoutGoodDataAndBackgroundRefresh() {
         auto state = ready(); state["loading"] = true; state["lastGood"] = 0;
@@ -123,6 +151,56 @@ private slots:
         QCOMPARE(model.secondary, Usage::WarningLevel::Normal);
         QCOMPARE(TrayVisual::build(ready(), {provider("Grok", {billing})}, "Grok", assess, now).kind,
                  TrayVisual::Kind::Idle);
+    }
+    void criticalAttentionRendersAProceduralFlame() {
+        auto model = TrayVisual::build(ready(), {provider("Grok", {meter("weekly", 97)})}, "Grok", assess, now);
+        QCOMPARE(model.level, Usage::WarningLevel::Critical);
+        const TrayVisual::AttentionFrame first{1.0, 0.0, false};
+        const TrayVisual::AttentionFrame bent{1.0, 0.25, false};
+        for (const int size : {16, 22}) {
+            const QImage image = TrayVisual::icon(model, first).pixmap(size, size).toImage();
+            QVERIFY2(flamePixels(image) >= (size == 16 ? 5 : 10), "flame colors must survive native tray scaling");
+            QVERIFY(image != TrayVisual::icon(model).pixmap(size, size).toImage());
+            QVERIFY(image != TrayVisual::icon(model, bent).pixmap(size, size).toImage());
+        }
+        const auto secondaryCritical = TrayVisual::build(
+            ready(), {provider("Codex", {meter("session", 30), meter("weekly", 75)})}, "Codex", assess, now);
+        QCOMPARE(secondaryCritical.level, Usage::WarningLevel::Watch);
+        QCOMPARE(secondaryCritical.secondary, Usage::WarningLevel::Critical);
+        QVERIFY(flamePixels(TrayVisual::icon(secondaryCritical, first).pixmap(22, 22).toImage()) >= 10);
+
+        const QString capture = qEnvironmentVariable("HEADROOM_TEST_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QVERIFY(QDir().mkpath(capture));
+            QImage sheet(360, 92, QImage::Format_ARGB32_Premultiplied);
+            sheet.fill(QColor("#282a36"));
+            QPainter painter(&sheet);
+            painter.setPen(QColor("#f8f8f2"));
+            painter.drawText(QRect(8, 4, 344, 18), Qt::AlignCenter, "Critical attention · fire phases and flash");
+            for (int frame = 0; frame < 4; ++frame)
+                painter.drawPixmap(24 + frame * 72, 24, TrayVisual::icon(model, {1, frame / 4.0, false}).pixmap(64, 64));
+            painter.drawPixmap(312, 40, TrayVisual::icon(model, {0, 0, true}).pixmap(32, 32));
+            painter.end();
+            QVERIFY(sheet.save(QDir(capture).filePath(QStringLiteral("tray-critical-attention.png"))));
+        }
+    }
+    void attentionIsLimitedToCriticalMeters() {
+        const TrayVisual::AttentionFrame attention{1.0, 0.3, true};
+        auto normal = TrayVisual::build(ready(), {provider("Claude", {meter("session", 35)})}, "Claude",
+                                        [](const QString &, const QVariantMap &) { return QVariantMap{{"severity", 0}}; }, now);
+        QCOMPARE(TrayVisual::icon(normal, attention).pixmap(64, 64).toImage(),
+                 TrayVisual::icon(normal).pixmap(64, 64).toImage());
+        normal.kind = TrayVisual::Kind::Offline;
+        normal.level = Usage::WarningLevel::Critical;
+        QCOMPARE(TrayVisual::icon(normal, attention).pixmap(64, 64).toImage(),
+                 TrayVisual::icon(normal).pixmap(64, 64).toImage());
+    }
+    void flashAddsABrightAlertFrame() {
+        const auto model = TrayVisual::build(ready(), {provider("Grok", {meter("weekly", 97)})}, "Grok", assess, now);
+        const QImage normal = TrayVisual::icon(model).pixmap(64, 64).toImage();
+        const QImage flashed = TrayVisual::icon(model, {0, 0, true}).pixmap(64, 64).toImage();
+        QVERIFY(flashed != normal);
+        QCOMPARE(flashed.pixelColor(32, 3), QColor("#ffb347"));
     }
 };
 QTEST_MAIN(TrayTest)

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Headroom</string>
+    <key>CFBundleExecutable</key>
+    <string>headroom</string>
+    <key>CFBundleIconFile</key>
+    <string>headroom.icns</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.headroom.Headroom</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Headroom</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@HEADROOM_NUMERIC_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@HEADROOM_VERSION_MAJOR@.@HEADROOM_VERSION_MINOR@.@HEADROOM_VERSION_PATCH@</string>
+    <key>HeadroomVersion</key>
+    <string>@HEADROOM_VERSION@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
