@@ -248,6 +248,20 @@ void UpdateService::restartToApply() {
 
 void UpdateService::startPairedUpdate() {
     if (m_pairProcess) return;
+    // This is a UI readiness check, not authorization. The coordinator still
+    // validates the complete private pairing record and reciprocal identity.
+    QFile pairing(QDir(m_options.installRoot).filePath(QStringLiteral("pairing/windows-wsl.json")));
+    QJsonParseError pairingError;
+    const auto pairingDocument = !QFileInfo(pairing).isSymLink() && pairing.open(QIODevice::ReadOnly)
+        && pairing.size() <= 32 * 1024 ? QJsonDocument::fromJson(pairing.readAll(), &pairingError) : QJsonDocument();
+    const auto pairingObject = pairingDocument.object();
+    if (pairingError.error != QJsonParseError::NoError || !pairingDocument.isObject()
+        || pairingObject.value(QStringLiteral("schema")).toInt() != 1
+        || pairingObject.value(QStringLiteral("product")).toString() != QStringLiteral("Headroom")
+        || pairingObject.value(QStringLiteral("state")).toString() != QStringLiteral("active")) {
+        m_status = QStringLiteral("Windows/WSL pairing needs attention. Complete pairing, or run headroom update --this-install-only for a local update. The downloaded package is still available.");
+        emit changed(); return;
+    }
     if (!m_cliAvailable) { fail(QStringLiteral("Rerun the Headroom installer to enable updates for this paired installation.")); return; }
     // inspect verified the complete generation, including this CLI payload.
     // The CLI revalidates its own installed identity before any public request.
@@ -265,6 +279,7 @@ void UpdateService::startPairedUpdate() {
     auto environment = publicToolEnvironment();
     environment.remove(QStringLiteral("HEADROOM_PUBLIC_LAUNCHER_PID"));
     environment.remove(QStringLiteral("HEADROOM_PUBLIC_LAUNCHER_PATH"));
+    environment.remove(QStringLiteral("HEADROOM_PUBLIC_LAUNCHER_TOKEN"));
     process->setProcessEnvironment(environment);
     process->setProcessChannelMode(QProcess::MergedChannels);
     auto count = std::make_shared<qint64>(0);
@@ -277,7 +292,13 @@ void UpdateService::startPairedUpdate() {
         m_pairProcess = nullptr; process->deleteLater();
         if (m_cliReply || m_process) return;
         if (!m_allowed) { m_state = QStringLiteral("unavailable"); m_status = QStringLiteral("Update checks are paused for this session."); emit changed(); return; }
-        if (!success) { fail(QStringLiteral("The Windows/WSL update did not finish. Run headroom update in a terminal for recovery details.")); return; }
+        if (!success) {
+            // Pairing failure does not invalidate the locally verified archive.
+            // Keep it available while the user repairs the pairing or retries.
+            m_state = QStringLiteral("staged");
+            m_status = QStringLiteral("The Windows/WSL update did not finish. Run headroom update in a terminal for recovery details. The downloaded package is still available.");
+            emit changed(); return;
+        }
         m_verifiedStage = {}; m_state = QStringLiteral("current");
         m_status = QStringLiteral("The paired installations are up to date."); emit changed();
     };

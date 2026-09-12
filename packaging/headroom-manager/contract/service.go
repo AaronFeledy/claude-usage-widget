@@ -11,6 +11,25 @@ import (
 	"time"
 )
 
+var errProcessExecutableMismatch = errors.New("process executable identity does not match")
+
+// A failed identity query is not evidence that a live service was replaced.
+// Only a different kernel identity or a definitely dead PID permits replacing
+// its receipt. The caller holds the install transaction lock.
+func managedServiceMayRegister(record ManagedServiceRecord) error {
+	token, err := captureProcessToken(record.PID, record.Executable)
+	if err == nil {
+		if token != record.ProcessToken {
+			return nil
+		}
+		return errors.New("a managed Headroom service is already running")
+	}
+	if errors.Is(err, errProcessExecutableMismatch) || processGone(record.PID) {
+		return nil
+	}
+	return errors.New("cannot verify the existing managed Headroom service; its receipt was preserved")
+}
+
 const ManagedServiceRecordName = "managed-serve.json"
 const managedSystemdUser = "systemd-user"
 const supervisedRestartRecordName = "supervised-restart.json"
@@ -167,8 +186,8 @@ func RegisterManagedService(installRoot string, arguments []string) (ManagedServ
 	}
 	defer lock.Close()
 	if existing, readErr := readManagedService(root); readErr == nil {
-		if !processGone(existing.PID) {
-			return ManagedServiceRecord{}, errors.New("a managed Headroom service is already running")
+		if err := managedServiceMayRegister(existing); err != nil {
+			return ManagedServiceRecord{}, err
 		}
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return ManagedServiceRecord{}, readErr

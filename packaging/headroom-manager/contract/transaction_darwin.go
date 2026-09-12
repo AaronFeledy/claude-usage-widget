@@ -35,7 +35,7 @@ func captureProcessToken(pid int, expected string) (string, error) {
 		return "", fmt.Errorf("%w: %v", errDarwinExecutableUnavailable, err)
 	}
 	if !samePath(actual, expected) {
-		return "", errors.New("process executable identity does not match")
+		return "", errProcessExecutableMismatch
 	}
 	after, err := darwinStartToken(pid)
 	if err != nil || before != after {

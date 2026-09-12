@@ -31,6 +31,12 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, stopLauncher, launcherErr := launcherContext(ctx)
+	if launcherErr != nil {
+		fmt.Fprintln(os.Stderr, "headroom:", launcherErr)
+		os.Exit(1)
+	}
+	defer stopLauncher()
 	if len(os.Args) == 2 && os.Args[1] == pairing.RPCArgument {
 		if err := pairRPC(ctx, os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "headroom:", err)

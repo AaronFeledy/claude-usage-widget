@@ -19,8 +19,11 @@ type unixWatch struct {
 
 func captureProcessToken(pid int, expected string) (string, error) {
 	actual, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
-	if err != nil || !samePath(actual, expected) {
-		return "", errors.New("process executable identity does not match")
+	if err != nil {
+		return "", err
+	}
+	if !samePath(actual, expected) {
+		return "", errProcessExecutableMismatch
 	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {

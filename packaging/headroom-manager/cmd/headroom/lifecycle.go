@@ -101,9 +101,31 @@ func updateCommand(ctx context.Context, args []string) error {
 	if len(args) != 0 {
 		return errors.New("update does not accept arguments")
 	}
+	return updateLocal(ctx, "")
+}
+
+func updateLocal(ctx context.Context, exactVersion string) error {
 	root, inspection, executable, err := managedInstall()
 	if err != nil {
 		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	if exactVersion != "" {
+		staged, err := contract.DefaultUpdateClient().StageVersion(ctx, root, exactVersion)
+		if err != nil {
+			return err
+		}
+		if staged.Status == "current" {
+			fmt.Printf("Headroom %s is current.\n", exactVersion)
+			return nil
+		}
+		if err = applyStagedUpdate(ctx, staged); err != nil {
+			return err
+		}
+		fmt.Printf("Headroom %s update accepted.\n", exactVersion)
+		return nil
 	}
 	participants, err := updateParticipants(root, executable)
 	if err != nil {
@@ -133,7 +155,7 @@ func updateCommand(ctx context.Context, args []string) error {
 	if staged.Status != "staged" || staged.Stage == nil {
 		return fmt.Errorf("no compatible update is available (%s)", staged.Status)
 	}
-	if err = applyOfflineStage(root, inspection, executable, participants, staged); err != nil {
+	if err = applyOfflineStage(ctx, root, inspection, executable, participants, staged); err != nil {
 		return err
 	}
 	fmt.Printf("Headroom %s is staged and will finish installing now.\n", staged.Version)
@@ -144,6 +166,9 @@ func updateCommand(ctx context.Context, args []string) error {
 // this installation. Pairing uses this boundary so peer data can select only a
 // version; it can never provide an archive, origin, or staging path.
 func applyStagedUpdate(ctx context.Context, staged contract.UpdateResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if staged.Status == "current" {
 		return nil
 	}
@@ -173,7 +198,7 @@ func applyStagedUpdate(ctx context.Context, staged contract.UpdateResult) error 
 			return nil
 		}
 	}
-	return applyOfflineStage(root, inspection, executable, participants, staged)
+	return applyOfflineStage(ctx, root, inspection, executable, participants, staged)
 }
 
 func verifyLocalStage(root string, inspection contract.Inspection, staged contract.UpdateResult) error {
@@ -189,7 +214,10 @@ func verifyLocalStage(root string, inspection contract.Inspection, staged contra
 	return nil
 }
 
-func applyOfflineStage(root string, inspection contract.Inspection, executable string, participants []contract.ProcessClaim, staged contract.UpdateResult) error {
+func applyOfflineStage(ctx context.Context, root string, inspection contract.Inspection, executable string, participants []contract.ProcessClaim, staged contract.UpdateResult) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := verifyLocalStage(root, inspection, staged); err != nil {
 		return err
 	}
@@ -210,6 +238,11 @@ func applyOfflineStage(root string, inspection contract.Inspection, executable s
 		return err
 	}
 	if err = contract.WaitForApplyAcknowledgement(prepared, 10*time.Second); err != nil {
+		return err
+	}
+	// Cancellation before commit leaves the acknowledged helper to expire
+	// without changing the installation. After commit it owns the transaction.
+	if err = ctx.Err(); err != nil {
 		return err
 	}
 	if err = contract.CommitPreparedApply(prepared); err != nil {

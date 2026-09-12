@@ -16,7 +16,9 @@ import (
 // stdout so piped usage output keeps the documented single-snapshot contract.
 type exitStatusError struct{ code int }
 
-func (e exitStatusError) Error() string { return fmt.Sprintf("Headroom CLI exited with status %d", e.code) }
+func (e exitStatusError) Error() string {
+	return fmt.Sprintf("Headroom CLI exited with status %d", e.code)
+}
 
 func (e exitStatusError) ExitCode() int { return e.code }
 
@@ -53,6 +55,13 @@ func launchRole(role string, arguments []string) error {
 	if role == contract.RoleCLI {
 		values["HEADROOM_PUBLIC_LAUNCHER_PID"] = fmt.Sprintf("%d", os.Getpid())
 		values["HEADROOM_PUBLIC_LAUNCHER_PATH"] = launcher
+		if runtime.GOOS == "windows" {
+			token, err := contract.CurrentProcessToken()
+			if err != nil {
+				return err
+			}
+			values["HEADROOM_PUBLIC_LAUNCHER_TOKEN"] = token
+		}
 	}
 	environment := authoritativeEnvironment(os.Environ(), values)
 	return startApplication(executable, arguments, environment, role == contract.RoleApplication)
@@ -133,7 +142,7 @@ func authoritativeEnvironment(base []string, values map[string]string) []string 
 			result = append(result, item)
 		}
 	}
-	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION", "HEADROOM_PUBLIC_LAUNCHER_PID", "HEADROOM_PUBLIC_LAUNCHER_PATH"} {
+	for _, key := range []string{"HEADROOM_INSTALL_ROOT", "HEADROOM_LAUNCHER_PATH", "HEADROOM_PACKAGE_VERSION", "HEADROOM_PUBLIC_LAUNCHER_PID", "HEADROOM_PUBLIC_LAUNCHER_PATH", "HEADROOM_PUBLIC_LAUNCHER_TOKEN"} {
 		if value, ok := values[key]; ok {
 			result = append(result, key+"="+value)
 		}

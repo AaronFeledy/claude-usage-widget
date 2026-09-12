@@ -165,6 +165,9 @@ type Endpoint interface {
 }
 
 type Coordinator struct {
+	// Reconcile explicitly replaces an unfinished target only after inspecting
+	// and verifying both current peers and staging a common non-downgrade target.
+	Reconcile    bool
 	Config       Config
 	Platform     string
 	Local        Endpoint
@@ -222,7 +225,10 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-	peerConfirmed := previous.Phase == "peer_committing" || previous.Phase == "peer_applied"
+	if c.Reconcile && (previous.Phase == "" || previous.Phase == "complete") {
+		return "", errors.New("there is no unfinished paired update to reconcile")
+	}
+	peerConfirmed := !c.Reconcile && (previous.Phase == "peer_committing" || previous.Phase == "peer_applied")
 	var peer Identity
 	if peerConfirmed {
 		if previous.Peer == nil || c.Config.ValidateIdentity(*previous.Peer, peerPlatform) != nil {
@@ -236,7 +242,7 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			}
 		}
 		if err = c.Peer.Verify(ctx, previous.Version); err != nil {
-			return "", fmt.Errorf("paired update outcome is unresolved. Run headroom update --this-install-only on the paired installation, then retry: %w", err)
+			return "", fmt.Errorf("paired update outcome is unresolved. Run headroom update --this-install-only --version %s on the paired installation, then retry. If either side has advanced past that version, run headroom update --reconcile here: %w", previous.Version, err)
 		}
 		peer.Version = previous.Version
 	} else {
@@ -249,7 +255,15 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 		}
 		c.peerIdentity = peer
 	}
-	if previous.Phase != "" && previous.Phase != "complete" {
+	if c.Reconcile {
+		if err = c.Local.Verify(ctx, local.Version); err != nil {
+			return "", fmt.Errorf("local installation is not ready for reconciliation: %w", err)
+		}
+		if err = c.Peer.Verify(ctx, peer.Version); err != nil {
+			return "", fmt.Errorf("paired installation is not ready for reconciliation: %w", err)
+		}
+	}
+	if !c.Reconcile && previous.Phase != "" && previous.Phase != "complete" {
 		if previous.Schema != 1 || previous.Product != "Headroom" || previous.PairingID != c.Config.ID {
 			return "", errors.New("paired update recovery identity is invalid")
 		}
@@ -260,10 +274,14 @@ func (c Coordinator) Run(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
-	for _, installed := range []string{local.Version, peer.Version} {
+	installedVersions := []string{local.Version, peer.Version}
+	if c.Reconcile {
+		installedVersions = append(installedVersions, previous.Version)
+	}
+	for _, installed := range installedVersions {
 		comparison, compareErr := contract.CompareVersions(version, installed)
 		if compareErr != nil || comparison < 0 {
-			return "", errors.New("paired update would downgrade one installation; update each side manually to the same release")
+			return "", errors.New("paired target is older than an installation or unfinished target; use headroom update --reconcile when a common newer release is available")
 		}
 	}
 	if local.Version == version && peer.Version == version {

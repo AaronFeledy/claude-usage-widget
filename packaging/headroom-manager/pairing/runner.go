@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
+	"runtime"
 	"time"
 
 	"github.com/AaronFeledy/claude-usage-widget/packaging/headroom-manager/contract"
@@ -181,16 +181,10 @@ func execute(ctx context.Context, program string, args []string, input []byte) (
 	command := exec.CommandContext(ctx, program, args...)
 	command.Stdin = bytes.NewReader(input)
 	command.Stderr = io.Discard
-	// Native interop carries only update metadata, not saved configuration,
-	// bearer tokens, provider cookies, or inherited install associations.
-	for _, item := range os.Environ() {
-		key, _, _ := strings.Cut(item, "=")
-		upper := strings.ToUpper(key)
-		if strings.HasPrefix(upper, "HEADROOM_") || strings.HasPrefix(upper, "USAGE_") {
-			continue
-		}
-		command.Env = append(command.Env, item)
-	}
+	command.Env = peerEnvironment(os.Environ(), runtime.GOOS)
+	// A cancelled wrapper may leave inherited stdout open in a child. Bound
+	// draining separately from the operation timeout and child cancellation.
+	command.WaitDelay = 2 * time.Second
 	var output messageBuffer
 	command.Stdout = &output
 	if err := command.Run(); err != nil {

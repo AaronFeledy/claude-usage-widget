@@ -158,8 +158,24 @@ retains its own readiness checks and rollback.
 There is no atomic rollback across Windows and WSL. If one side updates and the
 other fails, a private progress record preserves the exact unfinished target.
 Run `headroom update` again to resume. If the paired side's outcome cannot be
-verified, run `headroom update --this-install-only` there and then retry the
-original command. `--this-install-only` explicitly bypasses pairing for recovery.
+verified, use the exact version printed by the error, for example
+`headroom update --this-install-only --version 2.1.0` there, then retry the
+original command. This stages that release instead of accidentally advancing to
+latest. `--this-install-only` explicitly bypasses pairing for recovery; omitting
+`--version` still selects the latest compatible release for that installation.
+
+If either side has already advanced past the unfinished version, run
+`headroom update --reconcile` on the original initiating installation. This
+explicitly chooses the latest common release after verifying both current
+installations. It stages both sides before replacing the unfinished progress
+record or applying either side, never downgrades, and keeps the old progress if
+verification or staging fails. The normal `headroom update` command continues
+to preserve the exact unfinished target.
+
+An interrupted pairing handshake is not an active pair. Complete the original
+pairing command before using paired updates, or explicitly select
+`--this-install-only` to update locally. The desktop retains its downloaded
+package when pairing needs attention.
 
 ## Build from source
 

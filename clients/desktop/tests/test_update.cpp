@@ -98,6 +98,62 @@ private slots:
         QCOMPARE(service.state(), QString("failed"));
         QVERIFY(!record().contains("prepare-apply"));
     }
+    void pendingOrInvalidPairingRetainsVerifiedStage() {
+        for (const auto &body : {QByteArray(R"({"schema":1,"product":"Headroom","state":"pending"})"), QByteArray("not json"), QByteArray("{}")}) {
+            UpdateService service(true, options());
+            QTRY_VERIFY(service.canCheck());
+            service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+            service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+            const auto stage = service.verifiedStage();
+            const auto before = record();
+            QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+            QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly | QIODevice::Truncate)); pair.write(body); pair.close();
+            QSignalSpy prepared(&service, &UpdateService::applyPrepared);
+            service.restartToApply();
+            QVERIFY(!service.busy()); QVERIFY(service.restartAvailable());
+            QCOMPARE(service.verifiedStage(), stage); QCOMPARE(record(), before);
+            QCOMPARE(prepared.count(), 0);
+            QVERIFY(service.statusText().contains("pairing needs attention"));
+            QVERIFY(service.statusText().contains("--this-install-only"));
+        }
+    }
+    void failedPairingCoordinatorRetainsVerifiedStage() {
+        const QString directory = m_dir.filePath("paired runtime");
+        QVERIFY(QDir().mkpath(directory));
+#ifdef Q_OS_WIN
+        const QString executable = QDir(directory).filePath("headroom-cli.exe");
+#else
+        const QString executable = QDir(directory).filePath("headroom-cli");
+#endif
+        QFile::remove(executable);
+        QVERIFY(QFile::copy(QStringLiteral(UPDATE_FIXTURE_PATH), executable));
+        qputenv("HEADROOM_UPDATE_FIXTURE_CLI", executable.toUtf8());
+        QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write(R"({"schema":1,"product":"Headroom","state":"active"})"); pair.close();
+        auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
+        qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
+        UpdateService service(true, value);
+        QTRY_VERIFY(service.canCheck());
+        service.checkForUpdates(); QTRY_VERIFY(service.canStage());
+        service.stageUpdate(); QTRY_VERIFY(service.restartAvailable());
+        service.restartToApply();
+        QTRY_VERIFY(service.busy());
+        QProcess *coordinator = nullptr;
+        for (auto process : service.findChildren<QProcess *>()) if (process->program() == executable) coordinator = process;
+        QVERIFY(coordinator); QTRY_VERIFY(coordinator->processId() > 0);
+        // The paired coordinator is public update tooling, so it never inherits the
+        // server bearer token. The leading newline keeps this off the check-update
+        // and stage-update lines, which also end in "update token=".
+        QTRY_VERIFY(record().contains("\nupdate token="));
+        QVERIFY(record().contains("\nupdate token=absent"));
+        QVERIFY(!record().contains("\nupdate token=present"));
+        const auto stage = service.verifiedStage();
+        coordinator->kill();
+        QTRY_VERIFY(!service.busy());
+        QVERIFY(service.restartAvailable());
+        QCOMPARE(service.verifiedStage(), stage);
+        QVERIFY(service.statusText().contains("downloaded package is still available"));
+    }
     void pairedUpdateOnlyAcceptsItsOwnCoordinator() {
         const QString directory = m_dir.filePath("paired runtime");
         QVERIFY(QDir().mkpath(directory));
@@ -110,7 +166,7 @@ private slots:
         QVERIFY(QFile::copy(QStringLiteral(UPDATE_FIXTURE_PATH), executable));
         qputenv("HEADROOM_UPDATE_FIXTURE_CLI", executable.toUtf8());
         QVERIFY(QDir().mkpath(m_dir.filePath("pairing")));
-        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write("{}"); pair.close();
+        QFile pair(m_dir.filePath("pairing/windows-wsl.json")); QVERIFY(pair.open(QIODevice::WriteOnly)); pair.write(R"({"schema":1,"product":"Headroom","state":"active"})"); pair.close();
         auto value = options(); value.applicationPath = QDir(directory).filePath("headroom");
         qputenv("USAGE_AUTH_TOKEN", "must-not-reach-paired-coordinator");
         UpdateService service(true, value);

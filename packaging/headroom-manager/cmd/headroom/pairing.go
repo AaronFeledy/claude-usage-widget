@@ -31,18 +31,54 @@ func nativePair(root string, config pairing.Config) *pairing.Native {
 	return &pairing.Native{Root: root, Config: config, InspectFunc: pairIdentity, ApplyFunc: applyStagedUpdate, Client: contract.DefaultUpdateClient()}
 }
 
+type updateOptions struct {
+	thisOnly  bool
+	version   string
+	reconcile bool
+}
+
+func parseUpdateOptions(args []string) (updateOptions, error) {
+	var options updateOptions
+	set := flag.NewFlagSet("update", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	set.BoolVar(&options.thisOnly, "this-install-only", false, "update only this installation")
+	set.StringVar(&options.version, "version", "", "exact local recovery version")
+	set.BoolVar(&options.reconcile, "reconcile", false, "reconcile an unfinished pair at the latest common release")
+	if err := set.Parse(args); err != nil {
+		return options, err
+	}
+	versionSet := false
+	set.Visit(func(f *flag.Flag) {
+		if f.Name == "version" {
+			versionSet = true
+		}
+	})
+	if versionSet && options.version == "" {
+		return options, errors.New("--version requires a nonempty exact version")
+	}
+	if set.NArg() != 0 || options.reconcile && (options.thisOnly || options.version != "") || options.version != "" && !options.thisOnly {
+		return options, errors.New("update accepts --this-install-only [--version VERSION], or --reconcile")
+	}
+	if options.version != "" {
+		if _, err := contract.CompareVersions(options.version, options.version); err != nil {
+			return options, err
+		}
+	}
+	return options, nil
+}
+
 func coordinatedUpdate(ctx context.Context, args []string) error {
-	thisOnly := len(args) == 1 && args[0] == "--this-install-only"
-	if len(args) != 0 && !thisOnly {
-		return errors.New("update accepts only --this-install-only")
+	options, err := parseUpdateOptions(args)
+	if err != nil {
+		return err
 	}
 	root, _, _, err := managedInstall()
 	if err != nil {
 		return err
 	}
 	config, err := pairing.LoadConfig(root)
-	if errors.Is(err, os.ErrNotExist) || thisOnly {
-		return updateCommand(ctx, nil)
+	if options.thisOnly || errors.Is(err, os.ErrNotExist) && !options.reconcile {
+		return updateLocal(ctx, options.version)
 	}
 	if err != nil {
 		return err
@@ -56,7 +92,9 @@ func coordinatedUpdate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	version, err := nativePair(root, config).Coordinator(peer, runtime.GOOS).Run(ctx)
+	coordinator := nativePair(root, config).Coordinator(peer, runtime.GOOS)
+	coordinator.Reconcile = options.reconcile
+	version, err := coordinator.Run(ctx)
 	if err != nil {
 		return err
 	}

@@ -2009,7 +2009,7 @@ func authoritativeServiceEnvironment(base, saved []string) []string {
 }
 
 func authoritativeApplyEnvironment(base []string, values map[string]string) []string {
-	managed := map[string]bool{"HEADROOM_INSTALL_ROOT": true, "HEADROOM_LAUNCHER_PATH": true, "HEADROOM_PACKAGE_VERSION": true, "HEADROOM_READY_NONCE": true, "HEADROOM_MANAGED_SERVICE_RESTART": true}
+	managed := map[string]bool{"HEADROOM_INSTALL_ROOT": true, "HEADROOM_LAUNCHER_PATH": true, "HEADROOM_PACKAGE_VERSION": true, "HEADROOM_READY_NONCE": true, "HEADROOM_MANAGED_SERVICE_RESTART": true, "HEADROOM_PUBLIC_LAUNCHER_PID": true, "HEADROOM_PUBLIC_LAUNCHER_PATH": true, "HEADROOM_PUBLIC_LAUNCHER_TOKEN": true}
 	result := make([]string, 0, len(base)+len(values))
 	for _, item := range base {
 		key, _, ok := strings.Cut(item, "=")

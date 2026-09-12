@@ -237,3 +237,60 @@ func TestNativeCommitBindsPrivateStageToPairAndOperation(t *testing.T) {
 		t.Fatalf("bound private operation failed: called=%v err=%v", called, err)
 	}
 }
+
+func TestExplicitReconciliationStagesCommonNewerTargetBeforeCommit(t *testing.T) {
+	c, local, peer, events := fixtureCoordinator()
+	previous := Progress{Schema: 1, Product: "Headroom", PairingID: c.Config.ID, Version: "2.1.0", Phase: "peer_applied", Peer: &peer.identity}
+	c.ReadProgress = func() (Progress, error) { return previous, nil }
+	peer.identity.Version = "2.2.0"
+	c.Latest = func(context.Context) (string, error) { return "2.3.0", nil }
+	c.Reconcile = true
+	version, err := c.Run(context.Background())
+	if err != nil || version != "2.3.0" {
+		t.Fatal(version, err)
+	}
+	want := []string{"local.inspect", "peer.inspect", "local.verify:" + local.identity.Version, "peer.verify:2.2.0", "local.prepare:2.3.0", "peer.prepare:2.3.0", "save:prepared", "save:peer_committing", "peer.commit", "peer.verify:2.3.0", "save:peer_applied", "local.commit"}
+	if !reflect.DeepEqual(*events, want) {
+		t.Fatal(*events)
+	}
+}
+
+func TestReconciliationFailurePreservesUnfinishedProgress(t *testing.T) {
+	for _, mode := range []string{"peer-unready", "peer-stage-fails", "older-catalog"} {
+		t.Run(mode, func(t *testing.T) {
+			c, _, peer, events := fixtureCoordinator()
+			c.Reconcile = true
+			c.ReadProgress = func() (Progress, error) {
+				return Progress{Schema: 1, Product: "Headroom", PairingID: c.Config.ID, Version: "2.1.0", Phase: "peer_applied", Peer: &peer.identity}, nil
+			}
+			switch mode {
+			case "peer-unready":
+				peer.verifyErr = errors.New("unready")
+			case "peer-stage-fails":
+				peer.prepareErr = errors.New("failed")
+			case "older-catalog":
+				c.Latest = func(context.Context) (string, error) { return "2.0.0", nil }
+			}
+			if _, err := c.Run(context.Background()); err == nil {
+				t.Fatal("expected failure")
+			}
+			for _, event := range *events {
+				if strings.HasPrefix(event, "save:") || strings.Contains(event, "commit") {
+					t.Fatal("changed unfinished progress or committed", *events)
+				}
+			}
+		})
+	}
+}
+
+func TestPinnedRecoveryErrorNamesExactVersion(t *testing.T) {
+	c, _, peer, _ := fixtureCoordinator()
+	c.ReadProgress = func() (Progress, error) {
+		return Progress{Schema: 1, Product: "Headroom", PairingID: c.Config.ID, Version: "2.1.0", Phase: "peer_applied", Peer: &peer.identity}, nil
+	}
+	peer.verifyErr = errors.New("peer advanced")
+	_, err := c.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "--this-install-only --version 2.1.0") || !strings.Contains(err.Error(), "--reconcile") {
+		t.Fatal(err)
+	}
+}
